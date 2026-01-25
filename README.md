@@ -1,57 +1,111 @@
-___
-# DELETE THIS INSTRUCTIONS AND ADD AN INTRODUCTION ABOUT YOUR PROJECT
-___
+<!--
+---
 
-# eYY-3yp-project-template
+layout: home
+permalink: index.html
 
-This is a sample repository you can use for your Embedded Systems project. Once you followed these instructions, remove the text and add a brief introduction to here.
+# Please update this with your repository name and project title
+repository-name: e21-3yp-Smart-Laser-Distance-Meter
+title: Smart Laser Distance Meter
+---
+-->
 
-### Enable GitHub Pages
+# Smart Laser Distance Meter
 
-You can put the things to be shown in GitHub pages into the _docs/_ folder. Both html and md file formats are supported. You need to go to settings and enable GitHub pages and select _main_ branch and _docs_ folder from the dropdowns, as shown in the below image.
+<div align="laft">
+  <img src="docs/images/download.png" alt="Icon" width="300">
+</div>
 
-![image](https://user-images.githubusercontent.com/11540782/98789936-028d3600-2429-11eb-84be-aaba665fdc75.png)
+---
 
-### Special Configurations
+## Team
+-  E/21/065, CHAMOD S.A.R., [email](mailto:e21065@eng.pdn.ac.lk)
+-  E/21/068, CHANDRASIRI E.M.D.D.V, [email](mailto:e21068@eng.pdn.ac.lk)
+-  E/21/277, PADUKKA V.K., [email](mailto:e21277@eng.pdn.ac.lk)
+-  E/21/325, RASHMIKA W.B.R., [email](mailto:e21325@eng.pdn.ac.lk) 
 
-These projects will be automatically added into [https://projects.ce.pdn.ac.lk](). If you like to show more details about your project on this site, you can fill the parameters in the file, _/docs/index.json_
+<!-- Image (photo/drawing of the final hardware) should be here -->
 
-```
-{
-  "title": "This is the title of the project",
-  "team": [
-    {
-      "name": "Team Member Name 1",
-      "email": "email@eng.pdn.ac.lk",
-      "eNumber": "E/yy/xxx"
-    },
-    {
-      "name": "Team Member Name 2",
-      "email": "email@eng.pdn.ac.lk",
-      "eNumber": "E/yy/xxx"
-    },
-    {
-      "name": "Team Member Name 3",
-      "email": "email@eng.pdn.ac.lk",
-      "eNumber": "E/yy/xxx"
-    }
-  ],
-  "supervisors": [
-    {
-      "name": "Dr. Supervisor 1",
-      "email": "email@eng.pdn.ac.lk"
-    },
-    {
-      "name": "Supervisor 2",
-      "email": "email@eng.pdn.ac.lk"
-    }
-  ],
-  "tags": ["Web", "Embedded Systems"]
-}
-```
+<!-- This is a sample image, to show how to add images to your page. To learn more options, please refer [this](https://projects.ce.pdn.ac.lk/docs/faq/how-to-add-an-image/) -->
 
-Once you filled this _index.json_ file, please verify the syntax is correct. (You can use [this](https://jsonlint.com/) tool).
+<!-- ![Sample Image](./images/sample.png) -->
 
-### Page Theme
+## Table of Contents
+1. [Introduction](#introduction)
+2. [Solution Architecture](#solution-architecture )
+3. [Hardware & Software Designs](#hardware-and-software-designs)
+<!--
+5. [Testing](#testing)
+6. [Detailed budget](#detailed-budget)
+7. [Conclusion](#conclusion)
+-->
+4. [Links](#links)
 
-A custom theme integrated with this GitHub Page, which is based on [github.com/cepdnaclk/eYY-project-theme](https://github.com/cepdnaclk/eYY-project-theme). If you like to remove this default theme, you can remove the file, _docs/\_config.yml_ and use HTML based website.
+## Introduction
+
+Accurate indoor measurement and floor plan creation are essential in construction, interior design, and architectural planning. Traditional manual measuring methods are time-consuming, error-prone, and require manual sketching.  
+
+This project proposes a Smart Laser Distance Meter that integrates LiDAR-based distance sensing and inertial measurement to provide precise linear measurements, angle detection, and automatic area and volume calculations. The system further enables real-time 2D wall and floor plan generation, eliminating manual sketches and improving efficiency and accuracy.
+
+
+## Solution Architecture
+
+The system consists of a handheld embedded device and a mobile application. The embedded unit performs distance and orientation sensing, processes data using a microcontroller, and transmits results wirelessly to the mobile app.
+
+**High-level flow:**
+- LiDAR sensor measures distance
+- IMU provides orientation and angle data
+- ESP32 processes and filters data
+- Bluetooth transfers data to mobile app
+- Mobile app generates sketches and calculations
+
+
+<!-- *(Insert architecture diagram here)*
+
+High level diagram + description -->
+
+## Hardware and Software Designs
+
+### Hardware Design
+- ESP32 CP2102 Type-C development board
+- LiDAR DToF range finder (up to 20 m)
+- MPU6050 IMU (3-axis accelerometer & gyroscope)
+- 0.96" OLED display (I2C)
+- Red line laser modules for alignment
+- Buzzer and vibration motor for feedback
+- 18650 battery with TP4056 charging module
+- Custom PCB and 3D-printed enclosure
+
+### Software Design
+- Sensor interfacing and calibration
+- Distance and angle computation
+- Bluetooth communication protocol
+- Mobile application for visualization, storage, and export
+
+<!--
+## Testing
+
+Testing done on hardware and software, detailed + summarized results
+
+## Detailed budget
+
+All items and costs
+
+| Item          | Quantity  | Unit Cost  | Total  |
+| ------------- |:---------:|:----------:|-------:|
+| Sample item   | 5         | 10 LKR     | 50 LKR |
+
+## Conclusion
+
+What was achieved, future developments, commercialization plans
+
+-->
+## Links
+
+- [Project Repository](https://github.com/cepdnaclk/e21-3yp-Smart-Laser-Distance-Meter)
+- [Project Page](https://cepdnaclk.github.io/e21-3yp-Smart-Laser-Distance-Meter)
+- [Department of Computer Engineering](http://www.ce.pdn.ac.lk/)
+- [University of Peradeniya](https://eng.pdn.ac.lk/)
+
+[//]: # (Please refer this to learn more about Markdown syntax)
+[//]: # (https://github.com/adam-p/markdown-here/wiki/Markdown-Cheatsheet)
