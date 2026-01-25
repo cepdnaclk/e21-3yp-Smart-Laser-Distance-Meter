@@ -12,6 +12,10 @@ title: Smart Laser Distance Meter
 
 # Smart Laser Distance Meter
 
+<div align="center">
+  <img src="images/download.png" alt="Icon" width="300">
+</div>
+
 ---
 
 ## Team
