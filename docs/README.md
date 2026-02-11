@@ -57,7 +57,11 @@ The system consists of a handheld embedded device and a mobile application. The 
 - Bluetooth transfers data to mobile app
 - Mobile app generates sketches and calculations
 
+---
 
+<div align="center">
+  <img src="images/High Level Architecture Diagram.png" alt="Icon" width="1000">
+</div>
 <!-- *(Insert architecture diagram here)*
 
 High level diagram + description -->
