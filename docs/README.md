@@ -60,7 +60,7 @@ The system consists of a handheld embedded device and a mobile application. The 
 ---
 
 <div align="center">
-  <img src="images/High Level Architecture Diagram.png" alt="Icon" width="1000">
+  <img src="images/High%20Level%20Architecture%20Diagram.png" alt="Icon" width="1000">
 </div>
 <!-- *(Insert architecture diagram here)*
 
