@@ -84,15 +84,25 @@ High level diagram + description -->
 ## Testing
 
 Testing done on hardware and software, detailed + summarized results
-
+ -->
 ## Detailed budget
 
-All items and costs
+### All items and costs
 
 | Item          | Quantity  | Unit Cost  | Total  |
 | ------------- |:---------:|:----------:|-------:|
-| Sample item   | 5         | 10 LKR     | 50 LKR |
+| DTS6012M LiDAR Sensor  | 1  | 6000 LKR  | 6000 LKR |
+| BNO055 9-Axis IMU Module | 1 | 4000 LKR | 4000 LKR |  
+| ESP32 CP2102 Dev Board | 1 | 1500 LKR | 1500 LKR |
+| Green Laser (5 mW) | 1 | 1500 LKR | 1500LKR |
+| 18650 Li-ion Battery | 2 | 1400 LKR | 2800 LKR |
+| 1.8" TFT LCD Display (MD0260) | 1 | 1000 LKR | 1000 LKR |
+| TP4056 Charger + Boost conv. | 1 | 1000 LKR | 1000 LKR |
+| Coin Vibration Motor | 1 | 200 LKR | 200 LKR |
+| 2x18650 Batttery Holder | 1 | 150 LKR | 150 LKR |
+| Active Buzzer | 1 | 100 LKR | 100 LKR |
 
+<!--
 ## Conclusion
 
 What was achieved, future developments, commercialization plans
