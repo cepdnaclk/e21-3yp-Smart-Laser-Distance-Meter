@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:math' as math;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 // ─────────────────────────────────────────────
 // Scale: 1 grid unit (20px) = 100mm = 0.1m
@@ -1062,6 +1065,328 @@ class _SketchScreenState extends State<SketchScreen> {
     );
   }
 
+  // ── PDF Export — paste inside _SketchScreenState ───────────────────────────────────
+
+  Future<void> _exportPdf() async {
+    if (_points.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Draw a room first'),
+          backgroundColor: Color(0xFF333333),
+        ),
+      );
+      return;
+    }
+
+    final pdf = pw.Document();
+
+    // ── Bounding box of the world points ──────────────────────────────────
+    double minX = _points.map((p) => p.dx).reduce(math.min);
+    double maxX = _points.map((p) => p.dx).reduce(math.max);
+    double minY = _points.map((p) => p.dy).reduce(math.min);
+    double maxY = _points.map((p) => p.dy).reduce(math.max);
+
+    // ── Fit drawing into a square canvas (in PDF points) ──────────────────
+    const double canvasSize   = 440.0;   // pts — drawing square
+    const double canvasMargin = 30.0;    // padding inside the square
+    const double drawArea     = canvasSize - canvasMargin * 2;
+
+    final double worldW = (maxX - minX).clamp(1.0, double.infinity);
+    final double worldH = (maxY - minY).clamp(1.0, double.infinity);
+    final double pdfScale = drawArea / math.max(worldW, worldH);
+
+    // World → PDF canvas coords  (PDF origin = bottom-left, Y flipped)
+    PdfPoint toPdf(Offset world) {
+      return PdfPoint(
+        canvasMargin + (world.dx - minX) * pdfScale,
+        canvasSize - canvasMargin - (world.dy - minY) * pdfScale,
+      );
+    }
+
+    // ── Wall count ─────────────────────────────────────────────────────────
+    final int n = _points.length;
+    final int wallCount = _isClosed ? n : n - 1;
+
+    // ── Prepare wall data for the table ────────────────────────────────────
+    final List<Map<String, String>> wallRows = List.generate(wallCount, (i) {
+      final Offset a = _points[i];
+      final Offset b = _points[(i + 1) % n];
+      final double wl = (b - a).distance;
+      return {
+        'wall': 'Wall ${i + 1}',
+        'drawn': _formatLength(wl),
+        'real': _wallRealMm.containsKey(i)
+            ? '${_wallRealMm[i]!.toStringAsFixed(0)} mm'
+            : '—',
+      };
+    });
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        build: (pw.Context ctx) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+
+              // ── Header ─────────────────────────────────────────────────
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        'Room Floor Plan',
+                        style: pw.TextStyle(
+                          fontSize: 20,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.blueGrey800,
+                        ),
+                      ),
+                      pw.SizedBox(height: 3),
+                      pw.Text(
+                        'SmartMeasure Pro  •  ${_formattedDate()}',
+                        style: const pw.TextStyle(
+                          fontSize: 9,
+                          color: PdfColors.grey600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Scale note
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: pw.BoxDecoration(
+                      color: PdfColors.blueGrey50,
+                      borderRadius: const pw.BorderRadius.all(
+                          pw.Radius.circular(4)),
+                      border: pw.Border.all(color: PdfColors.blueGrey200),
+                    ),
+                    child: pw.Text(
+                      '1 grid div = 100 mm',
+                      style: const pw.TextStyle(
+                          fontSize: 9, color: PdfColors.blueGrey600),
+                    ),
+                  ),
+                ],
+              ),
+
+              pw.SizedBox(height: 4),
+              pw.Divider(color: PdfColors.blueGrey200),
+              pw.SizedBox(height: 12),
+
+              // ── Drawing canvas ──────────────────────────────────────────
+              pw.Center(
+                child: pw.Container(
+                  width: canvasSize,
+                  height: canvasSize,
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.white,
+                    border: pw.Border.all(color: PdfColors.blueGrey300),
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(4)),
+                  ),
+                  child: pw.CustomPaint(
+                    painter: (PdfGraphics g, PdfPoint size) {
+                      // ── Light grid ──────────────────────────────────
+                      g.setStrokeColor(PdfColors.grey200);
+                      g.setLineWidth(0.4);
+                      const double gridStep = 20.0; // pts between grid lines
+                      for (double x = 0; x <= size.x; x += gridStep) {
+                        g.moveTo(x, 0);
+                        g.lineTo(x, size.y);
+                        g.strokePath();
+                      }
+                      for (double y = 0; y <= size.y; y += gridStep) {
+                        g.moveTo(0, y);
+                        g.lineTo(size.x, y);
+                        g.strokePath();
+                      }
+
+                      // ── Filled room polygon (if closed) ─────────────
+                      if (_isClosed && n >= 3) {
+                        g.setFillColor(const PdfColor(0.91, 0.96, 1.0));  // ← NEW line
+                        final first = toPdf(_points[0]);
+                        g.moveTo(first.x, first.y);
+                        for (int i = 1; i < n; i++) {
+                          final p = toPdf(_points[i]);
+                          g.lineTo(p.x, p.y);
+                        }
+                        g.closePath();
+                        g.fillPath();
+                      }
+
+                      // ── Walls ────────────────────────────────────────
+                      g.setStrokeColor(PdfColors.blueGrey800);
+                      g.setLineWidth(1.8);
+                      for (int i = 0; i < wallCount; i++) {
+                        final PdfPoint a = toPdf(_points[i]);
+                        final PdfPoint b = toPdf(_points[(i + 1) % n]);
+                        g.moveTo(a.x, a.y);
+                        g.lineTo(b.x, b.y);
+                        g.strokePath();
+                      }
+
+                      // ── Corner points ────────────────────────────────
+                      for (int i = 0; i < n; i++) {
+                        final PdfPoint p = toPdf(_points[i]);
+                        final bool isFirst = i == 0;
+                        g.setFillColor(
+                            isFirst ? PdfColors.green700 : PdfColors.blue700);
+                        g.drawEllipse(p.x, p.y, 3.5, 3.5);
+                        g.fillPath();
+                      }
+                    },
+                  ),
+                ),
+              ),
+
+              pw.SizedBox(height: 16),
+
+              // ── Summary row ─────────────────────────────────────────────
+              if (_isClosed)
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.blueGrey50,
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(4)),
+                    border: pw.Border.all(color: PdfColors.blueGrey200),
+                  ),
+                  child: pw.Row(
+                    mainAxisAlignment:
+                        pw.MainAxisAlignment.spaceAround,
+                    children: [
+                      _pdfSummaryItem('POINTS', '${_points.length}'),
+                      _pdfDivider(),
+                      _pdfSummaryItem(
+                          'PERIMETER', _formatLength(_totalPerimeter())),
+                      _pdfDivider(),
+                      _pdfSummaryItem('AREA', _formatArea(_totalArea())),
+                    ],
+                  ),
+                ),
+
+              pw.SizedBox(height: 14),
+
+              // ── Wall measurements table ──────────────────────────────────
+              pw.Text(
+                'Wall Measurements',
+                style: pw.TextStyle(
+                    fontSize: 11,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.blueGrey700),
+              ),
+              pw.SizedBox(height: 6),
+              pw.Table(
+                border: pw.TableBorder.all(
+                    color: PdfColors.blueGrey200, width: 0.6),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(1.2),
+                  1: const pw.FlexColumnWidth(2),
+                  2: const pw.FlexColumnWidth(2),
+                },
+                children: [
+                  // Header row
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                        color: PdfColors.blueGrey100),
+                    children: ['Wall', 'Drawn Length', 'Real Measurement']
+                        .map(
+                          (h) => pw.Padding(
+                            padding: const pw.EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 5),
+                            child: pw.Text(
+                              h,
+                              style: pw.TextStyle(
+                                fontSize: 9,
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.blueGrey700,
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  // Data rows
+                  ...wallRows.map((row) => pw.TableRow(
+                        children: [
+                          row['wall']!,
+                          row['drawn']!,
+                          row['real']!,
+                        ]
+                            .map(
+                              (c) => pw.Padding(
+                                padding: const pw.EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 5),
+                                child: pw.Text(
+                                  c,
+                                  style: const pw.TextStyle(
+                                      fontSize: 9,
+                                      color: PdfColors.blueGrey800),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      )),
+                ],
+              ),
+
+              pw.Spacer(),
+
+              // ── Footer ──────────────────────────────────────────────────
+              pw.Divider(color: PdfColors.blueGrey200),
+              pw.Text(
+                'SmartMeasure Pro — generated floor plan  •  1 world unit = ${_mmPerUnit.toStringAsFixed(0)} mm',
+                style: const pw.TextStyle(
+                    fontSize: 8, color: PdfColors.grey500),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // ── Show print/share preview ──────────────────────────────────────────
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'room_floor_plan',
+    );
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  String _formattedDate() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}  '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  }
+
+  pw.Widget _pdfSummaryItem(String label, String value) {
+    return pw.Column(
+      children: [
+        pw.Text(label,
+            style: const pw.TextStyle(
+                fontSize: 8, color: PdfColors.blueGrey500)),
+        pw.SizedBox(height: 2),
+        pw.Text(value,
+            style: pw.TextStyle(
+                fontSize: 12,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.blueGrey800)),
+      ],
+    );
+  }
+
+  pw.Widget _pdfDivider() {
+    return pw.Container(
+        width: 1, height: 30, color: PdfColors.blueGrey200);
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
@@ -1569,6 +1894,16 @@ class _SketchScreenState extends State<SketchScreen> {
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                             minWidth: 36, minHeight: 36),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.picture_as_pdf, size: 18),
+                        onPressed: _points.length >= 2 ? _exportPdf : null,
+                        color: const Color(0xFFFF4488),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Export PDF',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
                     ],
                   ),
