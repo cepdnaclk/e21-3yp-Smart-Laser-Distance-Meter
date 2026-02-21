@@ -6,8 +6,8 @@ import 'dart:math' as math;
 // Scale: 1 grid unit (20px) = 100mm = 0.1m
 // So 1 world unit = 5mm
 // ─────────────────────────────────────────────
-const double _mmPerUnit = 5.0;      // 1 world unit = 5 mm
-const double _unitsPerMeter = 200.0; // 200 world units = 1 meter
+const double _mmPerUnit = 5.0;
+const double _unitsPerMeter = 200.0;
 
 String _formatLength(double worldUnits) {
   final double mm = worldUnits * _mmPerUnit;
@@ -57,14 +57,8 @@ class _SketchScreenState extends State<SketchScreen> {
   double? _nearestSnapAngleDeg;
   double? _snapDiffDeg;
 
-  // ── Wall selection for dimension editing ─────────────────────────
-  // -1 = no wall selected. For n points, wall i = segment points[i]→points[i+1]
-  // closing wall = index (points.length - 1)
   int _selectedWallIndex = -1;
-  // Real measured lengths in mm, keyed by wall index
-  // Applied when user types a measurement after tapping a wall
   final Map<int, double> _wallRealMm = {};
-
 
   static const double _panThreshold = 6.0;
   static const double _minorGrid = 20.0;
@@ -99,8 +93,7 @@ class _SketchScreenState extends State<SketchScreen> {
   }
 
   int _findNearPoint(Offset screenPos,
-      {int excludeIndex = -1,
-      double radius = _pointSelectRadiusScreen}) {
+      {int excludeIndex = -1, double radius = _pointSelectRadiusScreen}) {
     for (int i = 0; i < _points.length; i++) {
       if (i == excludeIndex) continue;
       final s = worldToScreen(_points[i]);
@@ -296,8 +289,7 @@ class _SketchScreenState extends State<SketchScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-                'Adjust angle of last wall (counterclockwise from east)',
+            const Text('Adjust angle of last wall (counterclockwise from east)',
                 style: TextStyle(
                     color: Color(0xFF888888),
                     fontFamily: 'monospace',
@@ -314,13 +306,11 @@ class _SketchScreenState extends State<SketchScreen> {
                   fontSize: 20),
               decoration: const InputDecoration(
                 suffixText: '°',
-                suffixStyle:
-                    TextStyle(color: Color(0xFF00CC44), fontSize: 20),
+                suffixStyle: TextStyle(color: Color(0xFF00CC44), fontSize: 20),
                 enabledBorder: OutlineInputBorder(
                     borderSide: BorderSide(color: Color(0xFF555555))),
                 focusedBorder: OutlineInputBorder(
-                    borderSide:
-                        BorderSide(color: Color(0xFF00CC44), width: 2)),
+                    borderSide: BorderSide(color: Color(0xFF00CC44), width: 2)),
                 filled: true,
                 fillColor: Color(0xFF1A1A1A),
               ),
@@ -389,8 +379,8 @@ class _SketchScreenState extends State<SketchScreen> {
                 Navigator.pop(ctx);
               }
             },
-            child: const Text('APPLY',
-                style: TextStyle(fontFamily: 'monospace')),
+            child:
+                const Text('APPLY', style: TextStyle(fontFamily: 'monospace')),
           ),
         ],
       ),
@@ -646,10 +636,8 @@ class _SketchScreenState extends State<SketchScreen> {
       return;
     }
     if (_isClosed) {
-      // First check: did the user tap near a wall segment?
       final wallIdx = _findNearWall(details.localPosition);
       if (wallIdx >= 0) {
-        // Deselect any point, select the wall, open edit dialog
         setState(() {
           _activePointIndex = -1;
           _selectedWallIndex = wallIdx;
@@ -657,7 +645,6 @@ class _SketchScreenState extends State<SketchScreen> {
         _showWallEditDialog(wallIdx);
         return;
       }
-      // Otherwise: point selection (existing behaviour)
       final idx = _findNearPoint(details.localPosition,
           radius: _pointSelectRadiusScreen);
       setState(() {
@@ -807,7 +794,6 @@ class _SketchScreenState extends State<SketchScreen> {
     return '${_currentAngleDeg!.toStringAsFixed(1)}°';
   }
 
-  // Compute total perimeter in world units
   double _totalPerimeter() {
     if (_points.length < 2) return 0;
     double total = 0;
@@ -824,14 +810,32 @@ class _SketchScreenState extends State<SketchScreen> {
     return total;
   }
 
-  // ── Wall hit-test: returns wall index if tap is near a wall segment ──
-  // Wall 0 = points[0]→points[1], ..., closing wall = points[n-1]→points[0]
+  double _totalArea() {
+    if (!_isClosed || _points.length < 3) return 0;
+    double area = 0;
+    final n = _points.length;
+    for (int i = 0; i < n; i++) {
+      final j = (i + 1) % n;
+      area += _points[i].dx * _points[j].dy;
+      area -= _points[j].dx * _points[i].dy;
+    }
+    return area.abs() / 2.0;
+  }
+
+  String _formatArea(double worldUnitsSquared) {
+    final double mm2 = worldUnitsSquared * _mmPerUnit * _mmPerUnit;
+    final double m2 = mm2 / 1000000.0;
+    if (m2 >= 0.01) {
+      return '${m2.toStringAsFixed(2)} m²';
+    }
+    return '${mm2.toStringAsFixed(0)} mm²';
+  }
+
   int _findNearWall(Offset screenPos) {
     if (_points.length < 2) return -1;
-    const double hitThresh = 18.0; // px from wall line
+    const double hitThresh = 18.0;
     final List<Offset> sp = _points.map(worldToScreen).toList();
     final int n = sp.length;
-    // Check all segments including closing wall
     final int wallCount = _isClosed ? n : n - 1;
     for (int i = 0; i < wallCount; i++) {
       final Offset a = sp[i];
@@ -853,7 +857,6 @@ class _SketchScreenState extends State<SketchScreen> {
     return (p - proj).distance;
   }
 
-  // ── Get current length of wall i in world units ──────────────────
   double _wallLengthWorld(int wallIndex) {
     final int n = _points.length;
     final Offset a = _points[wallIndex];
@@ -863,23 +866,16 @@ class _SketchScreenState extends State<SketchScreen> {
     return math.sqrt(dx * dx + dy * dy);
   }
 
-  // ── Rescale all points when user enters a real measurement ────────
-  // Strategy: keep the FROM point of the wall fixed, stretch/shrink
-  // all OTHER points by the same ratio so the whole shape rescales.
   void _applyRealMeasurement(int wallIndex, double realMm) {
     final double pixelLen = _wallLengthWorld(wallIndex);
     if (pixelLen < 1e-6) return;
-    final double realUnits = realMm / _mmPerUnit; // convert mm → world units
+    final double realUnits = realMm / _mmPerUnit;
     final double ratio = realUnits / pixelLen;
     if (ratio <= 0) return;
 
     _saveUndo();
 
-    // Anchor = the FROM point of the selected wall (stays fixed in place)
-    final int n = _points.length;
     final Offset anchor = _points[wallIndex];
-
-    // Scale every point relative to anchor
     final List<Offset> newPoints = _points.map((pt) {
       final dx = pt.dx - anchor.dx;
       final dy = pt.dy - anchor.dy;
@@ -894,21 +890,17 @@ class _SketchScreenState extends State<SketchScreen> {
     });
   }
 
-  // ── Dialog: user tapped a wall, asks for real dimension ──────────
   void _showWallEditDialog(int wallIndex) {
-    final double currentLenMm = _wallLengthWorld(wallIndex) * _mmPerUnit;
     final String existingReal = _wallRealMm.containsKey(wallIndex)
         ? _wallRealMm[wallIndex]!.toStringAsFixed(0)
         : '';
 
     final controller = TextEditingController(text: existingReal);
 
-    // Which wall label to show (e.g. "Wall 1", "Wall 2 (closing)")
     final int n = _points.length;
     final bool isClosing = _isClosed && wallIndex == n - 1;
-    final String wallLabel = isClosing
-        ? 'Wall ${wallIndex + 1} (closing)'
-        : 'Wall ${wallIndex + 1}';
+    final String wallLabel =
+        isClosing ? 'Wall ${wallIndex + 1} (closing)' : 'Wall ${wallIndex + 1}';
 
     showDialog(
       context: context,
@@ -930,10 +922,8 @@ class _SketchScreenState extends State<SketchScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Current drawn length
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xFF0D1A27),
                 borderRadius: BorderRadius.circular(6),
@@ -964,15 +954,14 @@ class _SketchScreenState extends State<SketchScreen> {
                     fontFamily: 'monospace',
                     fontSize: 11)),
             const SizedBox(height: 8),
-            // Input row with unit selector
             Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: controller,
                     autofocus: true,
-                    keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     style: const TextStyle(
                         color: Color(0xFF00DDFF),
                         fontFamily: 'monospace',
@@ -982,21 +971,18 @@ class _SketchScreenState extends State<SketchScreen> {
                       hintText: '0',
                       hintStyle: TextStyle(color: Color(0xFF334455)),
                       enabledBorder: OutlineInputBorder(
-                          borderSide:
-                              BorderSide(color: Color(0xFF334466))),
+                          borderSide: BorderSide(color: Color(0xFF334466))),
                       focusedBorder: OutlineInputBorder(
-                          borderSide: BorderSide(
-                              color: Color(0xFF00AAFF), width: 2)),
+                          borderSide:
+                              BorderSide(color: Color(0xFF00AAFF), width: 2)),
                       filled: true,
                       fillColor: Color(0xFF0D1A27),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Unit selector mm / m
                 _UnitSelector(
                   onUnitChanged: (unit) {
-                    // Convert current value if already typed
                     final v = double.tryParse(controller.text);
                     if (v == null) return;
                     if (unit == 'm') {
@@ -1009,7 +995,6 @@ class _SketchScreenState extends State<SketchScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            // Quick preset buttons (common room dimensions)
             Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -1026,13 +1011,12 @@ class _SketchScreenState extends State<SketchScreen> {
                 return GestureDetector(
                   onTap: () => controller.text = mm.toStringAsFixed(0),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0D1A27),
                       borderRadius: BorderRadius.circular(4),
-                      border:
-                          Border.all(color: const Color(0xFF334466)),
+                      border: Border.all(color: const Color(0xFF334466)),
                     ),
                     child: Text(label,
                         style: const TextStyle(
@@ -1105,10 +1089,17 @@ class _SketchScreenState extends State<SketchScreen> {
       }
     }
 
+    // Show angle strip only while actively drawing (not closed, angle is live)
+    final bool showAngleStrip = _currentAngleDeg != null &&
+        _activePointIndex < 0 &&
+        _points.length >= 2 &&
+        !_isClosed;
+
     return Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
       body: Stack(
         children: [
+          // ── Canvas ───────────────────────────────────────────────────
           Listener(
             onPointerSignal: _onPointerSignal,
             onPointerDown: _onPointerDown,
@@ -1171,7 +1162,7 @@ class _SketchScreenState extends State<SketchScreen> {
                     const Icon(Icons.straighten,
                         color: Color(0xFF00AAFF), size: 20),
                     const SizedBox(width: 10),
-                    Flexible(
+                    Expanded(
                       child: Text(
                         _isClosed
                             ? _selectedWallIndex >= 0
@@ -1201,15 +1192,13 @@ class _SketchScreenState extends State<SketchScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // Scale legend chip
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFF3A3A3A),
                         borderRadius: BorderRadius.circular(4),
-                        border:
-                            Border.all(color: const Color(0xFF555555)),
+                        border: Border.all(color: const Color(0xFF555555)),
                       ),
                       child: const Text(
                         '1div=100mm',
@@ -1239,21 +1228,21 @@ class _SketchScreenState extends State<SketchScreen> {
             ),
           ),
 
-          // ── Polar tracking + live distance HUD ──────────────────────
+          // ── Polar tracking HUD (floating above bottom bar) ───────────
           if (_currentAngleDeg != null &&
               _activePointIndex < 0 &&
               !_isClosed &&
               _points.length >= 1 &&
               _cursorWorld != null)
             Positioned(
-              bottom: 60,
+              bottom: showAngleStrip ? 86 : 60,
               left: 0,
               right: 0,
               child: Center(
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 80),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: _isAngleSnapped
                         ? const Color(0xFF003311).withOpacity(0.95)
@@ -1269,7 +1258,6 @@ class _SketchScreenState extends State<SketchScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Angle
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1291,7 +1279,6 @@ class _SketchScreenState extends State<SketchScreen> {
                           ),
                         ],
                       ),
-                      // Live distance in real units
                       if (liveDistance != null) ...[
                         const SizedBox(width: 16),
                         Container(
@@ -1319,7 +1306,6 @@ class _SketchScreenState extends State<SketchScreen> {
                           ],
                         ),
                       ],
-                      // Nearest snap
                       if (_nearestSnapAngleDeg != null) ...[
                         const SizedBox(width: 16),
                         Container(
@@ -1388,159 +1374,206 @@ class _SketchScreenState extends State<SketchScreen> {
               ),
             ),
 
-          // ── Bottom toolbar ───────────────────────────────────────────
+          // ── Bottom toolbar (angle strip + main bar stacked) ──────────
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: Container(
-              height: 52,
-              color: const Color(0xFF2D2D2D),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _StatusItem(
-                          label: 'MODE',
-                          value: _isClosed
-                              ? _activePointIndex >= 0
-                                  ? 'EDIT'
-                                  : 'DONE'
-                              : _isDraggingLastPoint
-                                  ? 'DRAG'
-                                  : _activePointIndex >= 0
-                                      ? 'EDIT'
-                                      : 'DRAW',
-                        ),
-                        const SizedBox(width: 8),
-                        _StatusItem(
-                            label: 'PTS',
-                            value: '${_points.length}'),
-                        // Show total perimeter when 2+ points
-                        if (_points.length >= 2) ...[
-                          const SizedBox(width: 8),
-                          _StatusItem(
-                            label: 'PERIM',
-                            value: _formatLength(_totalPerimeter()),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ── Angle edit strip — full width, shown while drawing ─
+                if (showAngleStrip)
+                  GestureDetector(
+                    onTap: _showAngleEditor,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _isAngleSnapped
+                            ? const Color(0xFF003A1A)
+                            : const Color(0xFF363636),
+                        border: Border(
+                          top: BorderSide(
+                            color: _isAngleSnapped
+                                ? const Color(0xFF00CC44)
+                                : const Color(0xFF555555),
+                            width: _isAngleSnapped ? 1.5 : 1.0,
                           ),
-                        ],
-                        if (_activePointIndex >= 0 &&
-                            _activePointIndex < _points.length) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: _StatusItem(
-                              label: 'PT',
-                              value:
-                                  '${_activePointIndex + 1}',
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          // Left: icon + label
+                          if (_isAngleSnapped)
+                            const Icon(Icons.lock,
+                                size: 13, color: Color(0xFF00CC44))
+                          else
+                            const Icon(Icons.rotate_90_degrees_ccw,
+                                size: 13, color: Color(0xFF888888)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'ANGLE',
+                            style: TextStyle(
+                              color: _isAngleSnapped
+                                  ? const Color(0xFF00CC44)
+                                  : const Color(0xFF888888),
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                              letterSpacing: 1.0,
                             ),
                           ),
-                        ],
-                        if (_currentAngleDeg != null &&
-                            _activePointIndex < 0 &&
-                            _points.length >= 2) ...[
                           const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: _showAngleEditor,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 3),
-                              decoration: BoxDecoration(
+                          // Angle value — large and prominent
+                          Text(
+                            _angleLabel(),
+                            style: TextStyle(
+                              color: _isAngleSnapped
+                                  ? const Color(0xFF00FF66)
+                                  : const Color(0xFFEEEEEE),
+                              fontSize: 20,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Right: tap-to-edit chip
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _isAngleSnapped
+                                  ? const Color(0xFF005522)
+                                  : const Color(0xFF4A4A4A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
                                 color: _isAngleSnapped
                                     ? const Color(0xFF00CC44)
-                                        .withOpacity(0.15)
-                                    : const Color(0xFF444444),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: _isAngleSnapped
-                                      ? const Color(0xFF00CC44)
-                                      : const Color(0xFF666666),
-                                  width: 1,
-                                ),
+                                    : const Color(0xFF666666),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (_isAngleSnapped) ...[
-                                    const Icon(Icons.lock,
-                                        size: 9,
-                                        color: Color(0xFF00CC44)),
-                                    const SizedBox(width: 3),
-                                  ],
-                                  Text(
-                                    _angleLabel(),
-                                    style: TextStyle(
-                                      color: _isAngleSnapped
-                                          ? const Color(0xFF00CC44)
-                                          : const Color(0xFFAAAAAA),
-                                      fontSize: 11,
-                                      fontFamily: 'monospace',
-                                      fontWeight: _isAngleSnapped
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                    ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.edit,
+                                    size: 11, color: Color(0xFFAAAAAA)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'EDIT',
+                                  style: TextStyle(
+                                    color: Color(0xFFCCCCCC),
+                                    fontSize: 10,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  const SizedBox(width: 2),
-                                  const Icon(Icons.edit,
-                                      size: 9,
-                                      color: Color(0xFF666666)),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
-                      ],
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.undo, size: 18),
-                    onPressed: _undoStack.isEmpty ? null : _undo,
-                    color: const Color(0xFFFFAA00),
-                    disabledColor: const Color(0xFF555555),
-                    tooltip: 'Undo',
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.redo, size: 18),
-                    onPressed: _redoStack.isEmpty ? null : _redo,
-                    color: const Color(0xFFFFAA00),
-                    disabledColor: const Color(0xFF555555),
-                    tooltip: 'Redo',
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    onPressed: _points.isEmpty ? null : _clear,
-                    color: const Color(0xFFFF4444),
-                    disabledColor: const Color(0xFF555555),
-                    tooltip: 'Clear',
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
-                  const SizedBox(width: 4),
-                  if (_isClosed)
-                    ElevatedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.arrow_forward, size: 16),
-                      label: const Text('NEXT'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00AAFF),
-                        foregroundColor: Colors.white,
-                        textStyle: const TextStyle(
-                            fontSize: 12, fontFamily: 'monospace'),
                       ),
                     ),
-                ],
-              ),
+                  ),
+
+                // ── Main bottom bar ────────────────────────────────────
+                Container(
+                  height: 52,
+                  color: const Color(0xFF2D2D2D),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      // ── Left: status items ───────────────────────────
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _StatusItem(
+                                label: 'MODE',
+                                value: _isClosed
+                                    ? _activePointIndex >= 0
+                                        ? 'EDIT'
+                                        : 'DONE'
+                                    : _isDraggingLastPoint
+                                        ? 'DRAG'
+                                        : _activePointIndex >= 0
+                                            ? 'EDIT'
+                                            : 'DRAW',
+                              ),
+                              const SizedBox(width: 8),
+                              _StatusItem(
+                                  label: 'PTS',
+                                  value: '${_points.length}'),
+
+                              // ── PERIM: only when shape is closed ──────
+                              if (_isClosed && _points.length >= 2) ...[
+                                const SizedBox(width: 8),
+                                _StatusItem(
+                                  label: 'PERIM',
+                                  value: _formatLength(_totalPerimeter()),
+                                ),
+                              ],
+
+                              // ── AREA: only when shape is closed ───────
+                              if (_isClosed && _points.length >= 3) ...[
+                                const SizedBox(width: 8),
+                                _StatusItem(
+                                  label: 'AREA',
+                                  value: _formatArea(_totalArea()),
+                                ),
+                              ],
+
+                              if (_activePointIndex >= 0 &&
+                                  _activePointIndex < _points.length) ...[
+                                const SizedBox(width: 8),
+                                _StatusItem(
+                                  label: 'PT',
+                                  value: '${_activePointIndex + 1}',
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // ── Right: action buttons ────────────────────────
+                      IconButton(
+                        icon: const Icon(Icons.undo, size: 18),
+                        onPressed: _undoStack.isEmpty ? null : _undo,
+                        color: const Color(0xFFFFAA00),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Undo',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.redo, size: 18),
+                        onPressed: _redoStack.isEmpty ? null : _redo,
+                        color: const Color(0xFFFFAA00),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Redo',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        onPressed: _points.isEmpty ? null : _clear,
+                        color: const Color(0xFFFF4444),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Clear',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1648,23 +1681,10 @@ class _SketchPainter extends CustomPainter {
     _drawSnapCursor(canvas);
   }
 
-  // ── AutoCAD-style dimension annotation ───────────────────────────────
-  //
-  //  Dimension line is always pushed OUTSIDE the shape
-  //  (away from the shape centroid).
-  //
-  //        outside
-  //   ←──────────────→   dim line + ticks
-  //   │              │   extension lines
-  //   ●──────────────●   wall
-  //        inside
-  //
-  void _drawWallLengthLabel(
-      Canvas canvas, Offset fromWorld, Offset toWorld,
+  void _drawWallLengthLabel(Canvas canvas, Offset fromWorld, Offset toWorld,
       {Offset? centroid, double? overrideMm, bool isSelected = false}) {
-
     final fromScreen = worldToScreen(fromWorld);
-    final toScreen   = worldToScreen(toWorld);
+    final toScreen = worldToScreen(toWorld);
 
     final worldUnits = _worldDist(fromWorld, toWorld);
     if (worldUnits < 5) return;
@@ -1672,43 +1692,35 @@ class _SketchPainter extends CustomPainter {
     final screenLen = _worldDist(fromScreen, toScreen);
     if (screenLen < 28) return;
 
-    // ── Unit vectors along wall and perpendicular ────────────────────
     final dx = toScreen.dx - fromScreen.dx;
     final dy = toScreen.dy - fromScreen.dy;
     final wallLen = math.sqrt(dx * dx + dy * dy);
-    final ux =  dx / wallLen;   // unit along wall
-    final uy =  dy / wallLen;
-    // Two candidates for "outward" perpendicular
+    final ux = dx / wallLen;
+    final uy = dy / wallLen;
     double nx = -uy;
-    double ny =  ux;
+    double ny = ux;
 
-    // ── Determine outward direction using centroid ───────────────────
-    // Wall midpoint in screen space
     final wallMidX = (fromScreen.dx + toScreen.dx) / 2;
     final wallMidY = (fromScreen.dy + toScreen.dy) / 2;
 
     if (centroid != null) {
-      // Convert centroid to screen
       final cScreen = worldToScreen(centroid);
-      // Vector from wall mid → centroid
       final toCx = cScreen.dx - wallMidX;
       final toCy = cScreen.dy - wallMidY;
-      // If our perp (nx,ny) points TOWARD centroid, flip it
       if (toCx * nx + toCy * ny > 0) {
         nx = -nx;
         ny = -ny;
       }
     }
 
-    // ── Offsets ──────────────────────────────────────────────────────
-    const double dimOffset  = 22.0;  // distance from wall to dim line
-    const double extOverrun =  5.0;  // how far extension line goes past dim line
-    const double tickLen    =  7.0;  // tick mark length
+    const double dimOffset = 22.0;
+    const double extOverrun = 5.0;
+    const double tickLen = 7.0;
 
-    final dFrom = Offset(fromScreen.dx + nx * dimOffset,
-                         fromScreen.dy + ny * dimOffset);
-    final dTo   = Offset(toScreen.dx   + nx * dimOffset,
-                         toScreen.dy   + ny * dimOffset);
+    final dFrom = Offset(
+        fromScreen.dx + nx * dimOffset, fromScreen.dy + ny * dimOffset);
+    final dTo =
+        Offset(toScreen.dx + nx * dimOffset, toScreen.dy + ny * dimOffset);
 
     final Color dimColor = overrideMm != null
         ? const Color(0xFF00AA44)
@@ -1717,17 +1729,16 @@ class _SketchPainter extends CustomPainter {
             : const Color(0xFF0055AA);
 
     final dimPaint = Paint()
-      ..color      = dimColor
+      ..color = dimColor
       ..strokeWidth = isSelected ? 1.4 : 1.0
-      ..style      = PaintingStyle.stroke
-      ..strokeCap  = StrokeCap.round;
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
 
     final extPaint = Paint()
-      ..color      = dimColor.withOpacity(0.5)
+      ..color = dimColor.withOpacity(0.5)
       ..strokeWidth = 0.8
-      ..style      = PaintingStyle.stroke;
+      ..style = PaintingStyle.stroke;
 
-    // ── Extension lines ──────────────────────────────────────────────
     canvas.drawLine(
       Offset(fromScreen.dx + nx * 3, fromScreen.dy + ny * 3),
       Offset(dFrom.dx + nx * extOverrun, dFrom.dy + ny * extOverrun),
@@ -1739,10 +1750,8 @@ class _SketchPainter extends CustomPainter {
       extPaint,
     );
 
-    // ── Dimension line ────────────────────────────────────────────────
     canvas.drawLine(dFrom, dTo, dimPaint);
 
-    // ── Tick marks (45° AutoCAD style) ───────────────────────────────
     void drawTick(Offset centre) {
       final tx = (ux + nx) / math.sqrt(2);
       final ty = (uy + ny) / math.sqrt(2);
@@ -1750,17 +1759,16 @@ class _SketchPainter extends CustomPainter {
         Offset(centre.dx - tx * tickLen / 2, centre.dy - ty * tickLen / 2),
         Offset(centre.dx + tx * tickLen / 2, centre.dy + ty * tickLen / 2),
         Paint()
-          ..color      = dimColor
+          ..color = dimColor
           ..strokeWidth = 1.5
-          ..strokeCap  = StrokeCap.round,
+          ..strokeCap = StrokeCap.round,
       );
     }
+
     drawTick(dFrom);
     drawTick(dTo);
 
-    // ── Text centred on dim line, rotated to follow wall ─────────────
-    final mid = Offset(
-        (dFrom.dx + dTo.dx) / 2, (dFrom.dy + dTo.dy) / 2);
+    final mid = Offset((dFrom.dx + dTo.dx) / 2, (dFrom.dy + dTo.dy) / 2);
 
     final text = _formatLength(worldUnits);
     final tp = TextPainter(
@@ -1784,8 +1792,7 @@ class _SketchPainter extends CustomPainter {
     if (angle > math.pi / 2 || angle < -math.pi / 2) angle += math.pi;
     canvas.rotate(angle);
 
-    // White knockout behind text
-    final halfW = tp.width  / 2 + 3;
+    final halfW = tp.width / 2 + 3;
     final halfH = tp.height / 2 + 1;
     canvas.drawRect(
       Rect.fromLTRB(-halfW, -halfH, halfW, halfH),
@@ -1856,8 +1863,8 @@ class _SketchPainter extends CustomPainter {
     );
   }
 
-  void _drawWallAngleLabel(Canvas canvas, Offset fromScreen,
-      Offset toScreen, double angleDeg, bool isSnapped) {
+  void _drawWallAngleLabel(Canvas canvas, Offset fromScreen, Offset toScreen,
+      double angleDeg, bool isSnapped) {
     final mid = Offset(
       (fromScreen.dx + toScreen.dx) / 2,
       (fromScreen.dy + toScreen.dy) / 2,
@@ -1905,9 +1912,8 @@ class _SketchPainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(bgRect, const Radius.circular(4)),
       Paint()
-        ..color = snappedDisplay
-            ? const Color(0xFF00CC44)
-            : const Color(0xFFCCCCCC)
+        ..color =
+            snappedDisplay ? const Color(0xFF00CC44) : const Color(0xFFCCCCCC)
         ..strokeWidth = snappedDisplay ? 1.5 : 1.0
         ..style = PaintingStyle.stroke,
     );
@@ -2029,9 +2035,8 @@ class _SketchPainter extends CustomPainter {
       screenAngleRad,
       false,
       Paint()
-        ..color = isAngleSnapped
-            ? const Color(0xFF00CC44)
-            : const Color(0xFF888888)
+        ..color =
+            isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFF888888)
         ..strokeWidth = 1.5
         ..style = PaintingStyle.stroke,
     );
@@ -2126,8 +2131,7 @@ class _SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawGridLines(
-      Canvas canvas, Size size, double spacing, Paint paint) {
+  void _drawGridLines(Canvas canvas, Size size, double spacing, Paint paint) {
     final double startX = panOffset.dx % spacing;
     for (double x = startX; x <= size.width; x += spacing) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
@@ -2144,12 +2148,10 @@ class _SketchPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     final o = panOffset;
     if (o.dy >= 0 && o.dy <= size.height) {
-      canvas.drawLine(
-          Offset(0, o.dy), Offset(size.width, o.dy), axisPaint);
+      canvas.drawLine(Offset(0, o.dy), Offset(size.width, o.dy), axisPaint);
     }
     if (o.dx >= 0 && o.dx <= size.width) {
-      canvas.drawLine(
-          Offset(o.dx, 0), Offset(o.dx, size.height), axisPaint);
+      canvas.drawLine(Offset(o.dx, 0), Offset(o.dx, size.height), axisPaint);
     }
   }
 
@@ -2173,8 +2175,7 @@ class _SketchPainter extends CustomPainter {
         ..close();
       canvas.drawPath(path, p);
     } else {
-      canvas.drawRect(
-          Rect.fromCenter(center: s, width: 10, height: 10), p);
+      canvas.drawRect(Rect.fromCenter(center: s, width: 10, height: 10), p);
     }
   }
 
@@ -2202,8 +2203,6 @@ class _SketchPainter extends CustomPainter {
     final List<Offset> sp =
         points.map<Offset>((p) => worldToScreen(p)).toList();
 
-    // ── Compute shape centroid in world space ─────────────────────────
-    // Used so every dimension line is pushed OUTSIDE the shape.
     Offset? centroid;
     if (points.length >= 2) {
       double cx = 0, cy = 0;
@@ -2222,7 +2221,6 @@ class _SketchPainter extends CustomPainter {
       canvas.drawPath(path, fillPaint);
     }
 
-    // Selected wall highlight paint
     final selectedWallPaint = Paint()
       ..color = const Color(0xFFFF8800)
       ..strokeWidth = 3.5
@@ -2245,12 +2243,10 @@ class _SketchPainter extends CustomPainter {
         paint = snapWallPaint;
       }
       canvas.drawLine(sp[i], sp[i + 1], paint);
-      // Dimension outside the shape — use real mm if assigned
-      final bool isSelected = i == selectedWallIndex;
       _drawWallLengthLabel(canvas, points[i], points[i + 1],
           centroid: centroid,
           overrideMm: wallRealMm[i],
-          isSelected: isSelected);
+          isSelected: i == selectedWallIndex);
     }
 
     if (isClosed && sp.length >= 2) {
@@ -2264,7 +2260,6 @@ class _SketchPainter extends CustomPainter {
         paint = snapWallPaint;
       }
       canvas.drawLine(sp.last, sp.first, paint);
-      // Closing wall dimension
       _drawWallLengthLabel(canvas, points.last, points.first,
           centroid: centroid,
           overrideMm: wallRealMm[closingWallIdx],
@@ -2276,7 +2271,6 @@ class _SketchPainter extends CustomPainter {
         sp.isNotEmpty &&
         activePointIndex < 0) {
       canvas.drawLine(sp.last, worldToScreen(cursorWorld!), rubberPaint);
-      // Live length while drawing — use centroid of current partial shape
       _drawWallLengthLabel(canvas, points.last, cursorWorld!,
           centroid: centroid);
       if (points.length >= 3) {
@@ -2304,11 +2298,15 @@ class _SketchPainter extends CustomPainter {
       final isSnapTarget = i == snapTargetIndex;
 
       if (isSnapTarget) {
-        canvas.drawCircle(s, 20,
+        canvas.drawCircle(
+            s,
+            20,
             Paint()
               ..color = const Color(0xFF00CC44).withOpacity(0.25)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(s, 20,
+        canvas.drawCircle(
+            s,
+            20,
             Paint()
               ..color = const Color(0xFF00CC44)
               ..strokeWidth = 2.0
@@ -2316,27 +2314,37 @@ class _SketchPainter extends CustomPainter {
       }
 
       if (isActive) {
-        canvas.drawCircle(s, lastPointGlowRadius,
+        canvas.drawCircle(
+            s,
+            lastPointGlowRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.10)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(s, lastPointRingRadius,
+        canvas.drawCircle(
+            s,
+            lastPointRingRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.30)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(s, lastPointRingRadius,
+        canvas.drawCircle(
+            s,
+            lastPointRingRadius,
             Paint()
               ..color = const Color(0xFFFF6600)
               ..strokeWidth = 1.5
               ..style = PaintingStyle.stroke);
       } else if (isLast) {
-        canvas.drawCircle(s, lastPointGlowRadius,
+        canvas.drawCircle(
+            s,
+            lastPointGlowRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.10)
                   : const Color(0xFFFF6600).withOpacity(0.08)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(s, lastPointRingRadius,
+        canvas.drawCircle(
+            s,
+            lastPointRingRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.25)
@@ -2344,7 +2352,9 @@ class _SketchPainter extends CustomPainter {
                       ? const Color(0xFFFF6600).withOpacity(0.35)
                       : const Color(0xFFFF6600).withOpacity(0.15)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(s, lastPointRingRadius,
+        canvas.drawCircle(
+            s,
+            lastPointRingRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44)
@@ -2355,19 +2365,16 @@ class _SketchPainter extends CustomPainter {
 
       Color dotColor;
       Color borderColor;
-      final double dotRadius =
-          (isLast || isActive) ? 7 : (isFirst ? 6 : 4);
+      final double dotRadius = (isLast || isActive) ? 7 : (isFirst ? 6 : 4);
 
       if (isActive) {
         dotColor = const Color(0xFFFF6600);
         borderColor = const Color(0xFFFF6600);
       } else if (isLast) {
-        dotColor = isAngleSnapped
-            ? const Color(0xFF00CC44)
-            : const Color(0xFFFF6600);
-        borderColor = isAngleSnapped
-            ? const Color(0xFF00CC44)
-            : const Color(0xFFFF6600);
+        dotColor =
+            isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFFFF6600);
+        borderColor =
+            isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFFFF6600);
       } else if (isFirst) {
         dotColor = const Color(0xFF00CC44);
         borderColor = const Color(0xFF00CC44);
@@ -2392,7 +2399,7 @@ class _SketchPainter extends CustomPainter {
   bool shouldRepaint(_SketchPainter old) => true;
 }
 
-// ── Simple mm/m toggle used inside the wall edit dialog ─────────────────
+// ── Simple mm/m toggle ───────────────────────────────────────────────────
 class _UnitSelector extends StatefulWidget {
   final void Function(String unit) onUnitChanged;
   const _UnitSelector({required this.onUnitChanged});
@@ -2421,9 +2428,7 @@ class _UnitSelectorState extends State<_UnitSelector> {
             padding: const EdgeInsets.symmetric(vertical: 6),
             margin: const EdgeInsets.only(bottom: 2),
             decoration: BoxDecoration(
-              color: active
-                  ? const Color(0xFF00AAFF)
-                  : const Color(0xFF0D1A27),
+              color: active ? const Color(0xFF00AAFF) : const Color(0xFF0D1A27),
               borderRadius: BorderRadius.circular(4),
               border: Border.all(
                 color: active
@@ -2434,14 +2439,11 @@ class _UnitSelectorState extends State<_UnitSelector> {
             alignment: Alignment.center,
             child: Text(u,
                 style: TextStyle(
-                    color: active
-                        ? Colors.white
-                        : const Color(0xFF556677),
+                    color: active ? Colors.white : const Color(0xFF556677),
                     fontFamily: 'monospace',
                     fontSize: 12,
-                    fontWeight: active
-                        ? FontWeight.bold
-                        : FontWeight.normal)),
+                    fontWeight:
+                        active ? FontWeight.bold : FontWeight.normal)),
           ),
         );
       }).toList(),
