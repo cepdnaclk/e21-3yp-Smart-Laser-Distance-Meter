@@ -59,6 +59,7 @@ class _SketchScreenState extends State<SketchScreen> {
 
   int _selectedWallIndex = -1;
   final Map<int, double> _wallRealMm = {};
+  bool _rescaleApplied = false;
 
   static const double _panThreshold = 6.0;
   static const double _minorGrid = 20.0;
@@ -742,6 +743,7 @@ class _SketchScreenState extends State<SketchScreen> {
       _snapDiffDeg = null;
       _snappedAngle = null;
       _isAngleSnapped = false;
+      _rescaleApplied = false;
     });
   }
 
@@ -783,6 +785,8 @@ class _SketchScreenState extends State<SketchScreen> {
       _snapTargetIndex = null;
       _prevWallAngle = null;
       _nextWallAngle = null;
+      _wallRealMm.clear();
+      _rescaleApplied = false;
     });
   }
 
@@ -866,28 +870,91 @@ class _SketchScreenState extends State<SketchScreen> {
     return math.sqrt(dx * dx + dy * dy);
   }
 
-  void _applyRealMeasurement(int wallIndex, double realMm) {
-    final double pixelLen = _wallLengthWorld(wallIndex);
-    if (pixelLen < 1e-6) return;
-    final double realUnits = realMm / _mmPerUnit;
-    final double ratio = realUnits / pixelLen;
-    if (ratio <= 0) return;
+  int _totalWallCount() {
+    if (_points.length < 2) return 0;
+    return _isClosed ? _points.length : _points.length - 1;
+  }
 
-    _saveUndo();
+  bool _allWallsMeasured() {
+    final total = _totalWallCount();
+    if (total == 0) return false;
+    for (int i = 0; i < total; i++) {
+      if (!_wallRealMm.containsKey(i)) return false;
+    }
+    return true;
+  }
 
-    final Offset anchor = _points[wallIndex];
-    final List<Offset> newPoints = _points.map((pt) {
-      final dx = pt.dx - anchor.dx;
-      final dy = pt.dy - anchor.dy;
-      return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
-    }).toList();
-
+  /// Just store the measurement label — do NOT rescale yet.
+  void _saveMeasurement(int wallIndex, double realMm) {
     setState(() {
-      _points = newPoints;
       _wallRealMm[wallIndex] = realMm;
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
+  }
+
+  /// Reconstruct all points wall-by-wall:
+  /// - Keep each wall's drawn ANGLE exactly as-is
+  /// - Replace each wall's LENGTH with the user-entered real measurement
+  /// Called only after all walls have been measured.
+  void _applyRescaleAll() {
+    if (!_allWallsMeasured()) return;
+    final int n = _points.length;
+    if (n < 2) return;
+
+    _saveUndo();
+
+    // Start from point 0 (keep its screen position as anchor).
+    final List<Offset> newPoints = List<Offset>.filled(n, Offset.zero);
+    newPoints[0] = _points[0];
+
+    final int wallCount = _isClosed ? n : n - 1;
+
+    for (int i = 0; i < wallCount; i++) {
+      final Offset from = _points[i];
+      final Offset to = _points[(i + 1) % n];
+
+      // Compute the drawn angle (direction) of this wall.
+      final double dx = to.dx - from.dx;
+      final double dy = to.dy - from.dy;
+      final double drawnLen = math.sqrt(dx * dx + dy * dy);
+      if (drawnLen < 1e-6) {
+        newPoints[(i + 1) % n] = newPoints[i];
+        continue;
+      }
+      // Unit direction vector of this wall.
+      final double ux = dx / drawnLen;
+      final double uy = dy / drawnLen;
+
+      // Real length in world units.
+      final double realMm = _wallRealMm[i]!;
+      final double realWorldUnits = realMm / _mmPerUnit;
+
+      // Place next point at real distance along the same direction.
+      if (i < n - 1) {
+        newPoints[i + 1] = Offset(
+          newPoints[i].dx + ux * realWorldUnits,
+          newPoints[i].dy + uy * realWorldUnits,
+        );
+      }
+      // For the closing wall (i == n-1) in a closed shape,
+      // newPoints[0] is already fixed — nothing to set.
+    }
+
+    setState(() {
+      _points = newPoints;
+      _selectedWallIndex = -1;
+      _activePointIndex = -1;
+      _rescaleApplied = true;
+    });
+  }
+
+  // Legacy wrapper — kept for safety but not called from dialog.
+  void _applyRealMeasurement(int wallIndex, double realMm) {
+    _saveMeasurement(wallIndex, realMm);
+    if (_allWallsMeasured()) {
+      _applyRescaleAll();
+    }
   }
 
   void _showWallEditDialog(int wallIndex) {
@@ -896,6 +963,7 @@ class _SketchScreenState extends State<SketchScreen> {
         : '';
 
     final controller = TextEditingController(text: existingReal);
+    String selectedUnit = 'mm'; // tracks current unit inside dialog
 
     final int n = _points.length;
     final bool isClosing = _isClosed && wallIndex == n - 1;
@@ -922,6 +990,29 @@ class _SketchScreenState extends State<SketchScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Progress indicator
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D2A1A),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF225533)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.checklist, color: Color(0xFF00AA44), size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Progress: ${_wallRealMm.length} / ${_totalWallCount()} walls measured',
+                    style: const TextStyle(
+                        color: Color(0xFF44BB77),
+                        fontFamily: 'monospace',
+                        fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
@@ -984,6 +1075,7 @@ class _SketchScreenState extends State<SketchScreen> {
                 _UnitSelector(
                   onUnitChanged: (unit) {
                     final v = double.tryParse(controller.text);
+                    selectedUnit = unit;
                     if (v == null) return;
                     if (unit == 'm') {
                       controller.text = (v / 1000).toStringAsFixed(3);
@@ -1039,24 +1131,36 @@ class _SketchScreenState extends State<SketchScreen> {
                 style: TextStyle(
                     color: Color(0xFF556677), fontFamily: 'monospace')),
           ),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.check, size: 16),
-            label: const Text('APPLY & RESCALE',
-                style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00AAFF),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6)),
-            ),
-            onPressed: () {
-              final val = double.tryParse(controller.text);
-              if (val != null && val > 0) {
-                Navigator.pop(ctx);
-                _applyRealMeasurement(wallIndex, val);
-              }
-            },
-          ),
+          StatefulBuilder(builder: (ctx2, setBtn) {
+            return ElevatedButton.icon(
+              icon: const Icon(Icons.save_alt, size: 16),
+              label: Text(
+                _allWallsMeasured() &&
+                        double.tryParse(controller.text) != null &&
+                        (double.tryParse(controller.text) ?? 0) > 0
+                    ? 'SAVE & RESCALE ALL'
+                    : 'SAVE MEASUREMENT',
+                style:
+                    const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00AAFF),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: () {
+                final val = double.tryParse(controller.text);
+                if (val != null && val > 0) {
+                  final double valMm = selectedUnit == 'm' ? val * 1000 : val;
+                  Navigator.pop(ctx);
+                  _saveMeasurement(wallIndex, valMm);
+                  if (_allWallsMeasured()) {
+                    Future.microtask(_applyRescaleAll);
+                  }
+                }
+              },
+            );
+          }),
         ],
       ),
     );
@@ -1146,7 +1250,37 @@ class _SketchScreenState extends State<SketchScreen> {
             ),
           ),
 
-          // ── Top toolbar ──────────────────────────────────────────────
+          // ── "Rescale All" floating button ────────────────────────────
+          if (_isClosed && _allWallsMeasured() && !_rescaleApplied)
+            Positioned(
+              bottom: 70,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text(
+                    'RESCALE ALL WALLS NOW',
+                    style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00CC44),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    elevation: 6,
+                  ),
+                  onPressed: _applyRescaleAll,
+                ),
+              ),
+            ),
+
+
           Positioned(
             top: 0,
             left: 0,
@@ -1169,7 +1303,9 @@ class _SketchScreenState extends State<SketchScreen> {
                                 ? 'Wall ${_selectedWallIndex + 1} selected — enter real measurement'
                                 : _activePointIndex >= 0
                                     ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                    : 'Tap a wall to edit its length'
+                                    : _allWallsMeasured()
+                                        ? 'All walls measured — rescaling applied!'
+                                        : 'Tap a wall to add measurement (${_wallRealMm.length}/${_totalWallCount()} done)'
                             : _points.isEmpty
                                 ? 'Tap to place first corner'
                                 : _isDraggingLastPoint
@@ -1770,12 +1906,18 @@ class _SketchPainter extends CustomPainter {
 
     final mid = Offset((dFrom.dx + dTo.dx) / 2, (dFrom.dy + dTo.dy) / 2);
 
-    final text = _formatLength(worldUnits);
+    final text = overrideMm != null
+        ? (overrideMm! >= 1000
+            ? '${(overrideMm! / 1000.0).toStringAsFixed(2)} m ✓'
+            : '${overrideMm!.toStringAsFixed(0)} mm ✓')
+        : _formatLength(worldUnits);
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: const TextStyle(
-          color: Color(0xFF003399),
+        style: TextStyle(
+          color: overrideMm != null
+              ? const Color(0xFF007733)
+              : const Color(0xFF003399),
           fontSize: 10,
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,
