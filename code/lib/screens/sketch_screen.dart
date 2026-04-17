@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../ble/ble_manager.dart';
+import '../ble/ble_packet.dart';
 
 // ─────────────────────────────────────────────
 // Scale: 1 grid unit (20px) = 100mm = 0.1m
@@ -23,7 +25,9 @@ String _formatLength(double worldUnits) {
 }
 
 class SketchScreen extends StatefulWidget {
-  const SketchScreen({super.key});
+  final BleManager? bleManager;
+  const SketchScreen({super.key, this.bleManager});
+
 
   @override
   State<SketchScreen> createState() => _SketchScreenState();
@@ -62,7 +66,9 @@ class _SketchScreenState extends State<SketchScreen> {
 
   int _selectedWallIndex = -1;
   final Map<int, double> _wallRealMm = {};
-  bool _rescaleApplied = false;
+  // ── BLE ──────────────────────────────────────────
+  double? _pendingBleMm;
+  bool _waitingForBle = false;
 
   static const double _panThreshold = 6.0;
   static const double _minorGrid = 20.0;
@@ -79,6 +85,28 @@ class _SketchScreenState extends State<SketchScreen> {
   ];
   static const double _snapThresholdDeg = 3.0;
   static const double _minAngleDistance = 10.0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.bleManager?.packetStream.listen((BlePacket packet) {
+      // Only apply if user has selected a wall and is waiting
+      if (_waitingForBle && _selectedWallIndex >= 0) {
+        setState(() {
+          _waitingForBle = false;
+          _pendingBleMm = packet.distanceMm;
+        });
+        _applyRealMeasurement(_selectedWallIndex, packet.distanceMm);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.bleManager?.disconnect();
+    super.dispose();
+  }
+
 
   Offset worldToScreen(Offset world) => world * _scale + _panOffset;
   Offset screenToWorld(Offset screen) => (screen - _panOffset) / _scale;
@@ -746,7 +774,6 @@ class _SketchScreenState extends State<SketchScreen> {
       _snapDiffDeg = null;
       _snappedAngle = null;
       _isAngleSnapped = false;
-      _rescaleApplied = false;
     });
   }
 
@@ -788,8 +815,6 @@ class _SketchScreenState extends State<SketchScreen> {
       _snapTargetIndex = null;
       _prevWallAngle = null;
       _nextWallAngle = null;
-      _wallRealMm.clear();
-      _rescaleApplied = false;
     });
   }
 
@@ -873,100 +898,120 @@ class _SketchScreenState extends State<SketchScreen> {
     return math.sqrt(dx * dx + dy * dy);
   }
 
-  int _totalWallCount() {
-    if (_points.length < 2) return 0;
-    return _isClosed ? _points.length : _points.length - 1;
-  }
+  void _applyRealMeasurement(int wallIndex, double realMm) {
+    final double pixelLen = _wallLengthWorld(wallIndex);
+    if (pixelLen < 1e-6) return;
+    final double realUnits = realMm / _mmPerUnit;
+    final double ratio = realUnits / pixelLen;
+    if (ratio <= 0) return;
 
-  bool _allWallsMeasured() {
-    final total = _totalWallCount();
-    if (total == 0) return false;
-    for (int i = 0; i < total; i++) {
-      if (!_wallRealMm.containsKey(i)) return false;
-    }
-    return true;
-  }
+    _saveUndo();
 
-  /// Just store the measurement label — do NOT rescale yet.
-  void _saveMeasurement(int wallIndex, double realMm) {
+    final Offset anchor = _points[wallIndex];
+    final List<Offset> newPoints = _points.map((pt) {
+      final dx = pt.dx - anchor.dx;
+      final dy = pt.dy - anchor.dy;
+      return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
+    }).toList();
+
     setState(() {
+      _points = newPoints;
       _wallRealMm[wallIndex] = realMm;
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
   }
 
-  /// Reconstruct all points wall-by-wall:
-  /// - Keep each wall's drawn ANGLE exactly as-is
-  /// - Replace each wall's LENGTH with the user-entered real measurement
-  /// Called only after all walls have been measured.
-  void _applyRescaleAll() {
-    if (!_allWallsMeasured()) return;
-    final int n = _points.length;
-    if (n < 2) return;
-
-    _saveUndo();
-
-    // Start from point 0 (keep its screen position as anchor).
-    final List<Offset> newPoints = List<Offset>.filled(n, Offset.zero);
-    newPoints[0] = _points[0];
-
-    final int wallCount = _isClosed ? n : n - 1;
-
-    for (int i = 0; i < wallCount; i++) {
-      final Offset from = _points[i];
-      final Offset to = _points[(i + 1) % n];
-
-      // Compute the drawn angle (direction) of this wall.
-      final double dx = to.dx - from.dx;
-      final double dy = to.dy - from.dy;
-      final double drawnLen = math.sqrt(dx * dx + dy * dy);
-      if (drawnLen < 1e-6) {
-        newPoints[(i + 1) % n] = newPoints[i];
-        continue;
-      }
-      // Unit direction vector of this wall.
-      final double ux = dx / drawnLen;
-      final double uy = dy / drawnLen;
-
-      // Real length in world units.
-      final double realMm = _wallRealMm[i]!;
-      final double realWorldUnits = realMm / _mmPerUnit;
-
-      // Place next point at real distance along the same direction.
-      if (i < n - 1) {
-        newPoints[i + 1] = Offset(
-          newPoints[i].dx + ux * realWorldUnits,
-          newPoints[i].dy + uy * realWorldUnits,
-        );
-      }
-      // For the closing wall (i == n-1) in a closed shape,
-      // newPoints[0] is already fixed — nothing to set.
-    }
-
-    setState(() {
-      _points = newPoints;
-      _selectedWallIndex = -1;
-      _activePointIndex = -1;
-      _rescaleApplied = true;
-    });
-  }
-
-  // Legacy wrapper — kept for safety but not called from dialog.
-  void _applyRealMeasurement(int wallIndex, double realMm) {
-    _saveMeasurement(wallIndex, realMm);
-    if (_allWallsMeasured()) {
-      _applyRescaleAll();
-    }
-  }
-
   void _showWallEditDialog(int wallIndex) {
+    // If BLE connected — offer a choice instead of jumping straight to BLE
+    if (widget.bleManager != null && widget.bleManager!.isConnected) {
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: const Color(0xFF1E2A3A),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Wall ${wallIndex + 1}  —  ${_formatLength(_wallLengthWorld(wallIndex))} drawn',
+                style: const TextStyle(
+                  color: Color(0xFF778899),
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // ── Use Device button ──────────────────────
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.bluetooth),
+                  label: const Text(
+                    'Use Device  —  press BOOT button on ESP32',
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00AAFF),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    setState(() {
+                      _selectedWallIndex = wallIndex;
+                      _waitingForBle = true;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              // ── Enter manually button ──────────────────
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.edit),
+                  label: const Text(
+                    'Enter manually',
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFAABBCC),
+                    side: const BorderSide(color: Color(0xFF334466)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _showManualEntryDialog(wallIndex);
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    // No BLE — go straight to manual entry
+    _showManualEntryDialog(wallIndex);
+  }
+
+  void _showManualEntryDialog(int wallIndex) {
     final String existingReal = _wallRealMm.containsKey(wallIndex)
         ? _wallRealMm[wallIndex]!.toStringAsFixed(0)
         : '';
 
     final controller = TextEditingController(text: existingReal);
-    String selectedUnit = 'mm'; // tracks current unit inside dialog
 
     final int n = _points.length;
     final bool isClosing = _isClosed && wallIndex == n - 1;
@@ -993,29 +1038,6 @@ class _SketchScreenState extends State<SketchScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Progress indicator
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0D2A1A),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF225533)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.checklist, color: Color(0xFF00AA44), size: 14),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Progress: ${_wallRealMm.length} / ${_totalWallCount()} walls measured',
-                    style: const TextStyle(
-                        color: Color(0xFF44BB77),
-                        fontFamily: 'monospace',
-                        fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
@@ -1078,7 +1100,6 @@ class _SketchScreenState extends State<SketchScreen> {
                 _UnitSelector(
                   onUnitChanged: (unit) {
                     final v = double.tryParse(controller.text);
-                    selectedUnit = unit;
                     if (v == null) return;
                     if (unit == 'm') {
                       controller.text = (v / 1000).toStringAsFixed(3);
@@ -1134,36 +1155,24 @@ class _SketchScreenState extends State<SketchScreen> {
                 style: TextStyle(
                     color: Color(0xFF556677), fontFamily: 'monospace')),
           ),
-          StatefulBuilder(builder: (ctx2, setBtn) {
-            return ElevatedButton.icon(
-              icon: const Icon(Icons.save_alt, size: 16),
-              label: Text(
-                _allWallsMeasured() &&
-                        double.tryParse(controller.text) != null &&
-                        (double.tryParse(controller.text) ?? 0) > 0
-                    ? 'SAVE & RESCALE ALL'
-                    : 'SAVE MEASUREMENT',
-                style:
-                    const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00AAFF),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6)),
-              ),
-              onPressed: () {
-                final val = double.tryParse(controller.text);
-                if (val != null && val > 0) {
-                  final double valMm = selectedUnit == 'm' ? val * 1000 : val;
-                  Navigator.pop(ctx);
-                  _saveMeasurement(wallIndex, valMm);
-                  if (_allWallsMeasured()) {
-                    Future.microtask(_applyRescaleAll);
-                  }
-                }
-              },
-            );
-          }),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.check, size: 16),
+            label: const Text('APPLY & RESCALE',
+                style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00AAFF),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6)),
+            ),
+            onPressed: () {
+              final val = double.tryParse(controller.text);
+              if (val != null && val > 0) {
+                Navigator.pop(ctx);
+                _applyRealMeasurement(wallIndex, val);
+              }
+            },
+          ),
         ],
       ),
     );
@@ -1575,37 +1584,7 @@ class _SketchScreenState extends State<SketchScreen> {
             ),
           ),
 
-          // ── "Rescale All" floating button ────────────────────────────
-          if (_isClosed && _allWallsMeasured() && !_rescaleApplied)
-            Positioned(
-              bottom: 70,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.auto_fix_high, size: 18),
-                  label: const Text(
-                    'RESCALE ALL WALLS NOW',
-                    style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00CC44),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    elevation: 6,
-                  ),
-                  onPressed: _applyRescaleAll,
-                ),
-              ),
-            ),
-
-
+          // ── Top toolbar ──────────────────────────────────────────────
           Positioned(
             top: 0,
             left: 0,
@@ -1628,9 +1607,9 @@ class _SketchScreenState extends State<SketchScreen> {
                                 ? 'Wall ${_selectedWallIndex + 1} selected — enter real measurement'
                                 : _activePointIndex >= 0
                                     ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                    : _allWallsMeasured()
-                                        ? 'All walls measured — rescaling applied!'
-                                        : 'Tap a wall to add measurement (${_wallRealMm.length}/${_totalWallCount()} done)'
+                                    : _waitingForBle
+                                        ? 'Point device at wall → press BOOT button'
+                                        : 'Tap a wall to edit its length'
                             : _points.isEmpty
                                 ? 'Tap to place first corner'
                                 : _isDraggingLastPoint
@@ -2241,18 +2220,12 @@ class _SketchPainter extends CustomPainter {
 
     final mid = Offset((dFrom.dx + dTo.dx) / 2, (dFrom.dy + dTo.dy) / 2);
 
-    final text = overrideMm != null
-        ? (overrideMm! >= 1000
-            ? '${(overrideMm! / 1000.0).toStringAsFixed(2)} m ✓'
-            : '${overrideMm!.toStringAsFixed(0)} mm ✓')
-        : _formatLength(worldUnits);
+    final text = _formatLength(worldUnits);
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(
-          color: overrideMm != null
-              ? const Color(0xFF007733)
-              : const Color(0xFF003399),
+        style: const TextStyle(
+          color: Color(0xFF003399),
           fontSize: 10,
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
-import 'sketch_screen.dart';
+import '../ble/ble_manager.dart';
+import '../ble/ble_connection_screen.dart';
+import '../sketch/sketch_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -31,10 +33,28 @@ class HomeScreen extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                 textStyle: const TextStyle(fontSize: 18),
               ),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SketchScreen()),
-              ),
+              onPressed: () {
+                // Create a single BleManager for this session
+                final bleManager = BleManager();
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BleConnectionScreen(
+                      bleManager: bleManager,
+                      onConnected: () {
+                        // Replace connection screen with sketch screen
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SketchScreen(bleManager: bleManager),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
