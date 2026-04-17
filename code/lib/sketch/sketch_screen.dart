@@ -10,7 +10,10 @@ import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
 import 'sketch_widgets.dart';
+import 'sketch_object.dart';
 
+
+enum SketchMode { draw, select }
 
 class SketchScreen extends StatefulWidget {
   final BleManager? bleManager;
@@ -27,8 +30,6 @@ class _SketchScreenState extends State<SketchScreen>
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
-  List<Offset> _points = [];
-  bool _isClosed = false;
   Offset? _cursorWorld;
   bool _isDraggingLastPoint = false;
   bool _dragOccurred = false;
@@ -54,9 +55,23 @@ class _SketchScreenState extends State<SketchScreen>
   double? _nearestSnapAngleDeg;
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
-  final Map<int, double> _wallRealMm = {};
+  
   double? _pendingBleMm;
   bool _waitingForBle = false;
+  List<SketchObject> _objects = [];
+  int _activeObjIndex = 0;
+  SketchMode _mode = SketchMode.draw;
+
+  // ── PROXY GETTERS & SETTERS ──────────────────────────────────────────
+  // These trick your existing gesture code into modifying the active room
+  List<Offset> get _points => _objects.isNotEmpty ? _objects[_activeObjIndex].points : [];
+  set _points(List<Offset> v) { if (_objects.isNotEmpty) _objects[_activeObjIndex].points = v; }
+
+  bool get _isClosed => _objects.isNotEmpty ? _objects[_activeObjIndex].isClosed : false;
+  set _isClosed(bool v) { if (_objects.isNotEmpty) _objects[_activeObjIndex].isClosed = v; }
+
+  Map<int, double> get _wallRealMm => _objects.isNotEmpty ? _objects[_activeObjIndex].wallRealMm : {};
+  // ───────────────────────────────────────────────────────────────────
 
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => _points;
@@ -82,6 +97,8 @@ class _SketchScreenState extends State<SketchScreen>
   @override
   void initState() {
     super.initState();
+    _objects.add(SketchObject(id: '1', label: 'Room 1', points: []));
+    
     widget.bleManager?.packetStream.listen((BlePacket packet) {
       if (_waitingForBle && _selectedWallIndex >= 0) {
         setState(() {
