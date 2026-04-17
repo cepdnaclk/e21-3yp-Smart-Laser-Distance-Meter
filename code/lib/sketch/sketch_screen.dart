@@ -98,7 +98,7 @@ class _SketchScreenState extends State<SketchScreen>
   void initState() {
     super.initState();
     _objects.add(SketchObject(id: '1', label: 'Room 1', points: []));
-    
+
     widget.bleManager?.packetStream.listen((BlePacket packet) {
       if (_waitingForBle && _selectedWallIndex >= 0) {
         setState(() {
@@ -804,6 +804,8 @@ class _SketchScreenState extends State<SketchScreen>
               onTapDown: _onTapDown,
               child: CustomPaint(
                 painter: SketchPainter(
+                  objects: _objects,
+                  activeObjIndex: _activeObjIndex,
                   panOffset: _panOffset,
                   scale: _scale,
                   minorGrid: minorGrid,

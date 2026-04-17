@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
+import 'sketch_object.dart';
 
 class SketchPainter extends CustomPainter {
   final Offset panOffset;
@@ -30,6 +31,8 @@ class SketchPainter extends CustomPainter {
   final bool nextWallSnapped;
   final int selectedWallIndex;
   final Map<int, double> wallRealMm;
+  final List<SketchObject> objects;
+  final int activeObjectIndex;
 
   const SketchPainter({
     required this.panOffset,
@@ -59,6 +62,8 @@ class SketchPainter extends CustomPainter {
     required this.nextWallSnapped,
     required this.selectedWallIndex,
     required this.wallRealMm,
+    required this.objects,
+    required this.activeObjectIndex,
   });
 
   Offset worldToScreen(Offset world) => world * scale + panOffset;
@@ -87,6 +92,12 @@ class SketchPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     _drawGrid(canvas, size);
     _drawAxes(canvas, size);
+
+    for (int i = 0; i < objects.length; i++) {
+      if (i == activeObjectIndex) continue; // Skip active room (drawn below)
+      _drawInactiveRoom(canvas, objects[i]);
+    }
+
     if (points.isNotEmpty) {
       _drawSnapGuides(canvas, size);
       _drawRoom(canvas);
@@ -812,6 +823,35 @@ class SketchPainter extends CustomPainter {
     }
   }
 
+  // <-- 4. ADD THIS HELPER METHOD -->
+  void _drawInactiveRoom(Canvas canvas, SketchObject obj) {
+    if (obj.points.isEmpty) return;
+
+    final fillPaint = Paint()
+      ..color = obj.color.withOpacity(0.05)
+      ..style = PaintingStyle.fill;
+
+    final wallPaint = Paint()
+      ..color = const Color(0xFF1A1A1A).withOpacity(0.2)
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    final List<Offset> sp = obj.points.map((p) => worldToScreen(p)).toList();
+
+    if (obj.isClosed && sp.length >= 3) {
+      final path = Path()..addPolygon(sp, true);
+      canvas.drawPath(path, fillPaint);
+    }
+
+    for (int i = 0; i < sp.length - 1; i++) {
+      canvas.drawLine(sp[i], sp[i + 1], wallPaint);
+    }
+    if (obj.isClosed && sp.length >= 2) {
+      canvas.drawLine(sp.last, sp.first, wallPaint);
+    }
+  }
+  // <------------------------------->
   @override
   bool shouldRepaint(SketchPainter old) => true;
 }
