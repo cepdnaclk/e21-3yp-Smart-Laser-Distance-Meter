@@ -10,6 +10,10 @@ import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
 import 'sketch_widgets.dart';
+import 'room_object.dart';
+import 'room_object_utils.dart';
+import 'dart:math' as math; // already there — skip if so
+import 'room_3d_screen.dart'; // add this — file created in step 5
 
 
 class SketchScreen extends StatefulWidget {
@@ -57,6 +61,14 @@ class _SketchScreenState extends State<SketchScreen>
   final Map<int, double> _wallRealMm = {};
   double? _pendingBleMm;
   bool _waitingForBle = false;
+
+  // ── Object placement state ───────────────────────────────────────────────
+final List<RoomObject> _roomObjects = [];
+RoomObjectType? _draggingObjectType;  // set while dragging from panel
+String? _selectedObjectId;            // currently selected placed object
+Offset? _dragObjectScreenPos;         // live screen position while dragging
+WallHitResult? _dragWallHit;          // wall the dragged object is hovering over
+int _objectCounter = 0;               // for generating unique ids
 
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => _points;
@@ -598,6 +610,79 @@ class _SketchScreenState extends State<SketchScreen>
     setState(() => _cursorWorld = _computeAngle(_points.last, raw));
   }
 
+  // Called when user drags an object from the panel and releases it
+  void _onObjectDropped(Offset screenPos) {
+    if (_draggingObjectType == null || !_isClosed) return;
+    final hit = findNearestWall(
+      screenPos: screenPos,
+      points: _points,
+      isClosed: _isClosed,
+      worldToScreen: worldToScreen,
+      screenToWorld: screenToWorld,
+    );
+    if (hit == null) {
+      setState(() {
+        _draggingObjectType = null;
+        _dragObjectScreenPos = null;
+        _dragWallHit = null;
+      });
+      return;
+    }
+    setState(() {
+      _objectCounter++;
+      _roomObjects.add(RoomObject(
+        id: 'obj_$_objectCounter',
+        type: _draggingObjectType!,
+        wallIndex: hit.wallIndex,
+        positionAlong: hit.positionAlong,
+        widthMm: _draggingObjectType == RoomObjectType.door ? 900 : 1200,
+        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
+        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
+      ));
+      _draggingObjectType = null;
+      _dragObjectScreenPos = null;
+      _dragWallHit = null;
+    });
+  }
+
+  // Called when user taps a placed object to select/delete it
+  void _onObjectTapped(String id) {
+    if (_selectedObjectId == id) {
+      // Second tap = show options
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E2A3A),
+          title: const Text('Object options',
+              style: TextStyle(color: Color(0xFFCCDDEE), fontFamily: 'monospace')),
+          actions: [
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _roomObjects.removeWhere((o) => o.id == id);
+                  _selectedObjectId = null;
+                });
+                Navigator.pop(ctx);
+              },
+              child: const Text('DELETE',
+                  style: TextStyle(color: Color(0xFFFF4444), fontFamily: 'monospace')),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() => _selectedObjectId = null);
+                Navigator.pop(ctx);
+              },
+              child: const Text('CLOSE',
+                  style: TextStyle(color: Color(0xFF888888), fontFamily: 'monospace')),
+            ),
+          ],
+        ),
+      );
+    } else {
+      setState(() => _selectedObjectId = id);
+    }
+  }
+
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
       setState(() {
@@ -814,12 +899,72 @@ class _SketchScreenState extends State<SketchScreen>
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
                   wallRealMm: _wallRealMm,
+                  roomObjects: _roomObjects,
+                  draggingObjectId: _selectedObjectId,
                 ),
                 child: const SizedBox.expand(),
               ),
             ),
           ),
+        
+          // ── Object panel (right side) — only shown when room is closed ───────────
+          if (_isClosed)
+            Positioned(
+              right: 8,
+              top: 80,
+              child: Column(
+                children: [
+                  _ObjectPanelButton(
+                    icon: Icons.door_front_door,
+                    label: 'Door',
+                    onDragStarted: () => setState(() =>
+                        _draggingObjectType = RoomObjectType.door),
+                    onDragEnd: (details) => _onObjectDropped(details.offset),
+                  ),
+                  const SizedBox(height: 8),
+                  _ObjectPanelButton(
+                    icon: Icons.window,
+                    label: 'Window',
+                    onDragStarted: () => setState(() =>
+                        _draggingObjectType = RoomObjectType.window),
+                    onDragEnd: (details) => _onObjectDropped(details.offset),
+                  ),
+                ],
+              ),
+            ),
 
+          // ── 3D View button ────────────────────────────────────────────────────────
+          if (_isClosed && _points.length >= 3)
+            Positioned(
+              right: 8,
+              bottom: 62,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.view_in_ar, size: 16),
+                label: const Text('3D View',
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7B2FBE),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => Room3DScreen(
+                        points: _points,
+                        roomObjects: _roomObjects,
+                        wallRealMm: _wallRealMm,
+                        bleManager: widget.bleManager,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          
           // ── Top toolbar ──────────────────────────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
@@ -1224,6 +1369,65 @@ class _SketchScreenState extends State<SketchScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ObjectPanelButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onDragStarted;
+  final void Function(DraggableDetails) onDragEnd;
+
+  const _ObjectPanelButton({
+    required this.icon,
+    required this.label,
+    required this.onDragStarted,
+    required this.onDragEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Draggable<String>(
+      data: label,
+      onDragStarted: onDragStarted,
+      onDragEnd: onDragEnd,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF00AAFF),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(color: Colors.black38, blurRadius: 8)
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: 28),
+        ),
+      ),
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E2A3A),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF334466)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: const Color(0xFF00AAFF), size: 20),
+            const SizedBox(height: 2),
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFF778899),
+                    fontSize: 9,
+                    fontFamily: 'monospace')),
+          ],
+        ),
       ),
     );
   }
