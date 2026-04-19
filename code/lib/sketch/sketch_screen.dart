@@ -72,6 +72,10 @@ Offset? _dragObjectScreenPos;         // live screen position while dragging
 WallHitResult? _dragWallHit;          // wall the dragged object is hovering over
 int _objectCounter = 0;               // for generating unique ids
 
+String? _movingObjectId;        // id of object being moved along its wall
+Offset? _moveStartScreenPos;    // where finger first touched
+bool _objectMoveOccurred = false; // did actual drag movement happen?
+
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => _points;
   @override bool get sketchIsClosed => _isClosed;
@@ -457,6 +461,24 @@ int _objectCounter = 0;               // for generating unique ids
     _dragOccurred = false;
     _panStartPosition = event.localPosition;
     _panConfirmed = false;
+
+    if (_isClosed) {
+      for (final obj in _roomObjects) {
+        final centre = objectCentreWorld(
+          obj: obj,
+          points: _points,
+          wallCount: _points.length,
+        );
+        final centreScreen = worldToScreen(centre);
+        if ((event.localPosition - centreScreen).distance < 30.0) {
+          _movingObjectId = obj.id;
+          _moveStartScreenPos = event.localPosition;
+          _objectMoveOccurred = false;
+          return; // consume the event — don't start pan/draw
+        }
+      }
+    }
+
     _snapTargetIndex = null;
     _prevWallAngle = null;
     _nextWallAngle = null;
@@ -501,6 +523,37 @@ int _objectCounter = 0;               // for generating unique ids
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── Move a placed object along its wall
+    if (_movingObjectId != null) {
+      final idx = _roomObjects.indexWhere((o) => o.id == _movingObjectId);
+      if (idx >= 0) {
+        final obj = _roomObjects[idx];
+        final int n = _points.length;
+        final Offset a = _points[obj.wallIndex];
+        final Offset b = _points[(obj.wallIndex + 1) % n];
+        final Offset aScreen = worldToScreen(a);
+        final Offset bScreen = worldToScreen(b);
+
+        // Project finger position onto the wall segment
+        final dx = bScreen.dx - aScreen.dx;
+        final dy = bScreen.dy - aScreen.dy;
+        final lenSq = dx * dx + dy * dy;
+        if (lenSq > 0) {
+          final t = ((event.localPosition.dx - aScreen.dx) * dx +
+                     (event.localPosition.dy - aScreen.dy) * dy) / lenSq;
+          final tClamped = t.clamp(0.05, 0.95);
+          if ((tClamped - obj.positionAlong).abs() > 0.001) {
+            _objectMoveOccurred = true;
+          }
+          setState(() {
+            _roomObjects[idx] = obj.copyWith(positionAlong: tClamped);
+          });
+        }
+      }
+      return;
+    }
+
+
     if (_isClosed) {
       if (_isDraggingActivePoint && _activePointIndex >= 0) {
         _dragOccurred = true;
@@ -589,6 +642,21 @@ int _objectCounter = 0;               // for generating unique ids
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── Finish moving a placed object ──────────────────────────────
+    if (_movingObjectId != null) {
+      if (_objectMoveOccurred) {
+        _saveUndo();
+      } else {
+        // No movement = it was a tap → open measurement dialog
+        _onObjectTapped(_movingObjectId!);
+      }
+      _movingObjectId = null;
+      _moveStartScreenPos = null;
+      _objectMoveOccurred = false;
+      return;
+    }
+
+
     if (_isDraggingLastPoint &&
         _snapTargetIndex == 0 &&
         _points.length >= 3) {
@@ -740,23 +808,25 @@ int _objectCounter = 0;               // for generating unique ids
     if (_isMultiTouch) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
 
+    // If finger is on a placed object, _onPointerDown already handled it
     if (_isClosed) {
-    // ── Check if a room object (door/window) was tapped FIRST ──────────
-    for (final obj in _roomObjects) {
-      final centre = objectCentreWorld(
-        obj: obj,
-        points: _points,
-        wallCount: _points.length,
-      );
-      final centreScreen = worldToScreen(centre);
-      if ((details.localPosition - centreScreen).distance < 30.0) {
-        _onObjectTapped(obj.id);
-        return;
+      for (final obj in _roomObjects) {
+        final centre = objectCentreWorld(
+          obj: obj,
+          points: _points,
+          wallCount: _points.length,
+        );
+        final centreScreen = worldToScreen(centre);
+        if ((details.localPosition - centreScreen).distance < 30.0) {
+          return; // let _onPointerUp handle tap/move
+        }
       }
     }
 
-    // ── Then check wall taps ────────────────────────────────────────────
-    final wallIdx = _findNearWall(details.localPosition);
+    if (_isClosed) {
+      // ── Wall taps ───────────────────────────────────────────────────────
+      final wallIdx = _findNearWall(details.localPosition);
+
     if (wallIdx >= 0) {
       setState(() {
         _activePointIndex = -1;
