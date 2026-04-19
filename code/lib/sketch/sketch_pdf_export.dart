@@ -6,6 +6,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'sketch_constants.dart';
+import 'room_object.dart';
+import 'room_object_utils.dart';
 
 Future<void> exportSketchPdf({
   required BuildContext context,
@@ -14,6 +16,7 @@ Future<void> exportSketchPdf({
   required Map<int, double> wallRealMm,
   required double totalPerimeter,
   required double totalArea,
+  required List<RoomObject> roomObjects,
 }) async {
   if (points.length < 2) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -160,6 +163,120 @@ Future<void> exportSketchPdf({
                       g.drawEllipse(p.x, p.y, 3.5, 3.5);
                       g.fillPath();
                     }
+
+                    // ── Draw doors and windows ──────────────────────
+                    for (final obj in roomObjects) {
+                      if (obj.wallIndex >= wallCount) continue;
+
+                      final Offset aWorld = points[obj.wallIndex];
+                      final Offset bWorld = points[(obj.wallIndex + 1) % n];
+
+                      // Centre point in world coords
+                      final Offset centreWorld = Offset(
+                        aWorld.dx + obj.positionAlong * (bWorld.dx - aWorld.dx),
+                        aWorld.dy + obj.positionAlong * (bWorld.dy - aWorld.dy),
+                      );
+
+                      // Wall direction unit vector (world)
+                      final double wallDx = bWorld.dx - aWorld.dx;
+                      final double wallDy = bWorld.dy - aWorld.dy;
+                      final double wallLen =
+                          math.sqrt(wallDx * wallDx + wallDy * wallDy);
+                      if (wallLen < 1) continue;
+                      final double dirX = wallDx / wallLen;
+                      final double dirY = wallDy / wallLen;
+
+                      // Half-width in world units (fixed symbol size)
+                      const double halfW = 12.0;
+                      // Perpendicular (inward)
+                      final double perpX = -dirY;
+                      final double perpY = dirX;
+
+                      final PdfPoint c = toPdf(centreWorld);
+
+                      // Convert direction offsets to PDF scale
+                      final double dxPdf = dirX * halfW * pdfScale;
+                      final double dyPdf = dirY * halfW * pdfScale;
+                      final double pxPdf = perpX * halfW * 1.5 * pdfScale;
+                      final double pyPdf = perpY * halfW * 1.5 * pdfScale;
+
+                      if (obj.isDoor) {
+                        // White gap on wall
+                        g.setStrokeColor(PdfColors.white);
+                        g.setLineWidth(4);
+                        g.moveTo(c.x - dxPdf, c.y + dyPdf);
+                        g.lineTo(c.x + dxPdf, c.y - dyPdf);
+                        g.strokePath();
+
+                        // Door leaf (filled rectangle)
+                        g.setFillColor(
+                            const PdfColor(0.55, 0.27, 0.07, 0.3)); // brown tint
+                        g.setStrokeColor(const PdfColor(0.55, 0.27, 0.07));
+                        g.setLineWidth(1.2);
+
+                        final double p1x = c.x - dxPdf;
+                        final double p1y = c.y + dyPdf;
+                        final double p2x = c.x + dxPdf;
+                        final double p2y = c.y - dyPdf;
+                        final double p3x = p2x + pxPdf;
+                        final double p3y = p2y - pyPdf;
+                        final double p4x = p1x + pxPdf;
+                        final double p4y = p1y - pyPdf;
+
+                        g.moveTo(p1x, p1y);
+                        g.lineTo(p2x, p2y);
+                        g.lineTo(p3x, p3y);
+                        g.lineTo(p4x, p4y);
+                        g.closePath();
+                        g.fillAndStrokePath();
+
+                        // Swing arc (drawn as polyline approximation)
+                        g.setStrokeColor(
+                            const PdfColor(0.55, 0.27, 0.07, 0.5));
+                        g.setLineWidth(0.8);
+                        final double radius = halfW * pdfScale;
+                        final double startAngle = math.atan2(p1y - c.y, p1x - c.x);
+                        const int arcSteps = 12;
+                        const double arcSpan = math.pi / 2;
+                        bool arcFirst = true;
+                        for (int s = 0; s <= arcSteps; s++) {
+                          final double angle =
+                              startAngle + (s / arcSteps) * arcSpan;
+                          final double ax = p1x + math.cos(angle) * radius;
+                          final double ay = p1y + math.sin(angle) * radius;
+                          if (arcFirst) {
+                            g.moveTo(ax, ay);
+                            arcFirst = false;
+                          } else {
+                            g.lineTo(ax, ay);
+                          }
+                        }
+                        g.strokePath();
+
+                        // Label
+                        g.setFillColor(const PdfColor(0.55, 0.27, 0.07));
+                        // (PDF text drawing omitted — label shown in table below)
+
+                      } else {
+                        // Window — white gap
+                        g.setStrokeColor(PdfColors.white);
+                        g.setLineWidth(4);
+                        g.moveTo(c.x - dxPdf, c.y + dyPdf);
+                        g.lineTo(c.x + dxPdf, c.y - dyPdf);
+                        g.strokePath();
+
+                        // Three parallel lines (window symbol)
+                        g.setStrokeColor(const PdfColor(0.0, 0.6, 0.8));
+                        for (final off in [-0.4, 0.0, 0.4]) {
+                          final double ox = perpX * off * 6 * pdfScale;
+                          final double oy = perpY * off * 6 * pdfScale;
+                          g.setLineWidth(off == 0 ? 1.5 : 0.8);
+                          g.moveTo(c.x - dxPdf + ox, c.y + dyPdf - oy);
+                          g.lineTo(c.x + dxPdf + ox, c.y - dyPdf - oy);
+                          g.strokePath();
+                        }
+                      }
+                    }
                   },
                 ),
               ),
@@ -187,6 +304,72 @@ Future<void> exportSketchPdf({
                 ),
               ),
             pw.SizedBox(height: 14),
+
+            if (roomObjects.isNotEmpty) ...[
+              pw.Text('Doors & Windows',
+                  style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.blueGrey700)),
+              pw.SizedBox(height: 6),
+              pw.Table(
+                border: pw.TableBorder.all(
+                    color: PdfColors.blueGrey200, width: 0.6),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(1.2),
+                  1: const pw.FlexColumnWidth(1.5),
+                  2: const pw.FlexColumnWidth(2),
+                  3: const pw.FlexColumnWidth(2),
+                },
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                        color: PdfColors.blueGrey100),
+                    children: ['#', 'Type', 'Width', 'Height']
+                        .map((h) => pw.Padding(
+                              padding: const pw.EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 5),
+                              child: pw.Text(h,
+                                  style: pw.TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: pw.FontWeight.bold,
+                                      color: PdfColors.blueGrey700)),
+                            ))
+                        .toList(),
+                  ),
+                  ...roomObjects.asMap().entries.map((e) {
+                    final i = e.key;
+                    final obj = e.value;
+                    final wStr = obj.widthMm >= 1000
+                        ? '${(obj.widthMm / 1000).toStringAsFixed(3)} m'
+                        : '${obj.widthMm.toStringAsFixed(0)} mm';
+                    final hStr = obj.heightMm >= 1000
+                        ? '${(obj.heightMm / 1000).toStringAsFixed(3)} m'
+                        : '${obj.heightMm.toStringAsFixed(0)} mm';
+                    return pw.TableRow(
+                      children: [
+                        '${i + 1}',
+                        obj.isDoor ? 'Door' : 'Window',
+                        wStr,
+                        hStr,
+                      ]
+                          .map((c) => pw.Padding(
+                                padding: const pw.EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 5),
+                                child: pw.Text(c,
+                                    style: const pw.TextStyle(
+                                        fontSize: 9,
+                                        color: PdfColors.blueGrey800)),
+                              ))
+                          .toList(),
+                    );
+                  }),
+                ],
+              ),
+              pw.SizedBox(height: 14),
+            ],
+
+
             pw.Text('Wall Measurements',
                 style: pw.TextStyle(
                     fontSize: 11,
