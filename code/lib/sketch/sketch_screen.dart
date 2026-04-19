@@ -44,6 +44,8 @@ class _SketchScreenState extends State<SketchScreen>
   final List<List<Offset>> _redoStack = [];
   final List<bool> _undoClosedStack = [];
   final List<bool> _redoClosedStack = [];
+  final List<List<RoomObject>> _undoObjectsStack = [];
+  final List<List<RoomObject>> _redoObjectsStack = [];
   TapDownDetails? _pendingTap;
   bool _tapCancelled = false;
   double? _snappedAngle;
@@ -140,21 +142,28 @@ int _objectCounter = 0;               // for generating unique ids
     return -1;
   }
 
-  // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
+    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     _redoStack.clear();
     _redoClosedStack.clear();
+    _redoObjectsStack.clear();
   }
 
   void _undo() {
     if (_undoStack.isEmpty) return;
     _redoStack.add(List<Offset>.of(_points));
     _redoClosedStack.add(_isClosed);
+    _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     setState(() {
       _points = _undoStack.removeLast();
       _isClosed = _undoClosedStack.removeLast();
+      if (_undoObjectsStack.isNotEmpty) {
+        _roomObjects
+          ..clear()
+          ..addAll(_undoObjectsStack.removeLast());
+      }
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -169,9 +178,15 @@ int _objectCounter = 0;               // for generating unique ids
     if (_redoStack.isEmpty) return;
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
+    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     setState(() {
       _points = _redoStack.removeLast();
       _isClosed = _redoClosedStack.removeLast();
+      if (_redoObjectsStack.isNotEmpty) {
+        _roomObjects
+          ..clear()
+          ..addAll(_redoObjectsStack.removeLast());
+      }
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -628,6 +643,7 @@ int _objectCounter = 0;               // for generating unique ids
       });
       return;
     }
+    _saveUndo();
     setState(() {
       _objectCounter++;
       _roomObjects.add(RoomObject(
@@ -659,6 +675,7 @@ int _objectCounter = 0;               // for generating unique ids
           });
         },
         onDelete: () {
+          _saveUndo();
           setState(() {
             _roomObjects.removeWhere((o) => o.id == id);
             _selectedObjectId = null;

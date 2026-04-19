@@ -502,8 +502,10 @@ class _ObjectMeasurementDialogState
     return Dialog(
       backgroundColor: const Color(0xFF1E2A3A),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: SingleChildScrollView(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -618,7 +620,7 @@ class _ObjectMeasurementDialogState
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
