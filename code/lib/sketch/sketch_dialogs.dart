@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
 import 'sketch_widgets.dart';
+import 'room_object.dart';
 
 mixin SketchDialogsMixin<T extends StatefulWidget> on State<T> {
 
@@ -388,6 +389,567 @@ mixin SketchDialogsMixin<T extends StatefulWidget> on State<T> {
                 sketchApplyRealMeasurement(wallIndex, val);
               }
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Object Measurement Dialog ─────────────────────────────────────────────
+class ObjectMeasurementDialog extends StatefulWidget {
+  final RoomObject roomObject;
+  final void Function(RoomObject updated) onSave;
+  final VoidCallback onDelete;
+
+  const ObjectMeasurementDialog({
+    super.key,
+    required this.roomObject,
+    required this.onSave,
+    required this.onDelete,
+  });
+
+  @override
+  State<ObjectMeasurementDialog> createState() =>
+      _ObjectMeasurementDialogState();
+}
+
+class _ObjectMeasurementDialogState
+    extends State<ObjectMeasurementDialog> {
+  late double? _width;   // in metres
+  late double? _height;  // in metres
+  late double? _top;     // window only
+  late double? _bottom;  // window only
+
+  @override
+  void initState() {
+    super.initState();
+    _width  = widget.roomObject.widthMm / 1000.0;
+    _height = widget.roomObject.heightMm / 1000.0;
+    _top    = widget.roomObject.heightMm / 1000.0;   // default same as height
+    _bottom = widget.roomObject.elevationMm / 1000.0;
+  }
+
+  bool get _isDoor => widget.roomObject.isDoor;
+
+  // Ask user to type a measurement for the given side label
+  Future<void> _editSide(String sideLabel, double? current,
+      void Function(double) onConfirmed) async {
+    final ctrl = TextEditingController(
+      text: current != null ? current.toStringAsFixed(3) : '',
+    );
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2A3A),
+        title: Text(
+          '$sideLabel measurement',
+          style: const TextStyle(
+              color: Color(0xFFCCDDEE),
+              fontFamily: 'monospace',
+              fontSize: 14),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType:
+              const TextInputType.numberWithOptions(decimal: true),
+          style: const TextStyle(
+              color: Colors.white, fontFamily: 'monospace'),
+          decoration: InputDecoration(
+            suffixText: 'm',
+            suffixStyle: const TextStyle(color: Color(0xFF00AAFF)),
+            hintText: 'e.g. 0.900',
+            hintStyle:
+                const TextStyle(color: Color(0xFF445566)),
+            enabledBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Color(0xFF334466))),
+            focusedBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Color(0xFF00AAFF))),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('CANCEL',
+                style: TextStyle(
+                    color: Color(0xFF778899),
+                    fontFamily: 'monospace')),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.trim());
+              if (v != null && v > 0) {
+                onConfirmed(v);
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('OK',
+                style: TextStyle(
+                    color: Color(0xFF00AAFF),
+                    fontFamily: 'monospace')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _fmt(double? v) =>
+      v != null ? '${v.toStringAsFixed(3)} m' : 'tap to set';
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF1E2A3A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── Title ─────────────────────────────────────────────────
+            Text(
+              _isDoor ? '🚪  Door Measurements' : '🪟  Window Measurements',
+              style: const TextStyle(
+                  color: Color(0xFFCCDDEE),
+                  fontFamily: 'monospace',
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Tap any side to enter its measurement',
+              style: TextStyle(
+                  color: Color(0xFF556677),
+                  fontFamily: 'monospace',
+                  fontSize: 11),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Interactive shape ──────────────────────────────────────
+            _isDoor
+                ? _DoorMeasureWidget(
+                    width: _width,
+                    height: _height,
+                    onTapWidth: () => _editSide('Width', _width, (v) {
+                      setState(() => _width = v);
+                    }),
+                    onTapHeight: () => _editSide('Height', _height, (v) {
+                      setState(() => _height = v);
+                    }),
+                  )
+                : _WindowMeasureWidget(
+                    width: _width,
+                    height: _height,
+                    top: _top,
+                    bottom: _bottom,
+                    onTapWidth: () => _editSide('Width', _width, (v) {
+                      setState(() => _width = v);
+                    }),
+                    onTapHeight: () => _editSide('Height (right)', _height, (v) {
+                      setState(() => _height = v);
+                    }),
+                    onTapTop: () => _editSide('Top', _top, (v) {
+                      setState(() => _top = v);
+                    }),
+                    onTapBottom: () => _editSide('Bottom', _bottom, (v) {
+                      setState(() => _bottom = v);
+                    }),
+                  ),
+
+            const SizedBox(height: 20),
+
+            // ── Action buttons ─────────────────────────────────────────
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    widget.onDelete();
+                    Navigator.pop(context);
+                  },
+                  child: const Text('DELETE',
+                      style: TextStyle(
+                          color: Color(0xFFFF4444),
+                          fontFamily: 'monospace',
+                          fontSize: 12)),
+                ),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('CANCEL',
+                          style: TextStyle(
+                              color: Color(0xFF778899),
+                              fontFamily: 'monospace',
+                              fontSize: 12)),
+                    ),
+                    const SizedBox(width: 4),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00AAFF),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                      ),
+                      onPressed: () {
+                        final updated = widget.roomObject.copyWith(
+                          widthMm: (_width ?? widget.roomObject.widthMm / 1000.0) * 1000,
+                          heightMm: (_height ?? widget.roomObject.heightMm / 1000.0) * 1000,
+                          elevationMm: _isDoor
+                              ? 0
+                              : (_bottom ?? widget.roomObject.elevationMm / 1000.0) * 1000,
+                        );
+                        widget.onSave(updated);
+                        Navigator.pop(context);
+                      },
+                      child: const Text('SAVE',
+                          style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ));
+  }
+}
+
+// ── Door shape widget ──────────────────────────────────────────────────────
+class _DoorMeasureWidget extends StatelessWidget {
+  final double? width;
+  final double? height;
+  final VoidCallback onTapWidth;
+  final VoidCallback onTapHeight;
+
+  const _DoorMeasureWidget({
+    required this.width,
+    required this.height,
+    required this.onTapWidth,
+    required this.onTapHeight,
+  });
+
+  String _fmt(double? v) => v != null ? '${v.toStringAsFixed(3)} m' : 'tap to set';
+
+  @override
+  Widget build(BuildContext context) {
+    const double w = 140.0;
+    const double h = 190.0;
+    const Color doorColor = Color(0xFF8B4513); // saddle brown
+    const Color doorDark  = Color(0xFF5C2E00);
+    const Color labelColor = Color(0xFFCCDDEE);
+
+    return SizedBox(
+      width: w + 100,
+      height: h + 60,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // ── Door body ────────────────────────────────────────────────
+          Positioned(
+            left: 50, top: 20,
+            child: Container(
+              width: w,
+              height: h,
+              decoration: BoxDecoration(
+                color: doorColor,
+                border: Border.all(color: doorDark, width: 3),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(4),
+                  topRight: Radius.circular(4),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.4),
+                    blurRadius: 8,
+                    offset: const Offset(4, 4),
+                  )
+                ],
+              ),
+              child: Stack(
+                children: [
+                  // Inner panel lines
+                  Positioned(
+                    left: 10, right: 10, top: 10, bottom: 10,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: doorDark.withOpacity(0.5), width: 1.5),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  // Door knob
+                  Positioned(
+                    right: 16,
+                    top: h / 2 - 6,
+                    child: Container(
+                      width: 10, height: 10,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFFD700),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Width label (bottom, tappable) ───────────────────────────
+          Positioned(
+            bottom: 0,
+            left: 50,
+            child: GestureDetector(
+              onTap: onTapWidth,
+              child: Container(
+                width: w,
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D1A27),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFF00AAFF)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.swap_horiz, color: Color(0xFF00AAFF), size: 14),
+                    const SizedBox(width: 4),
+                    Text(
+                      _fmt(width),
+                      style: const TextStyle(
+                          color: labelColor,
+                          fontSize: 11,
+                          fontFamily: 'monospace'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // ── Height label (right side, tappable) ──────────────────────
+          Positioned(
+            right: 0,
+            top: 20,
+            child: GestureDetector(
+              onTap: onTapHeight,
+              child: RotatedBox(
+                quarterTurns: 1,
+                child: Container(
+                  width: h,
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D1A27),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFF00AA66)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.swap_vert, color: Color(0xFF00AA66), size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        _fmt(height),
+                        style: const TextStyle(
+                            color: labelColor,
+                            fontSize: 11,
+                            fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Window shape widget ────────────────────────────────────────────────────
+class _WindowMeasureWidget extends StatelessWidget {
+  final double? width;
+  final double? height;
+  final double? top;
+  final double? bottom;
+  final VoidCallback onTapWidth;
+  final VoidCallback onTapHeight;
+  final VoidCallback onTapTop;
+  final VoidCallback onTapBottom;
+
+  const _WindowMeasureWidget({
+    required this.width,
+    required this.height,
+    required this.top,
+    required this.bottom,
+    required this.onTapWidth,
+    required this.onTapHeight,
+    required this.onTapTop,
+    required this.onTapBottom,
+  });
+
+  String _fmt(double? v) => v != null ? '${v.toStringAsFixed(3)} m' : 'tap';
+
+  @override
+  Widget build(BuildContext context) {
+    const double w = 130.0;
+    const double h = 130.0;
+    const Color frameColor = Color(0xFF90A4AE);  // blue-grey window frame
+    const Color glassColor = Color(0xFFB3E5FC);  // light blue glass
+    const Color labelColor = Color(0xFFCCDDEE);
+
+    return SizedBox(
+      width: w + 110,
+      height: h + 90,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // ── Window frame and glass panes ─────────────────────────────
+          Positioned(
+            left: 45, top: 35,
+            child: Container(
+              width: w,
+              height: h,
+              decoration: BoxDecoration(
+                color: glassColor.withOpacity(0.3),
+                border: Border.all(color: frameColor, width: 4),
+              ),
+              child: Stack(
+                children: [
+                  // Horizontal divider
+                  Positioned(
+                    top: h / 2 - 2,
+                    left: 0, right: 0,
+                    child: Container(height: 4, color: frameColor),
+                  ),
+                  // Vertical divider
+                  Positioned(
+                    left: w / 2 - 2,
+                    top: 0, bottom: 0,
+                    child: Container(width: 4, color: frameColor),
+                  ),
+                  // Glass tint panes
+                  Positioned(
+                    left: 6, top: 6,
+                    right: w / 2 + 2, bottom: h / 2 + 2,
+                    child: Container(color: glassColor.withOpacity(0.25)),
+                  ),
+                  Positioned(
+                    left: w / 2 + 6, top: 6,
+                    right: 6, bottom: h / 2 + 2,
+                    child: Container(color: glassColor.withOpacity(0.15)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── TOP label ────────────────────────────────────────────────
+          Positioned(
+            top: 0, left: 45,
+            child: GestureDetector(
+              onTap: onTapTop,
+              child: Container(
+                width: w,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D1A27),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFFFFAA00)),
+                ),
+                child: Text(
+                  _fmt(top),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: labelColor, fontSize: 10, fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+          ),
+
+          // ── BOTTOM label ─────────────────────────────────────────────
+          Positioned(
+            bottom: 0, left: 45,
+            child: GestureDetector(
+              onTap: onTapBottom,
+              child: Container(
+                width: w,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D1A27),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFF00AAFF)),
+                ),
+                child: Text(
+                  _fmt(bottom),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: labelColor, fontSize: 10, fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+          ),
+
+          // ── LEFT label (Height, rotated) ─────────────────────────────
+          Positioned(
+            left: 0, top: 35,
+            child: GestureDetector(
+              onTap: onTapHeight,
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: Container(
+                  width: h,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D1A27),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFF00AA66)),
+                  ),
+                  child: Text(
+                    _fmt(height),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: labelColor, fontSize: 10, fontFamily: 'monospace'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── RIGHT label (Width, rotated) ─────────────────────────────
+          Positioned(
+            right: 0, top: 35,
+            child: GestureDetector(
+              onTap: onTapWidth,
+              child: RotatedBox(
+                quarterTurns: 1,
+                child: Container(
+                  width: h,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D1A27),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFF00AAFF)),
+                  ),
+                  child: Text(
+                    _fmt(width),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: labelColor, fontSize: 10, fontFamily: 'monospace'),
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
