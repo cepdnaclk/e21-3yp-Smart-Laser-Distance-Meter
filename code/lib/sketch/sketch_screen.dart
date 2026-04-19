@@ -647,40 +647,25 @@ int _objectCounter = 0;               // for generating unique ids
 
   // Called when user taps a placed object to select/delete it
   void _onObjectTapped(String id) {
-    if (_selectedObjectId == id) {
-      // Second tap = show options
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: const Color(0xFF1E2A3A),
-          title: const Text('Object options',
-              style: TextStyle(color: Color(0xFFCCDDEE), fontFamily: 'monospace')),
-          actions: [
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _roomObjects.removeWhere((o) => o.id == id);
-                  _selectedObjectId = null;
-                });
-                Navigator.pop(ctx);
-              },
-              child: const Text('DELETE',
-                  style: TextStyle(color: Color(0xFFFF4444), fontFamily: 'monospace')),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() => _selectedObjectId = null);
-                Navigator.pop(ctx);
-              },
-              child: const Text('CLOSE',
-                  style: TextStyle(color: Color(0xFF888888), fontFamily: 'monospace')),
-            ),
-          ],
-        ),
-      );
-    } else {
-      setState(() => _selectedObjectId = id);
-    }
+    final obj = _roomObjects.firstWhere((o) => o.id == id);
+    showDialog(
+      context: context,
+      builder: (ctx) => ObjectMeasurementDialog(
+        roomObject: obj,
+        onSave: (updatedObj) {
+          setState(() {
+            final idx = _roomObjects.indexWhere((o) => o.id == id);
+            if (idx >= 0) _roomObjects[idx] = updatedObj;
+          });
+        },
+        onDelete: () {
+          setState(() {
+            _roomObjects.removeWhere((o) => o.id == id);
+            _selectedObjectId = null;
+          });
+        },
+      ),
+    );
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
@@ -739,22 +724,37 @@ int _objectCounter = 0;               // for generating unique ids
     if (_dragOccurred) { _dragOccurred = false; return; }
 
     if (_isClosed) {
-      final wallIdx = _findNearWall(details.localPosition);
-      if (wallIdx >= 0) {
-        setState(() {
-          _activePointIndex = -1;
-          _selectedWallIndex = wallIdx;
-        });
-        showSketchWallEditDialog(wallIdx);   // ← mixin method
+    // ── Check if a room object (door/window) was tapped FIRST ──────────
+    for (final obj in _roomObjects) {
+      final centre = objectCentreWorld(
+        obj: obj,
+        points: _points,
+        wallCount: _points.length,
+      );
+      final centreScreen = worldToScreen(centre);
+      if ((details.localPosition - centreScreen).distance < 30.0) {
+        _onObjectTapped(obj.id);
         return;
       }
+    }
+
+    // ── Then check wall taps ────────────────────────────────────────────
+    final wallIdx = _findNearWall(details.localPosition);
+    if (wallIdx >= 0) {
       setState(() {
-        _activePointIndex = _findNearPoint(details.localPosition,
-            radius: pointSelectRadiusScreen);
-        _selectedWallIndex = -1;
+        _activePointIndex = -1;
+        _selectedWallIndex = wallIdx;
       });
+      showSketchWallEditDialog(wallIdx);
       return;
     }
+    setState(() {
+      _activePointIndex = _findNearPoint(details.localPosition,
+          radius: pointSelectRadiusScreen);
+      _selectedWallIndex = -1;
+    });
+    return;
+  }
 
     if (_points.length >= 3) {
       final dist = (details.localPosition - worldToScreen(_points.first))
