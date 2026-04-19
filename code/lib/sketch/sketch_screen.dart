@@ -1440,6 +1440,7 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
                                   wallRealMm: _wallRealMm,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
+                                  roomObjects: _roomObjects,
                                 )
                             : null,
                         color: const Color(0xFFFF4488),
