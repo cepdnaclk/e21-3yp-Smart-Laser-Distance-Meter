@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "219102363756",
+    "project_id": "smartmeasurepro-9eac6",
+    "storage_bucket": "smartmeasurepro-9eac6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:219102363756:android:c47253dba69cdf237a1849",
+        "android_client_info": {
+          "package_name": "com.example.smart_measure_pro"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "219102363756-lv6jbk4io9esfkih1aipsnf5mb3qohqe.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCgsi_D8S5ffFI-9M339qbEtZ3lTgcPYs8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "219102363756-lv6jbk4io9esfkih1aipsnf5mb3qohqe.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "219102363756-i6vcpois559u9fnjs7vkbp4p1hgvksb4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.smartMeasurePro"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
