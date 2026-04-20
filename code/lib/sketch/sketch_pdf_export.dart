@@ -212,43 +212,58 @@ Future<void> exportSketchPdf({
                         g.lineTo(c.x + dxBig, c.y - dyBig);
                         g.strokePath();
 
-                        // Hinge = one end, tip = other end (in PDF coords)
+                        // Hinge point (one end of door opening)
                         final double hingePx = c.x - dxBig;
                         final double hingePy = c.y + dyBig;
                         final double tipPx   = c.x + dxBig;
                         final double tipPy   = c.y - dyBig;
 
-                        // 2. Door leaf line
+                        // Full door width = swing radius
+                        final double radius = doorHalfW * pdfScale * 2;
+
+                        // Inward perp in PDF space (PDF Y is flipped, so negate perpY)
+                        final double pInX = perpX * pdfScale;
+                        final double pInY = -perpY * pdfScale; // flip Y for PDF coords
+
+                        // Leaf tip = hinge + inward perp * radius
+                        final double leafTipX = hingePx + pInX / pdfScale * radius;
+                        final double leafTipY = hingePy + pInY / pdfScale * radius;
+
                         g.setStrokeColor(PdfColors.blueGrey800);
                         g.setLineWidth(1.5);
+
+                        // 2. Vertical leg: hinge → leafTip (into room)
+                        g.moveTo(hingePx, hingePy);
+                        g.lineTo(leafTipX, leafTipY);
+                        g.strokePath();
+
+                        // 3. Horizontal leg: hinge → tip (along wall)
                         g.moveTo(hingePx, hingePy);
                         g.lineTo(tipPx, tipPy);
                         g.strokePath();
 
-                        // 3. Swing arc — inward
-                        // In PDF space: perpX/perpY point inward in world, but PDF Y is flipped
-                        // so inward perp in PDF = (perpX * pdfScale, -perpY * pdfScale)
-                        // Arc radius = door width
-                        final double radius = doorHalfW * pdfScale * 2;
-                        // Angle from hinge to tip in PDF space (PDF Y flipped so negate y diff)
+                        // 4. Arc from leafTip to tipPoint centred on hinge
+                        // Angle from hinge to tip (in PDF space, Y flipped)
                         final double leafAngle = math.atan2(-(tipPy - hingePy), tipPx - hingePx);
-                        // Inward perp angle in PDF space
-                        final double perpAnglePdf = math.atan2(-perpY, perpX);
-                        // Arc end angle = hinge + inward perp (90 degrees from leaf)
-                        // Sweep CCW (positive) or CW (negative) — pick whichever goes inward
+                        // Angle from hinge to leafTip
+                        final double perpAnglePdf = math.atan2(leafTipY - hingePy, leafTipX - hingePx);
+
+                        // Determine sweep direction (CW or CCW) so arc goes inward
                         final double sweep1end = leafAngle + math.pi / 2;
                         final double sweep2end = leafAngle - math.pi / 2;
                         final double diff1 = ((sweep1end - perpAnglePdf + math.pi) % (2 * math.pi) - math.pi).abs();
                         final double diff2 = ((sweep2end - perpAnglePdf + math.pi) % (2 * math.pi) - math.pi).abs();
-                        final double sweepSign = diff1 < diff2 ? 1.0 : -1.0;
+                        // Arc goes from perpAnglePdf to leafAngle
+                        final double arcStart = perpAnglePdf;
+                        final double arcEnd   = leafAngle;
+                        final double arcSweep = diff1 < diff2 ? (arcEnd - arcStart) : (arcStart - arcEnd);
+                        final double arcSign  = diff1 < diff2 ? 1.0 : -1.0;
 
-                        g.setStrokeColor(PdfColors.blueGrey800);
                         g.setLineWidth(0.8);
                         const int arcSteps = 20;
                         bool arcFirst = true;
                         for (int s = 0; s <= arcSteps; s++) {
-                          final double angle = leafAngle + sweepSign * (s / arcSteps) * (math.pi / 2);
-                          // PDF arc: cos for x, sin for y (PDF Y goes up so use +sin)
+                          final double angle = arcStart + arcSign * (s / arcSteps) * (math.pi / 2);
                           final double ax = hingePx + math.cos(angle) * radius;
                           final double ay = hingePy + math.sin(angle) * radius;
                           if (arcFirst) {
