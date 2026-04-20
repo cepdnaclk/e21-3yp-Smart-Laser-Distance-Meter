@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
+import 'sketch_model.dart';
 
 class SketchPainter extends CustomPainter {
   final Offset panOffset;
   final double scale;
   final double minorGrid;
   final double majorGrid;
-  final List<Offset> points;
-  final bool isClosed;
+  
+  // New shape variables replacing the old single-room variables
+  final List<SketchShape> shapes;
+  final int activeIndex;
+
   final Offset? cursorWorld;
   final double snapRadiusWorld;
   final bool isDraggingLastPoint;
@@ -29,15 +33,14 @@ class SketchPainter extends CustomPainter {
   final bool prevWallSnapped;
   final bool nextWallSnapped;
   final int selectedWallIndex;
-  final Map<int, double> wallRealMm;
 
   const SketchPainter({
     required this.panOffset,
     required this.scale,
     required this.minorGrid,
     required this.majorGrid,
-    required this.points,
-    required this.isClosed,
+    required this.shapes,
+    required this.activeIndex,
     required this.cursorWorld,
     required this.snapRadiusWorld,
     required this.isDraggingLastPoint,
@@ -58,7 +61,6 @@ class SketchPainter extends CustomPainter {
     required this.prevWallSnapped,
     required this.nextWallSnapped,
     required this.selectedWallIndex,
-    required this.wallRealMm,
   });
 
   Offset worldToScreen(Offset world) => world * scale + panOffset;
@@ -87,15 +89,25 @@ class SketchPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     _drawGrid(canvas, size);
     _drawAxes(canvas, size);
-    if (points.isNotEmpty) {
-      _drawSnapGuides(canvas, size);
-      _drawRoom(canvas);
-      _drawPoints(canvas);
-      _drawAngleIndicator(canvas);
-      _drawNearestSnapLine(canvas, size);
-      _drawMiddlePointAngles(canvas);
+
+    // Loop through every room we have created
+    for (int s = 0; s < shapes.length; s++) {
+      final shape = shapes[s];
+      final isActive = s == activeIndex;
+
+      if (shape.points.isNotEmpty) {
+        _drawSnapGuides(canvas, size, shape, isActive);
+        _drawRoom(canvas, shape, isActive);
+        _drawPoints(canvas, shape, isActive);
+        _drawAngleIndicator(canvas, shape, isActive);
+        _drawNearestSnapLine(canvas, size, shape, isActive);
+        _drawMiddlePointAngles(canvas, shape, isActive);
+      }
     }
-    _drawSnapCursor(canvas);
+
+    if (shapes.isNotEmpty) {
+      _drawSnapCursor(canvas, shapes[activeIndex]);
+    }
   }
 
   void _drawWallLengthLabel(Canvas canvas, Offset fromWorld, Offset toWorld,
@@ -167,8 +179,6 @@ class SketchPainter extends CustomPainter {
       extPaint,
     );
 
-    canvas.drawLine(dFrom, dTo, dimPaint);
-
     void drawTick(Offset centre) {
       final tx = (ux + nx) / math.sqrt(2);
       final ty = (uy + ny) / math.sqrt(2);
@@ -220,9 +230,9 @@ class SketchPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _drawNearestSnapLine(Canvas canvas, Size size) {
-    if (activePointIndex >= 0) return;
-    if (isClosed) return;
+  void _drawNearestSnapLine(Canvas canvas, Size size, SketchShape shape, bool isActive) {
+    if (!isActive || activePointIndex >= 0) return;
+    if (shape.isClosed) return;
     if (angleRefWorld == null || currentAngleDeg == null) return;
     if (nearestSnapAngleDeg == null) return;
     final diff = snapDiffDeg ?? 99;
@@ -347,24 +357,25 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawMiddlePointAngles(Canvas canvas) {
-    if (activePointIndex < 0) return;
-    if (activePointIndex >= points.length) return;
-    final activePoint = points[activePointIndex];
+  void _drawMiddlePointAngles(Canvas canvas, SketchShape shape, bool isActive) {
+    if (!isActive || activePointIndex < 0) return;
+    if (activePointIndex >= shape.points.length) return;
+    
+    final activePoint = shape.points[activePointIndex];
     final activeScreen = worldToScreen(activePoint);
-    final n = points.length;
+    final n = shape.points.length;
 
     Offset? prevPoint;
     Offset? nextPoint;
     if (activePointIndex > 0) {
-      prevPoint = points[activePointIndex - 1];
-    } else if (isClosed && n > 1) {
-      prevPoint = points[n - 1];
+      prevPoint = shape.points[activePointIndex - 1];
+    } else if (shape.isClosed && n > 1) {
+      prevPoint = shape.points[n - 1];
     }
     if (activePointIndex < n - 1) {
-      nextPoint = points[activePointIndex + 1];
-    } else if (isClosed && n > 1) {
-      nextPoint = points[0];
+      nextPoint = shape.points[activePointIndex + 1];
+    } else if (shape.isClosed && n > 1) {
+      nextPoint = shape.points[0];
     }
 
     if (prevPoint != null && prevWallAngle != null) {
@@ -379,9 +390,11 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawSnapGuides(Canvas canvas, Size size) {
-    if (activePointIndex >= 0) {
-      final refScreen = worldToScreen(points[activePointIndex]);
+  void _drawSnapGuides(Canvas canvas, Size size, SketchShape shape, bool isActive) {
+    if (!isActive) return;
+
+    if (activePointIndex >= 0 && shape.points.isNotEmpty) {
+      final refScreen = worldToScreen(shape.points[activePointIndex]);
       final faintPaint = Paint()
         ..color = const Color(0xFFFFAA00).withOpacity(0.07)
         ..strokeWidth = 1.0
@@ -396,7 +409,7 @@ class SketchPainter extends CustomPainter {
       }
       return;
     }
-    if (isClosed) return;
+    if (shape.isClosed) return;
     if (angleRefWorld == null || angleTargetWorld == null) return;
     if (currentAngleDeg == null) return;
 
@@ -432,8 +445,8 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawAngleIndicator(Canvas canvas) {
-    if (activePointIndex >= 0) return;
+  void _drawAngleIndicator(Canvas canvas, SketchShape shape, bool isActive) {
+    if (!isActive || activePointIndex >= 0) return;
     if (angleRefWorld == null || angleTargetWorld == null) return;
     if (currentAngleDeg == null) return;
 
@@ -572,8 +585,8 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawSnapCursor(Canvas canvas) {
-    if (cursorWorld == null || isClosed) return;
+  void _drawSnapCursor(Canvas canvas, SketchShape activeShape) {
+    if (cursorWorld == null || activeShape.isClosed) return;
     if (activePointIndex >= 0) return;
     final s = worldToScreen(cursorWorld!);
     final p = Paint()
@@ -596,7 +609,7 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawRoom(Canvas canvas) {
+  void _drawRoom(Canvas canvas, SketchShape shape, bool isActive) {
     final wallPaint = Paint()
       ..color = const Color(0xFF1A1A1A)
       ..strokeWidth = 2.5
@@ -614,18 +627,18 @@ class SketchPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     final fillPaint = Paint()
-      ..color = const Color(0xFF00AAFF).withOpacity(0.07)
+      ..color = const Color(0xFF00AAFF).withOpacity(isActive ? 0.07 : 0.03)
       ..style = PaintingStyle.fill;
 
     final List<Offset> sp =
-        points.map<Offset>((p) => worldToScreen(p)).toList();
+        shape.points.map<Offset>((p) => worldToScreen(p)).toList();
 
     Offset? centroid;
-    if (points.length >= 2) {
+    if (shape.points.length >= 2) {
       double cx = 0, cy = 0;
-      final allPts = isClosed
-          ? points
-          : [...points, if (cursorWorld != null) cursorWorld!];
+      final allPts = shape.isClosed
+          ? shape.points
+          : [...shape.points, if (cursorWorld != null && isActive) cursorWorld!];
       for (final p in allPts) {
         cx += p.dx;
         cy += p.dy;
@@ -633,7 +646,7 @@ class SketchPainter extends CustomPainter {
       centroid = Offset(cx / allPts.length, cy / allPts.length);
     }
 
-    if (isClosed && sp.length >= 3) {
+    if (shape.isClosed && sp.length >= 3) {
       final path = Path()..addPolygon(sp, true);
       canvas.drawPath(path, fillPaint);
     }
@@ -645,14 +658,14 @@ class SketchPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     for (int i = 0; i < sp.length - 1; i++) {
-      final isPrevWall = activePointIndex >= 0 && i == activePointIndex - 1;
-      final isNextWall = activePointIndex >= 0 && i == activePointIndex;
-      final isPrevWallWrapped = activePointIndex == 0 && i == sp.length - 1;
+      final isPrevWall = isActive && activePointIndex >= 0 && i == activePointIndex - 1;
+      final isNextWall = isActive && activePointIndex >= 0 && i == activePointIndex;
+      final isPrevWallWrapped = isActive && activePointIndex == 0 && i == sp.length - 1;
       final isNextWallWrapped =
-          activePointIndex == sp.length - 1 && i == 0;
+          isActive && activePointIndex == sp.length - 1 && i == 0;
 
       Paint paint = wallPaint;
-      if (i == selectedWallIndex) {
+      if (isActive && i == selectedWallIndex) {
         paint = selectedWallPaint;
       } else if ((isPrevWall || isPrevWallWrapped) && prevWallSnapped) {
         paint = snapWallPaint;
@@ -660,38 +673,45 @@ class SketchPainter extends CustomPainter {
         paint = snapWallPaint;
       }
       canvas.drawLine(sp[i], sp[i + 1], paint);
-      _drawWallLengthLabel(canvas, points[i], points[i + 1],
-          centroid: centroid,
-          overrideMm: wallRealMm[i],
-          isSelected: i == selectedWallIndex);
+      
+      if (isActive) {
+        _drawWallLengthLabel(canvas, shape.points[i], shape.points[i + 1],
+            centroid: centroid,
+            overrideMm: shape.wallRealMm[i],
+            isSelected: i == selectedWallIndex);
+      }
     }
 
-    if (isClosed && sp.length >= 2) {
+    if (shape.isClosed && sp.length >= 2) {
       final int closingWallIdx = sp.length - 1;
       Paint paint = wallPaint;
-      if (closingWallIdx == selectedWallIndex) {
+      if (isActive && closingWallIdx == selectedWallIndex) {
         paint = selectedWallPaint;
-      } else if (activePointIndex == 0 && prevWallSnapped) {
+      } else if (isActive && activePointIndex == 0 && prevWallSnapped) {
         paint = snapWallPaint;
-      } else if (activePointIndex == sp.length - 1 && nextWallSnapped) {
+      } else if (isActive && activePointIndex == sp.length - 1 && nextWallSnapped) {
         paint = snapWallPaint;
       }
       canvas.drawLine(sp.last, sp.first, paint);
-      _drawWallLengthLabel(canvas, points.last, points.first,
-          centroid: centroid,
-          overrideMm: wallRealMm[closingWallIdx],
-          isSelected: closingWallIdx == selectedWallIndex);
+      
+      if (isActive) {
+        _drawWallLengthLabel(canvas, shape.points.last, shape.points.first,
+            centroid: centroid,
+            overrideMm: shape.wallRealMm[closingWallIdx],
+            isSelected: closingWallIdx == selectedWallIndex);
+      }
     }
 
-    if (!isClosed &&
+    if (isActive &&
+        !shape.isClosed &&
         cursorWorld != null &&
         sp.isNotEmpty &&
         activePointIndex < 0) {
       canvas.drawLine(sp.last, worldToScreen(cursorWorld!), rubberPaint);
-      _drawWallLengthLabel(canvas, points.last, cursorWorld!,
+      _drawWallLengthLabel(canvas, shape.points.last, cursorWorld!,
           centroid: centroid);
-      if (points.length >= 3) {
-        final distToFirst = (cursorWorld! - points.first).distance;
+      if (shape.points.length >= 3) {
+        final distToFirst = (cursorWorld! - shape.points.first).distance;
         if (distToFirst < snapRadiusWorld) {
           canvas.drawCircle(
             sp.first,
@@ -706,13 +726,13 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawPoints(Canvas canvas) {
-    for (int i = 0; i < points.length; i++) {
-      final s = worldToScreen(points[i]);
+  void _drawPoints(Canvas canvas, SketchShape shape, bool isActive) {
+    for (int i = 0; i < shape.points.length; i++) {
+      final s = worldToScreen(shape.points[i]);
       final isFirst = i == 0;
-      final isLast = i == points.length - 1 && !isClosed;
-      final isActive = i == activePointIndex;
-      final isSnapTarget = i == snapTargetIndex;
+      final isLast = i == shape.points.length - 1 && !shape.isClosed;
+      final isThisActivePoint = isActive && i == activePointIndex;
+      final isSnapTarget = isActive && i == snapTargetIndex;
 
       if (isSnapTarget) {
         canvas.drawCircle(
@@ -730,7 +750,7 @@ class SketchPainter extends CustomPainter {
               ..style = PaintingStyle.stroke);
       }
 
-      if (isActive) {
+      if (isThisActivePoint) {
         canvas.drawCircle(
             s,
             lastPointGlowRadius,
@@ -750,7 +770,7 @@ class SketchPainter extends CustomPainter {
               ..color = const Color(0xFFFF6600)
               ..strokeWidth = 1.5
               ..style = PaintingStyle.stroke);
-      } else if (isLast) {
+      } else if (isActive && isLast) {
         canvas.drawCircle(
             s,
             lastPointGlowRadius,
@@ -782,12 +802,12 @@ class SketchPainter extends CustomPainter {
 
       Color dotColor;
       Color borderColor;
-      final double dotRadius = (isLast || isActive) ? 7 : (isFirst ? 6 : 4);
+      final double dotRadius = (isActive && (isLast || isThisActivePoint)) ? 7 : (isFirst ? 6 : 4);
 
-      if (isActive) {
+      if (isThisActivePoint) {
         dotColor = const Color(0xFFFF6600);
         borderColor = const Color(0xFFFF6600);
-      } else if (isLast) {
+      } else if (isActive && isLast) {
         dotColor =
             isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFFFF6600);
         borderColor =
@@ -813,5 +833,5 @@ class SketchPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(SketchPainter old) => true;
+  bool shouldRepaint(SketchPainter oldDelegate) => oldDelegate.shapes != shapes || oldDelegate.activeIndex != activeIndex;
 }

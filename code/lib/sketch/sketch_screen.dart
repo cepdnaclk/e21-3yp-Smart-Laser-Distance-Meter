@@ -28,8 +28,8 @@ class _SketchScreenState extends State<SketchScreen>
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
-  List<Offset> _points = [];
-  bool _isClosed = false;
+  List<SketchShape> shapes = [SketchShape.empty()];
+  int activeIndex = 0;
   Offset? _cursorWorld;
   bool _isDraggingLastPoint = false;
   bool _dragOccurred = false;
@@ -55,16 +55,16 @@ class _SketchScreenState extends State<SketchScreen>
   double? _nearestSnapAngleDeg;
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
-  final Map<int, double> _wallRealMm = {};
   double? _pendingBleMm;
   bool _waitingForBle = false;
+  SketchShape get activeShape => shapes[activeIndex];
 
   // ── Mixin contract — expose private state via public getters ─────────────
-  @override List<Offset> get sketchPoints => _points;
-  @override bool get sketchIsClosed => _isClosed;
+  @override List<Offset> get sketchPoints => activeShape.points;
+  @override bool get sketchIsClosed => activeShape.isClosed;
   @override double? get sketchCurrentAngleDeg => _currentAngleDeg;
   @override double? get sketchSnappedAngle => _snappedAngle;
-  @override Map<int, double> get sketchWallRealMm => _wallRealMm;
+  @override Map<int, double> get sketchWallRealMm => activeShape.wallRealMm;
   @override bool get sketchWaitingForBle => _waitingForBle;
   @override dynamic get sketchBleManager => widget.bleManager;
 
@@ -114,36 +114,42 @@ class _SketchScreenState extends State<SketchScreen>
 
   // ── Point helpers ────────────────────────────────────────────────────────
   bool _isNearLastPoint(Offset screenPos) {
-    if (_points.isEmpty || _isClosed) return false;
+    if (activeShape.points.isEmpty || activeShape.isClosed) return false;
     if (_activePointIndex >= 0) return false;
-    return (screenPos - worldToScreen(_points.last)).distance < lastPointGlowRadius;
+    return (screenPos - worldToScreen(activeShape.points.last)).distance < lastPointGlowRadius;
   }
 
   int _findNearPoint(Offset screenPos,
       {int excludeIndex = -1,
       double radius = pointSelectRadiusScreen}) {
-    for (int i = 0; i < _points.length; i++) {
+    for (int i = 0; i < activeShape.points.length; i++) {
       if (i == excludeIndex) continue;
-      if ((screenPos - worldToScreen(_points[i])).distance < radius) return i;
+      if ((screenPos - worldToScreen(activeShape.points[i])).distance < radius) return i;
     }
     return -1;
   }
 
+  void _addNewRoom() {
+    setState(() {
+      shapes.add(SketchShape.empty());
+      activeIndex = shapes.length - 1;
+    });
+  }
   // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
-    _undoStack.add(List<Offset>.of(_points));
-    _undoClosedStack.add(_isClosed);
+    _undoStack.add(List<Offset>.of(activeShape.points));
+    _undoClosedStack.add(activeShape.isClosed);
     _redoStack.clear();
     _redoClosedStack.clear();
   }
 
   void _undo() {
     if (_undoStack.isEmpty) return;
-    _redoStack.add(List<Offset>.of(_points));
-    _redoClosedStack.add(_isClosed);
+    _redoStack.add(List<Offset>.of(activeShape.points));
+    _redoClosedStack.add(activeShape.isClosed);
     setState(() {
-      _points = _undoStack.removeLast();
-      _isClosed = _undoClosedStack.removeLast();
+      activeShape.points = _undoStack.removeLast();
+      activeShape.isClosed = _undoClosedStack.removeLast();
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -156,11 +162,11 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _redo() {
     if (_redoStack.isEmpty) return;
-    _undoStack.add(List<Offset>.of(_points));
-    _undoClosedStack.add(_isClosed);
+    _undoStack.add(List<Offset>.of(activeShape.points));
+    _undoClosedStack.add(activeShape.isClosed);
     setState(() {
-      _points = _redoStack.removeLast();
-      _isClosed = _redoClosedStack.removeLast();
+      activeShape.points = _redoStack.removeLast();
+      activeShape.isClosed = _redoClosedStack.removeLast();
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -174,8 +180,8 @@ class _SketchScreenState extends State<SketchScreen>
   void _clear() {
     _saveUndo();
     setState(() {
-      _points.clear();
-      _isClosed = false;
+      activeShape.points.clear();
+      activeShape.isClosed = false;
       _cursorWorld = null;
       _isDraggingLastPoint = false;
       _dragOccurred = false;
@@ -270,11 +276,11 @@ class _SketchScreenState extends State<SketchScreen>
     _nextWallSnapped = false;
 
     Offset? prevPt = idx > 0
-        ? _points[idx - 1]
-        : (_isClosed && _points.length > 1 ? _points.last : null);
-    Offset? nextPt = idx < _points.length - 1
-        ? _points[idx + 1]
-        : (_isClosed && _points.length > 1 ? _points[0] : null);
+        ? activeShape.points[idx - 1]
+        : (activeShape.isClosed && activeShape.points.length > 1 ? activeShape.points.last : null);
+    Offset? nextPt = idx < activeShape.points.length - 1
+        ? activeShape.points[idx + 1]
+        : (activeShape.isClosed && activeShape.points.length > 1 ? activeShape.points[0] : null);
 
     double? prevSnapAngle;
     Offset? prevSnappedPos;
@@ -341,18 +347,18 @@ class _SketchScreenState extends State<SketchScreen>
 
   // ── Wall helpers ─────────────────────────────────────────────────────────
   double _wallLengthWorld(int wallIndex) {
-    final Offset a = _points[wallIndex];
-    final Offset b = _points[(wallIndex + 1) % _points.length];
+    final Offset a = activeShape.points[wallIndex];
+    final Offset b = activeShape.points[(wallIndex + 1) % activeShape.points.length];
     final dx = b.dx - a.dx, dy = b.dy - a.dy;
     return math.sqrt(dx * dx + dy * dy);
   }
 
   int _findNearWall(Offset screenPos) {
-    if (_points.length < 2) return -1;
+    if (activeShape.points.length < 2) return -1;
     const double hitThresh = 18.0;
-    final sp = _points.map(worldToScreen).toList();
+    final sp = activeShape.points.map(worldToScreen).toList();
     final int n = sp.length;
-    final int wallCount = _isClosed ? n : n - 1;
+    final int wallCount = activeShape.isClosed ? n : n - 1;
     for (int i = 0; i < wallCount; i++) {
       if (_pointToSegmentDist(screenPos, sp[i], sp[(i + 1) % n]) < hitThresh) {
         return i;
@@ -376,13 +382,13 @@ class _SketchScreenState extends State<SketchScreen>
     final double ratio = (realMm / mmPerUnit) / pixelLen;
     if (ratio <= 0) return;
     _saveUndo();
-    final Offset anchor = _points[wallIndex];
+    final Offset anchor = activeShape.points[wallIndex];
     setState(() {
-      _points = _points.map((pt) {
+      activeShape.points = activeShape.points.map((pt) {
         final dx = pt.dx - anchor.dx, dy = pt.dy - anchor.dy;
         return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
       }).toList();
-      _wallRealMm[wallIndex] = realMm;
+      activeShape.wallRealMm[wallIndex] = realMm;
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
@@ -390,29 +396,29 @@ class _SketchScreenState extends State<SketchScreen>
 
   // ── Geometry calculations ────────────────────────────────────────────────
   double _totalPerimeter() {
-    if (_points.length < 2) return 0;
+    if (activeShape.points.length < 2) return 0;
     double total = 0;
-    for (int i = 0; i < _points.length - 1; i++) {
-      final dx = _points[i + 1].dx - _points[i].dx;
-      final dy = _points[i + 1].dy - _points[i].dy;
+    for (int i = 0; i < activeShape.points.length - 1; i++) {
+      final dx = activeShape.points[i + 1].dx - activeShape.points[i].dx;
+      final dy = activeShape.points[i + 1].dy - activeShape.points[i].dy;
       total += math.sqrt(dx * dx + dy * dy);
     }
-    if (_isClosed) {
-      final dx = _points.first.dx - _points.last.dx;
-      final dy = _points.first.dy - _points.last.dy;
+    if (activeShape.isClosed) {
+      final dx = activeShape.points.first.dx - activeShape.points.last.dx;
+      final dy = activeShape.points.first.dy - activeShape.points.last.dy;
       total += math.sqrt(dx * dx + dy * dy);
     }
     return total;
   }
 
   double _totalArea() {
-    if (!_isClosed || _points.length < 3) return 0;
+    if (!activeShape.isClosed || activeShape.points.length < 3) return 0;
     double area = 0;
-    final n = _points.length;
+    final n = activeShape.points.length;
     for (int i = 0; i < n; i++) {
       final j = (i + 1) % n;
-      area += _points[i].dx * _points[j].dy;
-      area -= _points[j].dx * _points[i].dy;
+      area += activeShape.points[i].dx * activeShape.points[j].dy;
+      area -= activeShape.points[j].dx * activeShape.points[i].dy;
     }
     return area.abs() / 2.0;
   }
@@ -435,7 +441,7 @@ class _SketchScreenState extends State<SketchScreen>
     _prevWallAngle = null;
     _nextWallAngle = null;
 
-    if (_isClosed) {
+    if (activeShape.isClosed) {
       final idx = _findNearPoint(event.localPosition,
           radius: pointSelectRadiusScreen);
       setState(() {
@@ -447,7 +453,7 @@ class _SketchScreenState extends State<SketchScreen>
 
     if (_activePointIndex >= 0) {
       final dist = (event.localPosition -
-              worldToScreen(_points[_activePointIndex]))
+              worldToScreen(activeShape.points[_activePointIndex]))
           .distance;
       if (dist < lastPointGlowRadius) {
         _isDraggingActivePoint = true;
@@ -469,13 +475,13 @@ class _SketchScreenState extends State<SketchScreen>
       });
     }
 
-    if (_points.isNotEmpty && _isNearLastPoint(event.localPosition)) {
+    if (activeShape.points.isNotEmpty && _isNearLastPoint(event.localPosition)) {
       _isDraggingLastPoint = true;
     }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (_isClosed) {
+    if (activeShape.isClosed) {
       if (_isDraggingActivePoint && _activePointIndex >= 0) {
         _dragOccurred = true;
         final raw = screenToWorld(event.localPosition);
@@ -483,7 +489,7 @@ class _SketchScreenState extends State<SketchScreen>
             excludeIndex: _activePointIndex,
             radius: pointSnapRadiusScreen);
         final Offset pos = snapIdx >= 0
-            ? _points[snapIdx]
+            ? activeShape.points[snapIdx]
             : _updateMiddlePointAngles(_activePointIndex, raw);
         if (snapIdx < 0) {
           // angles already updated inside _updateMiddlePointAngles
@@ -495,7 +501,7 @@ class _SketchScreenState extends State<SketchScreen>
         }
         setState(() {
           _snapTargetIndex = snapIdx >= 0 ? snapIdx : null;
-          _points[_activePointIndex] = pos;
+          activeShape.points[_activePointIndex] = pos;
         });
       }
       return;
@@ -508,7 +514,7 @@ class _SketchScreenState extends State<SketchScreen>
           excludeIndex: _activePointIndex,
           radius: pointSnapRadiusScreen);
       final Offset pos = snapIdx >= 0
-          ? _points[snapIdx]
+          ? activeShape.points[snapIdx]
           : _updateMiddlePointAngles(_activePointIndex, raw);
       if (snapIdx >= 0) {
         _prevWallAngle = null;
@@ -518,28 +524,28 @@ class _SketchScreenState extends State<SketchScreen>
       }
       setState(() {
         _snapTargetIndex = snapIdx >= 0 ? snapIdx : null;
-        _points[_activePointIndex] = pos;
+        activeShape.points[_activePointIndex] = pos;
         _cursorWorld = null;
       });
       return;
     }
 
-    if (_isDraggingLastPoint && _points.isNotEmpty) {
+    if (_isDraggingLastPoint && activeShape.points.isNotEmpty) {
       _dragOccurred = true;
       final raw = screenToWorld(event.localPosition);
       final snapIdx = _findNearPoint(event.localPosition,
-          excludeIndex: _points.length - 1,
+          excludeIndex: activeShape.points.length - 1,
           radius: pointSnapRadiusScreen);
       Offset newPos;
       if (snapIdx >= 0) {
-        newPos = _points[snapIdx];
+        newPos = activeShape.points[snapIdx];
         _currentAngleDeg = null;
         _nearestSnapAngleDeg = null;
         _snapDiffDeg = null;
         _snappedAngle = null;
         _isAngleSnapped = false;
-      } else if (_points.length >= 2) {
-        newPos = _computeAngle(_points[_points.length - 2], raw);
+      } else if (activeShape.points.length >= 2) {
+        newPos = _computeAngle(activeShape.points[activeShape.points.length - 2], raw);
       } else {
         newPos = raw;
         _currentAngleDeg = null;
@@ -550,25 +556,25 @@ class _SketchScreenState extends State<SketchScreen>
       }
       setState(() {
         _snapTargetIndex = snapIdx >= 0 ? snapIdx : null;
-        _points[_points.length - 1] = newPos;
+        activeShape.points[activeShape.points.length - 1] = newPos;
         _cursorWorld = null;
       });
       return;
     }
 
-    if (_points.isNotEmpty && _activePointIndex < 0) {
+    if (activeShape.points.isNotEmpty && _activePointIndex < 0) {
       final raw = snapToGrid(screenToWorld(event.localPosition));
-      setState(() => _cursorWorld = _computeAngle(_points.last, raw));
+      setState(() => _cursorWorld = _computeAngle(activeShape.points.last, raw));
     }
   }
 
   void _onPointerUp(PointerUpEvent event) {
     if (_isDraggingLastPoint &&
         _snapTargetIndex == 0 &&
-        _points.length >= 3) {
+        activeShape.points.length >= 3) {
       _saveUndo();
       setState(() {
-        _isClosed = true;
+        activeShape.isClosed = true;
         _cursorWorld = null;
         _currentAngleDeg = null;
         _nearestSnapAngleDeg = null;
@@ -594,9 +600,9 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerHover(PointerHoverEvent event) {
-    if (_isClosed || _points.isEmpty || _activePointIndex >= 0) return;
+    if (activeShape.isClosed || activeShape.points.isEmpty || _activePointIndex >= 0) return;
     final raw = snapToGrid(screenToWorld(event.localPosition));
-    setState(() => _cursorWorld = _computeAngle(_points.last, raw));
+    setState(() => _cursorWorld = _computeAngle(activeShape.points.last, raw));
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
@@ -654,7 +660,7 @@ class _SketchScreenState extends State<SketchScreen>
     if (_isMultiTouch) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
 
-    if (_isClosed) {
+    if (activeShape.isClosed) {
       final wallIdx = _findNearWall(details.localPosition);
       if (wallIdx >= 0) {
         setState(() {
@@ -672,13 +678,13 @@ class _SketchScreenState extends State<SketchScreen>
       return;
     }
 
-    if (_points.length >= 3) {
-      final dist = (details.localPosition - worldToScreen(_points.first))
+    if (activeShape.points.length >= 3) {
+      final dist = (details.localPosition - worldToScreen(activeShape.points.first))
           .distance;
       if (dist < pointSelectRadiusScreen) {
         _saveUndo();
         setState(() {
-          _isClosed = true;
+          activeShape.isClosed = true;
           _cursorWorld = null;
           _currentAngleDeg = null;
           _nearestSnapAngleDeg = null;
@@ -692,16 +698,16 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     final existingIdx = _findNearPoint(details.localPosition,
-        excludeIndex: _points.isEmpty ? -1 : _points.length - 1,
+        excludeIndex: activeShape.points.isEmpty ? -1 : activeShape.points.length - 1,
         radius: pointSelectRadiusScreen);
-    if (existingIdx >= 0 && _points.length > 1) {
+    if (existingIdx >= 0 && activeShape.points.length > 1) {
       setState(() => _activePointIndex = existingIdx);
       return;
     }
 
     if (_activePointIndex >= 0) {
       final dist = (details.localPosition -
-              worldToScreen(_points[_activePointIndex]))
+              worldToScreen(activeShape.points[_activePointIndex]))
           .distance;
       if (dist > pointSelectRadiusScreen) {
         setState(() => _activePointIndex = -1);
@@ -709,7 +715,7 @@ class _SketchScreenState extends State<SketchScreen>
       return;
     }
 
-    if (_points.isNotEmpty && _isNearLastPoint(details.localPosition)) return;
+    if (activeShape.points.isNotEmpty && _isNearLastPoint(details.localPosition)) return;
 
     _pendingTap = details;
     _tapCancelled = false;
@@ -721,14 +727,14 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _commitTap(TapDownDetails details) {
-    if (_isClosed || _isMultiTouch) return;
+    if (activeShape.isClosed || _isMultiTouch) return;
     final raw = snapToGrid(screenToWorld(details.localPosition));
-    final pos = _points.isNotEmpty ? _computeAngle(_points.last, raw) : raw;
-    if (_points.isNotEmpty &&
-        (pos - _points.last).distance < minPointDistance) return;
+    final pos = activeShape.points.isNotEmpty ? _computeAngle(activeShape.points.last, raw) : raw;
+    if (activeShape.points.isNotEmpty &&
+        (pos - activeShape.points.last).distance < minPointDistance) return;
     _saveUndo();
     setState(() {
-      _points.add(pos);
+      activeShape.points.add(pos);
       _cursorWorld = null;
       _currentAngleDeg = null;
       _nearestSnapAngleDeg = null;
@@ -745,30 +751,30 @@ class _SketchScreenState extends State<SketchScreen>
 
     Offset? angleRefWorld;
     Offset? angleTargetWorld;
-    if (_isDraggingLastPoint && _points.length >= 2) {
-      angleRefWorld = _points[_points.length - 2];
-      angleTargetWorld = _points.last;
+    if (_isDraggingLastPoint && activeShape.points.length >= 2) {
+      angleRefWorld = activeShape.points[activeShape.points.length - 2];
+      angleTargetWorld = activeShape.points.last;
     } else if (!_isDraggingLastPoint &&
         _activePointIndex < 0 &&
-        _points.isNotEmpty &&
+        activeShape.points.isNotEmpty &&
         _cursorWorld != null) {
-      angleRefWorld = _points.last;
+      angleRefWorld = activeShape.points.last;
       angleTargetWorld = _cursorWorld;
     }
 
     double? liveDistance;
-    if (!_isClosed && _points.isNotEmpty && _activePointIndex < 0) {
+    if (!activeShape.isClosed && activeShape.points.isNotEmpty && _activePointIndex < 0) {
       final t = _cursorWorld;
       if (t != null) {
-        final dx = t.dx - _points.last.dx, dy = t.dy - _points.last.dy;
+        final dx = t.dx - activeShape.points.last.dx, dy = t.dy - activeShape.points.last.dy;
         liveDistance = math.sqrt(dx * dx + dy * dy);
       }
     }
 
     final bool showAngleStrip = _currentAngleDeg != null &&
         _activePointIndex < 0 &&
-        _points.length >= 2 &&
-        !_isClosed;
+        activeShape.points.length >= 2 &&
+        !activeShape.isClosed;
 
     return Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
@@ -792,8 +798,8 @@ class _SketchScreenState extends State<SketchScreen>
                   scale: _scale,
                   minorGrid: minorGrid,
                   majorGrid: majorGrid,
-                  points: _points,
-                  isClosed: _isClosed,
+                  //points: activeShape.points,
+                  //isClosed: activeShape.isClosed,
                   cursorWorld: _cursorWorld,
                   snapRadiusWorld: snapRadiusWorld,
                   isDraggingLastPoint: _isDraggingLastPoint,
@@ -814,7 +820,7 @@ class _SketchScreenState extends State<SketchScreen>
                   prevWallSnapped: _prevWallSnapped,
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
-                  wallRealMm: _wallRealMm,
+                  //wallRealMm: activeShape.wallRealMm,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -837,7 +843,7 @@ class _SketchScreenState extends State<SketchScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        _isClosed
+                        activeShape.isClosed
                             ? _selectedWallIndex >= 0
                                 ? 'Wall ${_selectedWallIndex + 1} selected — enter real measurement'
                                 : _activePointIndex >= 0
@@ -845,7 +851,7 @@ class _SketchScreenState extends State<SketchScreen>
                                     : _waitingForBle
                                         ? 'Point device at wall → press BOOT button'
                                         : 'Tap a wall to edit its length'
-                            : _points.isEmpty
+                            : activeShape.points.isEmpty
                                 ? 'Tap to place first corner'
                                 : _isDraggingLastPoint
                                     ? 'Drag | ${_angleLabel()}'
@@ -902,8 +908,8 @@ class _SketchScreenState extends State<SketchScreen>
           // ── Polar tracking HUD ───────────────────────────────────────
           if (_currentAngleDeg != null &&
               _activePointIndex < 0 &&
-              !_isClosed &&
-              _points.isNotEmpty &&
+              !activeShape.isClosed &&
+              activeShape.points.isNotEmpty &&
               _cursorWorld != null)
             Positioned(
               bottom: showAngleStrip ? 86 : 60,
@@ -1129,7 +1135,7 @@ class _SketchScreenState extends State<SketchScreen>
                             children: [
                               StatusItem(
                                 label: 'MODE',
-                                value: _isClosed
+                                value: activeShape.isClosed
                                     ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
                                     : _isDraggingLastPoint
                                         ? 'DRAG'
@@ -1140,15 +1146,15 @@ class _SketchScreenState extends State<SketchScreen>
                               const SizedBox(width: 8),
                               StatusItem(
                                   label: 'PTS',
-                                  value: '${_points.length}'),
-                              if (_isClosed && _points.length >= 2) ...[
+                                  value: '${activeShape.points.length}'),
+                              if (activeShape.isClosed && activeShape.points.length >= 2) ...[
                                 const SizedBox(width: 8),
                                 StatusItem(
                                   label: 'PERIM',
                                   value: formatLength(_totalPerimeter()),
                                 ),
                               ],
-                              if (_isClosed && _points.length >= 3) ...[
+                              if (activeShape.isClosed && activeShape.points.length >= 3) ...[
                                 const SizedBox(width: 8),
                                 StatusItem(
                                   label: 'AREA',
@@ -1156,7 +1162,7 @@ class _SketchScreenState extends State<SketchScreen>
                                 ),
                               ],
                               if (_activePointIndex >= 0 &&
-                                  _activePointIndex < _points.length) ...[
+                                  _activePointIndex < activeShape.points.length) ...[
                                 const SizedBox(width: 8),
                                 StatusItem(
                                   label: 'PT',
@@ -1190,7 +1196,7 @@ class _SketchScreenState extends State<SketchScreen>
                       const SizedBox(width: 4),
                       IconButton(
                         icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: _points.isEmpty ? null : _clear,
+                        onPressed: activeShape.points.isEmpty ? null : _clear,
                         color: const Color(0xFFFF4444),
                         disabledColor: const Color(0xFF555555),
                         tooltip: 'Clear',
@@ -1201,12 +1207,12 @@ class _SketchScreenState extends State<SketchScreen>
                       const SizedBox(width: 4),
                       IconButton(
                         icon: const Icon(Icons.picture_as_pdf, size: 18),
-                        onPressed: _points.length >= 2
+                        onPressed: activeShape.points.length >= 2
                             ? () => exportSketchPdf(
                                   context: context,
-                                  points: _points,
-                                  isClosed: _isClosed,
-                                  wallRealMm: _wallRealMm,
+                                  points: activeShape.points,
+                                  isClosed: activeShape.isClosed,
+                                  wallRealMm: activeShape.wallRealMm,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
                                 )
