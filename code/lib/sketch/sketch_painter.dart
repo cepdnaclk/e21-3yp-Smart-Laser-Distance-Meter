@@ -141,66 +141,73 @@ class SketchPainter extends CustomPainter {
       double halfW, bool isSelected) {
     final Color color = isSelected
         ? const Color(0xFFFF8800)
-        : const Color(0xFF1155CC);
+        : const Color(0xFF1A1A1A);
 
-    // Gap in wall
-    final Paint wallGapPaint = Paint()
-      ..color = const Color(0xFFFFFFFF)
-      ..strokeWidth = 5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawLine(
-      Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW),
-      Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
-      wallGapPaint,
+    final Offset hingePoint = Offset(
+      centre.dx - dir.dx * halfW,
+      centre.dy - dir.dy * halfW,
+    );
+    final Offset tipPoint = Offset(
+      centre.dx + dir.dx * halfW,
+      centre.dy + dir.dy * halfW,
     );
 
-    // Door leaf (rectangle)
-    final Paint doorPaint = Paint()
-      ..color = color.withOpacity(0.15)
-      ..style = PaintingStyle.fill;
-    final Paint doorBorder = Paint()
-      ..color = color
-      ..strokeWidth = isSelected ? 2.0 : 1.5
-      ..style = PaintingStyle.stroke;
-
-    final Offset p1 = Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW);
-    final Offset p2 = Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW);
-    final Offset p3 = Offset(p2.dx + perp.dx * halfW * 2, p2.dy + perp.dy * halfW * 2);
-    final Offset p4 = Offset(p1.dx + perp.dx * halfW * 2, p1.dy + perp.dy * halfW * 2);
-
-    final path = Path()
-      ..moveTo(p1.dx, p1.dy)
-      ..lineTo(p2.dx, p2.dy)
-      ..lineTo(p3.dx, p3.dy)
-      ..lineTo(p4.dx, p4.dy)
-      ..close();
-    canvas.drawPath(path, doorPaint);
-    canvas.drawPath(path, doorBorder);
-
-    // Swing arc
-    canvas.drawArc(
-      Rect.fromCenter(center: p1, width: halfW * 4, height: halfW * 4),
-      math.atan2(dir.dy, dir.dx),
-      math.pi / 2,
-      false,
+    // 1. White gap — clear wall line under door
+    canvas.drawLine(
+      hingePoint,
+      tipPoint,
       Paint()
-        ..color = color.withOpacity(0.4)
-        ..strokeWidth = 1.0
+        ..color = const Color(0xFFFFFFFF)
+        ..strokeWidth = 7
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.butt,
+    );
+
+    // 2. Door leaf — line from hinge to tip along wall
+    canvas.drawLine(
+      hingePoint,
+      tipPoint,
+      Paint()
+        ..color = color
+        ..strokeWidth = isSelected ? 2.0 : 1.5
         ..style = PaintingStyle.stroke,
     );
 
-    // Label
-    final tp = TextPainter(
-      text: TextSpan(
-        text: 'D',
-        style: TextStyle(color: color, fontSize: 9, fontFamily: 'monospace',
-            fontWeight: FontWeight.bold),
+    // 3. Swing arc — quarter circle, always sweeps inward
+    //    perp already points inward (set in _drawRoomObjects)
+    //    radius = full door width
+    final double radius = halfW * 2;
+
+    // Angle from hinge pointing along door leaf (toward tip)
+    final double leafAngle = math.atan2(
+      tipPoint.dy - hingePoint.dy,
+      tipPoint.dx - hingePoint.dx,
+    );
+
+    // Inward perp angle
+    final double perpAngle = math.atan2(perp.dy, perp.dx);
+
+    // Choose sweep direction that goes toward inward perp
+    final double cwEnd  = leafAngle - math.pi / 2;
+    final double ccwEnd = leafAngle + math.pi / 2;
+    final double cwDiff  = ((cwEnd  - perpAngle + math.pi) % (2 * math.pi) - math.pi).abs();
+    final double ccwDiff = ((ccwEnd - perpAngle + math.pi) % (2 * math.pi) - math.pi).abs();
+    final double sweepAngle = cwDiff < ccwDiff ? -math.pi / 2 : math.pi / 2;
+
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: hingePoint,
+        width:  radius * 2,
+        height: radius * 2,
       ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas,
-        Offset(centre.dx - tp.width / 2, centre.dy - tp.height / 2));
+      leafAngle,
+      sweepAngle,
+      false,
+      Paint()
+        ..color = color
+        ..strokeWidth = isSelected ? 1.5 : 1.0
+        ..style = PaintingStyle.stroke,
+    );
   }
 
   void _drawWindow(Canvas canvas, Offset centre, Offset dir,

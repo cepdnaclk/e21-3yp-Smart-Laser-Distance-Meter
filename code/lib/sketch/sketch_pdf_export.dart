@@ -35,7 +35,7 @@ Future<void> exportSketchPdf({
   double minY = points.map((p) => p.dy).reduce(math.min);
   double maxY = points.map((p) => p.dy).reduce(math.max);
 
-  const double canvasSize = 440.0;
+  const double canvasSize = 360.0;
   const double canvasMargin = 30.0;
   const double drawArea = canvasSize - canvasMargin * 2;
 
@@ -82,7 +82,7 @@ Future<void> exportSketchPdf({
                   children: [
                     pw.Text('Room Floor Plan',
                         style: pw.TextStyle(
-                            fontSize: 20,
+                            fontSize: 16,
                             fontWeight: pw.FontWeight.bold,
                             color: PdfColors.blueGrey800)),
                     pw.SizedBox(height: 3),
@@ -201,49 +201,56 @@ Future<void> exportSketchPdf({
                       final double pyPdf = perpY * halfW * 1.5 * pdfScale;
 
                       if (obj.isDoor) {
-                        // White gap on wall
+                        const double doorHalfW = 18.0;
+                        final double dxBig = dirX * doorHalfW * pdfScale;
+                        final double dyBig = dirY * doorHalfW * pdfScale;
+
+                        // 1. White gap on wall
                         g.setStrokeColor(PdfColors.white);
-                        g.setLineWidth(4);
-                        g.moveTo(c.x - dxPdf, c.y + dyPdf);
-                        g.lineTo(c.x + dxPdf, c.y - dyPdf);
+                        g.setLineWidth(5);
+                        g.moveTo(c.x - dxBig, c.y + dyBig);
+                        g.lineTo(c.x + dxBig, c.y - dyBig);
                         g.strokePath();
 
-                        // Door leaf (filled rectangle)
-                        g.setFillColor(
-                            const PdfColor(0.55, 0.27, 0.07, 0.3)); // brown tint
-                        g.setStrokeColor(const PdfColor(0.55, 0.27, 0.07));
-                        g.setLineWidth(1.2);
+                        // Hinge = one end, tip = other end (in PDF coords)
+                        final double hingePx = c.x - dxBig;
+                        final double hingePy = c.y + dyBig;
+                        final double tipPx   = c.x + dxBig;
+                        final double tipPy   = c.y - dyBig;
 
-                        final double p1x = c.x - dxPdf;
-                        final double p1y = c.y + dyPdf;
-                        final double p2x = c.x + dxPdf;
-                        final double p2y = c.y - dyPdf;
-                        final double p3x = p2x + pxPdf;
-                        final double p3y = p2y - pyPdf;
-                        final double p4x = p1x + pxPdf;
-                        final double p4y = p1y - pyPdf;
+                        // 2. Door leaf line
+                        g.setStrokeColor(PdfColors.blueGrey800);
+                        g.setLineWidth(1.5);
+                        g.moveTo(hingePx, hingePy);
+                        g.lineTo(tipPx, tipPy);
+                        g.strokePath();
 
-                        g.moveTo(p1x, p1y);
-                        g.lineTo(p2x, p2y);
-                        g.lineTo(p3x, p3y);
-                        g.lineTo(p4x, p4y);
-                        g.closePath();
-                        g.fillAndStrokePath();
+                        // 3. Swing arc — inward
+                        // In PDF space: perpX/perpY point inward in world, but PDF Y is flipped
+                        // so inward perp in PDF = (perpX * pdfScale, -perpY * pdfScale)
+                        // Arc radius = door width
+                        final double radius = doorHalfW * pdfScale * 2;
+                        // Angle from hinge to tip in PDF space (PDF Y flipped so negate y diff)
+                        final double leafAngle = math.atan2(-(tipPy - hingePy), tipPx - hingePx);
+                        // Inward perp angle in PDF space
+                        final double perpAnglePdf = math.atan2(-perpY, perpX);
+                        // Arc end angle = hinge + inward perp (90 degrees from leaf)
+                        // Sweep CCW (positive) or CW (negative) — pick whichever goes inward
+                        final double sweep1end = leafAngle + math.pi / 2;
+                        final double sweep2end = leafAngle - math.pi / 2;
+                        final double diff1 = ((sweep1end - perpAnglePdf + math.pi) % (2 * math.pi) - math.pi).abs();
+                        final double diff2 = ((sweep2end - perpAnglePdf + math.pi) % (2 * math.pi) - math.pi).abs();
+                        final double sweepSign = diff1 < diff2 ? 1.0 : -1.0;
 
-                        // Swing arc (drawn as polyline approximation)
-                        g.setStrokeColor(
-                            const PdfColor(0.55, 0.27, 0.07, 0.5));
+                        g.setStrokeColor(PdfColors.blueGrey800);
                         g.setLineWidth(0.8);
-                        final double radius = halfW * pdfScale;
-                        final double startAngle = math.atan2(p1y - c.y, p1x - c.x);
-                        const int arcSteps = 12;
-                        const double arcSpan = math.pi / 2;
+                        const int arcSteps = 20;
                         bool arcFirst = true;
                         for (int s = 0; s <= arcSteps; s++) {
-                          final double angle =
-                              startAngle + (s / arcSteps) * arcSpan;
-                          final double ax = p1x + math.cos(angle) * radius;
-                          final double ay = p1y + math.sin(angle) * radius;
+                          final double angle = leafAngle + sweepSign * (s / arcSteps) * (math.pi / 2);
+                          // PDF arc: cos for x, sin for y (PDF Y goes up so use +sin)
+                          final double ax = hingePx + math.cos(angle) * radius;
+                          final double ay = hingePy + math.sin(angle) * radius;
                           if (arcFirst) {
                             g.moveTo(ax, ay);
                             arcFirst = false;
@@ -252,10 +259,6 @@ Future<void> exportSketchPdf({
                           }
                         }
                         g.strokePath();
-
-                        // Label
-                        g.setFillColor(const PdfColor(0.55, 0.27, 0.07));
-                        // (PDF text drawing omitted — label shown in table below)
 
                       } else {
                         // Window — white gap
@@ -308,7 +311,7 @@ Future<void> exportSketchPdf({
             if (roomObjects.isNotEmpty) ...[
               pw.Text('Doors & Windows',
                   style: pw.TextStyle(
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: pw.FontWeight.bold,
                       color: PdfColors.blueGrey700)),
               pw.SizedBox(height: 6),
@@ -372,46 +375,52 @@ Future<void> exportSketchPdf({
 
             pw.Text('Wall Measurements',
                 style: pw.TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.blueGrey700)),
-            pw.SizedBox(height: 6),
+            pw.SizedBox(height: 4),
             pw.Table(
               border: pw.TableBorder.all(
-                  color: PdfColors.blueGrey200, width: 0.6),
+                  color: PdfColors.blueGrey200, width: 0.5),
               columnWidths: {
-                0: const pw.FlexColumnWidth(1.2),
-                1: const pw.FlexColumnWidth(2),
-                2: const pw.FlexColumnWidth(2),
+                0: const pw.FlexColumnWidth(1.5),
+                1: const pw.FlexColumnWidth(2.5),
               },
               children: [
                 pw.TableRow(
-                  decoration:
-                      const pw.BoxDecoration(color: PdfColors.blueGrey100),
-                  children: ['Wall', 'Drawn Length', 'Real Measurement']
+                  decoration: const pw.BoxDecoration(color: PdfColors.blueGrey100),
+                  children: ['Wall', 'Length']
                       .map((h) => pw.Padding(
                             padding: const pw.EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 5),
+                                horizontal: 6, vertical: 4),
                             child: pw.Text(h,
                                 style: pw.TextStyle(
-                                    fontSize: 9,
+                                    fontSize: 7,
                                     fontWeight: pw.FontWeight.bold,
                                     color: PdfColors.blueGrey700)),
                           ))
                       .toList(),
                 ),
-                ...wallRows.map((row) => pw.TableRow(
-                      children: [row['wall']!, row['drawn']!, row['real']!]
-                          .map((c) => pw.Padding(
-                                padding: const pw.EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 5),
-                                child: pw.Text(c,
-                                    style: const pw.TextStyle(
-                                        fontSize: 9,
-                                        color: PdfColors.blueGrey800)),
-                              ))
-                          .toList(),
-                    )),
+                ...List.generate(wallCount, (i) {
+                  final Offset a = points[i];
+                  final Offset b = points[(i + 1) % n];
+                  final double wl = (b - a).distance;
+                  final String lengthStr = wallRealMm.containsKey(i)
+                      ? '${wallRealMm[i]!.toStringAsFixed(0)} mm'
+                      : formatLength(wl);
+                  return pw.TableRow(
+                    children: ['Wall ${i + 1}', lengthStr]
+                        .map((c) => pw.Padding(
+                              padding: const pw.EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 4),
+                              child: pw.Text(c,
+                                  style: const pw.TextStyle(
+                                      fontSize: 8,
+                                      color: PdfColors.blueGrey800)),
+                            ))
+                        .toList(),
+                  );
+                }),
               ],
             ),
             pw.Spacer(),
@@ -452,7 +461,7 @@ pw.Widget _pdfSummaryItem(String label, String value) {
     pw.SizedBox(height: 2),
     pw.Text(value,
         style: pw.TextStyle(
-            fontSize: 12,
+            fontSize: 10,
             fontWeight: pw.FontWeight.bold,
             color: PdfColors.blueGrey800)),
   ]);
