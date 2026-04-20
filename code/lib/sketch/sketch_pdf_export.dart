@@ -6,15 +6,22 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'sketch_constants.dart';
+import 'sketch_model.dart';
 
 Future<void> exportSketchPdf({
   required BuildContext context,
-  required List<Offset> points,
-  required bool isClosed,
-  required Map<int, double> wallRealMm,
+  required List<SketchShape> shapes,
   required double totalPerimeter,
   required double totalArea,
 }) async {
+  final SketchShape shape = shapes.firstWhere(
+    (s) => s.isClosed,
+    orElse: () => shapes.first,
+  );
+  final List<Offset> points = shape.points;
+  final bool isClosed = shape.isClosed;
+  final Map<int, double> wallRealMm = shape.wallRealMm;
+
   if (points.length < 2) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
