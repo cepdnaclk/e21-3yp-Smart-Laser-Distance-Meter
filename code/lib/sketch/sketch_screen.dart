@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import '../ble/ble_manager.dart';
 import '../ble/ble_packet.dart';
 import 'sketch_constants.dart';
+import 'sketch_model.dart';
 import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
