@@ -1210,9 +1210,7 @@ class _SketchScreenState extends State<SketchScreen>
                         onPressed: activeShape.points.length >= 2
                             ? () => exportSketchPdf(
                                   context: context,
-                                  points: activeShape.points,
-                                  isClosed: activeShape.isClosed,
-                                  wallRealMm: activeShape.wallRealMm,
+                                  shapes: shapes,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
                                 )
@@ -1223,6 +1221,14 @@ class _SketchScreenState extends State<SketchScreen>
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                             minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_box_outlined, size: 18),
+                        onPressed: _addNewRoom,
+                        color: const Color(0xFF00AAFF),
+                        tooltip: 'Add Room',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
                     ],
                   ),
