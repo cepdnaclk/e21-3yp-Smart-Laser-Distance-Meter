@@ -10,10 +10,6 @@ import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
 import 'sketch_widgets.dart';
-import 'room_object.dart';
-import 'room_object_utils.dart';
-import 'dart:math' as math; // already there — skip if so
-import 'room_3d_screen.dart'; // add this — file created in step 5
 
 
 class SketchScreen extends StatefulWidget {
@@ -44,8 +40,6 @@ class _SketchScreenState extends State<SketchScreen>
   final List<List<Offset>> _redoStack = [];
   final List<bool> _undoClosedStack = [];
   final List<bool> _redoClosedStack = [];
-  final List<List<RoomObject>> _undoObjectsStack = [];
-  final List<List<RoomObject>> _redoObjectsStack = [];
   TapDownDetails? _pendingTap;
   bool _tapCancelled = false;
   double? _snappedAngle;
@@ -63,18 +57,6 @@ class _SketchScreenState extends State<SketchScreen>
   final Map<int, double> _wallRealMm = {};
   double? _pendingBleMm;
   bool _waitingForBle = false;
-
-  // ── Object placement state ───────────────────────────────────────────────
-final List<RoomObject> _roomObjects = [];
-RoomObjectType? _draggingObjectType;  // set while dragging from panel
-String? _selectedObjectId;            // currently selected placed object
-Offset? _dragObjectScreenPos;         // live screen position while dragging
-WallHitResult? _dragWallHit;          // wall the dragged object is hovering over
-int _objectCounter = 0;               // for generating unique ids
-
-String? _movingObjectId;        // id of object being moved along its wall
-Offset? _moveStartScreenPos;    // where finger first touched
-bool _objectMoveOccurred = false; // did actual drag movement happen?
 
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => _points;
@@ -146,28 +128,21 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     return -1;
   }
 
+  // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     _redoStack.clear();
     _redoClosedStack.clear();
-    _redoObjectsStack.clear();
   }
 
   void _undo() {
     if (_undoStack.isEmpty) return;
     _redoStack.add(List<Offset>.of(_points));
     _redoClosedStack.add(_isClosed);
-    _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     setState(() {
       _points = _undoStack.removeLast();
       _isClosed = _undoClosedStack.removeLast();
-      if (_undoObjectsStack.isNotEmpty) {
-        _roomObjects
-          ..clear()
-          ..addAll(_undoObjectsStack.removeLast());
-      }
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -182,15 +157,9 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     if (_redoStack.isEmpty) return;
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     setState(() {
       _points = _redoStack.removeLast();
       _isClosed = _redoClosedStack.removeLast();
-      if (_redoObjectsStack.isNotEmpty) {
-        _roomObjects
-          ..clear()
-          ..addAll(_redoObjectsStack.removeLast());
-      }
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -461,24 +430,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     _dragOccurred = false;
     _panStartPosition = event.localPosition;
     _panConfirmed = false;
-
-    if (_isClosed) {
-      for (final obj in _roomObjects) {
-        final centre = objectCentreWorld(
-          obj: obj,
-          points: _points,
-          wallCount: _points.length,
-        );
-        final centreScreen = worldToScreen(centre);
-        if ((event.localPosition - centreScreen).distance < 30.0) {
-          _movingObjectId = obj.id;
-          _moveStartScreenPos = event.localPosition;
-          _objectMoveOccurred = false;
-          return; // consume the event — don't start pan/draw
-        }
-      }
-    }
-
     _snapTargetIndex = null;
     _prevWallAngle = null;
     _nextWallAngle = null;
@@ -523,37 +474,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    // ── Move a placed object along its wall
-    if (_movingObjectId != null) {
-      final idx = _roomObjects.indexWhere((o) => o.id == _movingObjectId);
-      if (idx >= 0) {
-        final obj = _roomObjects[idx];
-        final int n = _points.length;
-        final Offset a = _points[obj.wallIndex];
-        final Offset b = _points[(obj.wallIndex + 1) % n];
-        final Offset aScreen = worldToScreen(a);
-        final Offset bScreen = worldToScreen(b);
-
-        // Project finger position onto the wall segment
-        final dx = bScreen.dx - aScreen.dx;
-        final dy = bScreen.dy - aScreen.dy;
-        final lenSq = dx * dx + dy * dy;
-        if (lenSq > 0) {
-          final t = ((event.localPosition.dx - aScreen.dx) * dx +
-                     (event.localPosition.dy - aScreen.dy) * dy) / lenSq;
-          final tClamped = t.clamp(0.05, 0.95);
-          if ((tClamped - obj.positionAlong).abs() > 0.001) {
-            _objectMoveOccurred = true;
-          }
-          setState(() {
-            _roomObjects[idx] = obj.copyWith(positionAlong: tClamped);
-          });
-        }
-      }
-      return;
-    }
-
-
     if (_isClosed) {
       if (_isDraggingActivePoint && _activePointIndex >= 0) {
         _dragOccurred = true;
@@ -642,21 +562,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    // ── Finish moving a placed object ──────────────────────────────
-    if (_movingObjectId != null) {
-      if (_objectMoveOccurred) {
-        _saveUndo();
-      } else {
-        // No movement = it was a tap → open measurement dialog
-        _onObjectTapped(_movingObjectId!);
-      }
-      _movingObjectId = null;
-      _moveStartScreenPos = null;
-      _objectMoveOccurred = false;
-      return;
-    }
-
-
     if (_isDraggingLastPoint &&
         _snapTargetIndex == 0 &&
         _points.length >= 3) {
@@ -691,66 +596,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     if (_isClosed || _points.isEmpty || _activePointIndex >= 0) return;
     final raw = snapToGrid(screenToWorld(event.localPosition));
     setState(() => _cursorWorld = _computeAngle(_points.last, raw));
-  }
-
-  // Called when user drags an object from the panel and releases it
-  void _onObjectDropped(Offset screenPos) {
-    if (_draggingObjectType == null || !_isClosed) return;
-    final hit = findNearestWall(
-      screenPos: screenPos,
-      points: _points,
-      isClosed: _isClosed,
-      worldToScreen: worldToScreen,
-      screenToWorld: screenToWorld,
-    );
-    if (hit == null) {
-      setState(() {
-        _draggingObjectType = null;
-        _dragObjectScreenPos = null;
-        _dragWallHit = null;
-      });
-      return;
-    }
-    _saveUndo();
-    setState(() {
-      _objectCounter++;
-      _roomObjects.add(RoomObject(
-        id: 'obj_$_objectCounter',
-        type: _draggingObjectType!,
-        wallIndex: hit.wallIndex,
-        positionAlong: hit.positionAlong,
-        widthMm: _draggingObjectType == RoomObjectType.door ? 900 : 1200,
-        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
-        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
-      ));
-      _draggingObjectType = null;
-      _dragObjectScreenPos = null;
-      _dragWallHit = null;
-    });
-  }
-
-  // Called when user taps a placed object to select/delete it
-  void _onObjectTapped(String id) {
-    final obj = _roomObjects.firstWhere((o) => o.id == id);
-    showDialog(
-      context: context,
-      builder: (ctx) => ObjectMeasurementDialog(
-        roomObject: obj,
-        onSave: (updatedObj) {
-          setState(() {
-            final idx = _roomObjects.indexWhere((o) => o.id == id);
-            if (idx >= 0) _roomObjects[idx] = updatedObj;
-          });
-        },
-        onDelete: () {
-          _saveUndo();
-          setState(() {
-            _roomObjects.removeWhere((o) => o.id == id);
-            _selectedObjectId = null;
-          });
-        },
-      ),
-    );
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
@@ -808,40 +653,23 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     if (_isMultiTouch) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
 
-    // If finger is on a placed object, _onPointerDown already handled it
     if (_isClosed) {
-      for (final obj in _roomObjects) {
-        final centre = objectCentreWorld(
-          obj: obj,
-          points: _points,
-          wallCount: _points.length,
-        );
-        final centreScreen = worldToScreen(centre);
-        if ((details.localPosition - centreScreen).distance < 30.0) {
-          return; // let _onPointerUp handle tap/move
-        }
-      }
-    }
-
-    if (_isClosed) {
-      // ── Wall taps ───────────────────────────────────────────────────────
       final wallIdx = _findNearWall(details.localPosition);
-
-    if (wallIdx >= 0) {
+      if (wallIdx >= 0) {
+        setState(() {
+          _activePointIndex = -1;
+          _selectedWallIndex = wallIdx;
+        });
+        showSketchWallEditDialog(wallIdx);   // ← mixin method
+        return;
+      }
       setState(() {
-        _activePointIndex = -1;
-        _selectedWallIndex = wallIdx;
+        _activePointIndex = _findNearPoint(details.localPosition,
+            radius: pointSelectRadiusScreen);
+        _selectedWallIndex = -1;
       });
-      showSketchWallEditDialog(wallIdx);
       return;
     }
-    setState(() {
-      _activePointIndex = _findNearPoint(details.localPosition,
-          radius: pointSelectRadiusScreen);
-      _selectedWallIndex = -1;
-    });
-    return;
-  }
 
     if (_points.length >= 3) {
       final dist = (details.localPosition - worldToScreen(_points.first))
@@ -986,72 +814,12 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
                   wallRealMm: _wallRealMm,
-                  roomObjects: _roomObjects,
-                  draggingObjectId: _selectedObjectId,
                 ),
                 child: const SizedBox.expand(),
               ),
             ),
           ),
-        
-          // ── Object panel (right side) — only shown when room is closed ───────────
-          if (_isClosed)
-            Positioned(
-              right: 8,
-              top: 80,
-              child: Column(
-                children: [
-                  _ObjectPanelButton(
-                    icon: Icons.door_front_door,
-                    label: 'Door',
-                    onDragStarted: () => setState(() =>
-                        _draggingObjectType = RoomObjectType.door),
-                    onDragEnd: (details) => _onObjectDropped(details.offset),
-                  ),
-                  const SizedBox(height: 8),
-                  _ObjectPanelButton(
-                    icon: Icons.window,
-                    label: 'Window',
-                    onDragStarted: () => setState(() =>
-                        _draggingObjectType = RoomObjectType.window),
-                    onDragEnd: (details) => _onObjectDropped(details.offset),
-                  ),
-                ],
-              ),
-            ),
 
-          // ── 3D View button ────────────────────────────────────────────────────────
-          if (_isClosed && _points.length >= 3)
-            Positioned(
-              right: 8,
-              bottom: 62,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.view_in_ar, size: 16),
-                label: const Text('3D View',
-                    style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF7B2FBE),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => Room3DScreen(
-                        points: _points,
-                        roomObjects: _roomObjects,
-                        wallRealMm: _wallRealMm,
-                        bleManager: widget.bleManager,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          
           // ── Top toolbar ──────────────────────────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
@@ -1440,7 +1208,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
                                   wallRealMm: _wallRealMm,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
-                                  roomObjects: _roomObjects,
                                 )
                             : null,
                         color: const Color(0xFFFF4488),
@@ -1457,65 +1224,6 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ObjectPanelButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onDragStarted;
-  final void Function(DraggableDetails) onDragEnd;
-
-  const _ObjectPanelButton({
-    required this.icon,
-    required this.label,
-    required this.onDragStarted,
-    required this.onDragEnd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Draggable<String>(
-      data: label,
-      onDragStarted: onDragStarted,
-      onDragEnd: onDragEnd,
-      feedback: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: const Color(0xFF00AAFF),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(color: Colors.black38, blurRadius: 8)
-            ],
-          ),
-          child: Icon(icon, color: Colors.white, size: 28),
-        ),
-      ),
-      child: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E2A3A),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF334466)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: const Color(0xFF00AAFF), size: 20),
-            const SizedBox(height: 2),
-            Text(label,
-                style: const TextStyle(
-                    color: Color(0xFF778899),
-                    fontSize: 9,
-                    fontFamily: 'monospace')),
-          ],
-        ),
       ),
     );
   }
