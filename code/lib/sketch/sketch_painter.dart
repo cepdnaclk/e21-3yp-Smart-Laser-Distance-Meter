@@ -163,45 +163,46 @@ class SketchPainter extends CustomPainter {
         ..strokeCap = StrokeCap.butt,
     );
 
-    // 2. Door leaf — line from hinge to tip along wall
-    canvas.drawLine(
-      hingePoint,
-      tipPoint,
-      Paint()
-        ..color = color
-        ..strokeWidth = isSelected ? 2.0 : 1.5
-        ..style = PaintingStyle.stroke,
-    );
+    final double radius = halfW * 2; // full door width = swing radius
 
-    // 3. Swing arc — quarter circle, always sweeps inward
-    //    perp already points inward (set in _drawRoomObjects)
-    //    radius = full door width
-    final double radius = halfW * 2;
-
-    // Angle from hinge pointing along door leaf (toward tip)
+    // Inward perp angle — choose sweep direction toward room interior
     final double leafAngle = math.atan2(
       tipPoint.dy - hingePoint.dy,
       tipPoint.dx - hingePoint.dx,
     );
-
-    // Inward perp angle
     final double perpAngle = math.atan2(perp.dy, perp.dx);
-
-    // Choose sweep direction that goes toward inward perp
     final double cwEnd  = leafAngle - math.pi / 2;
     final double ccwEnd = leafAngle + math.pi / 2;
     final double cwDiff  = ((cwEnd  - perpAngle + math.pi) % (2 * math.pi) - math.pi).abs();
     final double ccwDiff = ((ccwEnd - perpAngle + math.pi) % (2 * math.pi) - math.pi).abs();
     final double sweepAngle = cwDiff < ccwDiff ? -math.pi / 2 : math.pi / 2;
 
+    // 2. Door leaf — line from hinge perpendicular into room (inward leg of L)
+    final Offset leafTip = Offset(
+      hingePoint.dx + perp.dx * radius,
+      hingePoint.dy + perp.dy * radius,
+    );
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = isSelected ? 2.0 : 1.5
+      ..style = PaintingStyle.stroke;
+
+    // Vertical leg: hinge → inward (along perp)
+    canvas.drawLine(hingePoint, leafTip, paint);
+
+    // Horizontal leg: hinge → tip (along wall)
+    canvas.drawLine(hingePoint, tipPoint, paint);
+
+    // 3. Arc from leafTip to tipPoint (quarter circle, centred on hingePoint)
     canvas.drawArc(
       Rect.fromCenter(
         center: hingePoint,
         width:  radius * 2,
         height: radius * 2,
       ),
-      leafAngle,
-      sweepAngle,
+      leafAngle + sweepAngle, // start at the inward-perpendicular direction
+      -sweepAngle,            // sweep back to the wall direction
       false,
       Paint()
         ..color = color
