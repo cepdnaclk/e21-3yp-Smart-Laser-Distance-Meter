@@ -833,5 +833,6 @@ class SketchPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(SketchPainter oldDelegate) => oldDelegate.shapes != shapes || oldDelegate.activeIndex != activeIndex;
+  @override
+  bool shouldRepaint(SketchPainter oldDelegate) => true;
 }

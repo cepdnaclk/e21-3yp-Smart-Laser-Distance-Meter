@@ -821,6 +821,8 @@ class _SketchScreenState extends State<SketchScreen>
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
                   //wallRealMm: activeShape.wallRealMm,
+                  shapes: shapes,
+                  activeIndex: activeIndex,
                 ),
                 child: const SizedBox.expand(),
               ),
