@@ -1,4 +1,5 @@
 // lib/sketch/sketch_constants.dart
+import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 const double mmPerUnit = 5.0;
