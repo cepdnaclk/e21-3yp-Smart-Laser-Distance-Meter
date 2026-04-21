@@ -115,21 +115,21 @@ class SketchPainter extends CustomPainter {
     final int n = pts.length;
     final bool closed = shape.isClosed;
 
-    // Faint fill
+    // Fill
     if (closed && n >= 3) {
       final path = Path()..addPolygon(sp, true);
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xFF888888).withOpacity(0.06)
+          ..color = const Color(0xFF4488CC).withOpacity(0.10)
           ..style = PaintingStyle.fill,
       );
     }
 
-    // Greyed walls
+    // Walls — solid dark, same weight as active room
     final wallPaint = Paint()
-      ..color = const Color(0xFF999999).withOpacity(0.55)
-      ..strokeWidth = 1.8
+      ..color = const Color(0xFF444444).withOpacity(0.75)
+      ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
 
@@ -138,14 +138,22 @@ class SketchPainter extends CustomPainter {
       canvas.drawLine(sp[i], sp[(i + 1) % n], wallPaint);
     }
 
-    // Greyed corner dots
+    // Corner dots
     for (int i = 0; i < n; i++) {
       canvas.drawCircle(
         sp[i],
-        3,
+        4,
         Paint()
-          ..color = const Color(0xFFAAAAAA).withOpacity(0.6)
+          ..color = const Color(0xFF555555).withOpacity(0.85)
           ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        sp[i],
+        4,
+        Paint()
+          ..color = const Color(0xFF333333).withOpacity(0.85)
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke,
       );
     }
 
