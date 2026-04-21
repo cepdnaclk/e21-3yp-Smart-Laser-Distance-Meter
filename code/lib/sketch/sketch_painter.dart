@@ -774,7 +774,7 @@ class SketchPainter extends CustomPainter {
       double cx = 0, cy = 0;
       final allPts = isClosed
           ? points
-          : [...points, if (cursorWorld != null) cursorWorld!];
+          : [...points, ?cursorWorld];
       for (final p in allPts) {
         cx += p.dx;
         cy += p.dy;

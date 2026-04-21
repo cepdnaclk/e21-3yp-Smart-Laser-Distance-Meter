@@ -64,6 +64,16 @@ class _SketchScreenState extends State<SketchScreen>
   double? _pendingBleMm;
   bool _waitingForBle = false;
 
+  // ── Vector chain wall definitions ────────────────────────────────────────
+  List<double> _wallAngles = [];
+  List<double> _wallDrawnLengths = [];
+  final List<List<double>>       _undoWallAnglesStack  = [];
+  final List<List<double>>       _undoWallLengthsStack = [];
+  final List<Map<int, double>>   _undoWallRealMmStack  = [];
+  final List<List<double>>       _redoWallAnglesStack  = [];
+  final List<List<double>>       _redoWallLengthsStack = [];
+  final List<Map<int, double>>   _redoWallRealMmStack  = [];
+
   // ── Object placement state ───────────────────────────────────────────────
 final List<RoomObject> _roomObjects = [];
 RoomObjectType? _draggingObjectType;  // set while dragging from panel
@@ -150,9 +160,15 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
     _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
     _redoStack.clear();
     _redoClosedStack.clear();
     _redoObjectsStack.clear();
+    _redoWallAnglesStack.clear();
+    _redoWallLengthsStack.clear();
+    _redoWallRealMmStack.clear();
   }
 
   void _undo() {
@@ -160,13 +176,19 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     _redoStack.add(List<Offset>.of(_points));
     _redoClosedStack.add(_isClosed);
     _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _redoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _redoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
     setState(() {
       _points = _undoStack.removeLast();
       _isClosed = _undoClosedStack.removeLast();
       if (_undoObjectsStack.isNotEmpty) {
-        _roomObjects
-          ..clear()
-          ..addAll(_undoObjectsStack.removeLast());
+        _roomObjects..clear()..addAll(_undoObjectsStack.removeLast());
+      }
+      if (_undoWallAnglesStack.isNotEmpty) {
+        _wallAngles..clear()..addAll(_undoWallAnglesStack.removeLast());
+        _wallDrawnLengths..clear()..addAll(_undoWallLengthsStack.removeLast());
+        _wallRealMm..clear()..addAll(_undoWallRealMmStack.removeLast());
       }
       _activePointIndex = -1;
       _cursorWorld = null;
@@ -183,13 +205,19 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     _undoStack.add(List<Offset>.of(_points));
     _undoClosedStack.add(_isClosed);
     _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
     setState(() {
       _points = _redoStack.removeLast();
       _isClosed = _redoClosedStack.removeLast();
       if (_redoObjectsStack.isNotEmpty) {
-        _roomObjects
-          ..clear()
-          ..addAll(_redoObjectsStack.removeLast());
+        _roomObjects..clear()..addAll(_redoObjectsStack.removeLast());
+      }
+      if (_redoWallAnglesStack.isNotEmpty) {
+        _wallAngles..clear()..addAll(_redoWallAnglesStack.removeLast());
+        _wallDrawnLengths..clear()..addAll(_redoWallLengthsStack.removeLast());
+        _wallRealMm..clear()..addAll(_redoWallRealMmStack.removeLast());
       }
       _activePointIndex = -1;
       _cursorWorld = null;
@@ -205,6 +233,9 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     _saveUndo();
     setState(() {
       _points.clear();
+      _wallAngles.clear();
+      _wallDrawnLengths.clear();
+      _wallRealMm.clear();
       _isClosed = false;
       _cursorWorld = null;
       _isDraggingLastPoint = false;
@@ -400,19 +431,44 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     return (p - proj).distance;
   }
 
+  // ── Vector chain helpers ─────────────────────────────────────────────────
+  void _syncWallDefinitions() {
+    _wallAngles.clear();
+    _wallDrawnLengths.clear();
+    final n = _points.length;
+    if (n < 2) return;
+    for (int i = 0; i < n - 1; i++) {
+      final a = _points[i], b = _points[i + 1];
+      final dx = b.dx - a.dx, dy = b.dy - a.dy;
+      _wallAngles.add(math.atan2(dy, dx));
+      _wallDrawnLengths.add(math.sqrt(dx * dx + dy * dy));
+    }
+  }
+
+  void _rebuildPointsFromChain() {
+    if (_wallAngles.isEmpty || _points.isEmpty) return;
+    final pts = [_points[0]];
+    for (int i = 0; i < _wallAngles.length; i++) {
+      final len = _wallRealMm.containsKey(i)
+          ? _wallRealMm[i]! / mmPerUnit
+          : _wallDrawnLengths[i];
+      pts.add(Offset(
+        pts.last.dx + len * math.cos(_wallAngles[i]),
+        pts.last.dy + len * math.sin(_wallAngles[i]),
+      ));
+    }
+    _points
+      ..clear()
+      ..addAll(pts);
+  }
+
   void _applyRealMeasurement(int wallIndex, double realMm) {
-    final double pixelLen = _wallLengthWorld(wallIndex);
-    if (pixelLen < 1e-6) return;
-    final double ratio = (realMm / mmPerUnit) / pixelLen;
-    if (ratio <= 0) return;
+    if (wallIndex >= _wallAngles.length) return; // closing wall — free, cannot be locked
+    if (_wallLengthWorld(wallIndex) < 1e-6) return;
     _saveUndo();
-    final Offset anchor = _points[wallIndex];
     setState(() {
-      _points = _points.map((pt) {
-        final dx = pt.dx - anchor.dx, dy = pt.dy - anchor.dy;
-        return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
-      }).toList();
       _wallRealMm[wallIndex] = realMm;
+      _rebuildPointsFromChain();
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
@@ -673,8 +729,15 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
         _prevWallAngle = null;
         _nextWallAngle = null;
       });
+      _syncWallDefinitions();
     } else {
-      if (_isDraggingActivePoint && _dragOccurred) _saveUndo();
+      if (_isDraggingActivePoint && _dragOccurred) {
+        // clear real-measurement locks for the two walls touching the moved point
+        if (_activePointIndex > 0) _wallRealMm.remove(_activePointIndex - 1);
+        if (_activePointIndex < _wallAngles.length) _wallRealMm.remove(_activePointIndex);
+        _saveUndo();
+        _syncWallDefinitions();
+      }
       setState(() {
         _snapTargetIndex = null;
         _prevWallAngle = null;
@@ -858,6 +921,7 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
           _isAngleSnapped = false;
           _activePointIndex = -1;
         });
+        _syncWallDefinitions();
         return;
       }
     }
@@ -896,7 +960,9 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
     final raw = snapToGrid(screenToWorld(details.localPosition));
     final pos = _points.isNotEmpty ? _computeAngle(_points.last, raw) : raw;
     if (_points.isNotEmpty &&
-        (pos - _points.last).distance < minPointDistance) return;
+        (pos - _points.last).distance < minPointDistance) {
+      return;
+    }
     _saveUndo();
     setState(() {
       _points.add(pos);
@@ -907,6 +973,7 @@ bool _objectMoveOccurred = false; // did actual drag movement happen?
       _snappedAngle = null;
       _isAngleSnapped = false;
     });
+    _syncWallDefinitions();
   }
 
   // ── Build ────────────────────────────────────────────────────────────────

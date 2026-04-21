@@ -7,7 +7,6 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'sketch_constants.dart';
 import 'room_object.dart';
-import 'room_object_utils.dart';
 
 Future<void> exportSketchPdf({
   required BuildContext context,

@@ -243,7 +243,9 @@ class _Room3DPainter extends CustomPainter {
           (p.dy * mmPerUnit - cy) * mmScale,
           size);
       if (firstFloor) { floorPath.moveTo(s.dx, s.dy); firstFloor = false; }
-      else floorPath.lineTo(s.dx, s.dy);
+      else {
+        floorPath.lineTo(s.dx, s.dy);
+      }
     }
     floorPath.close();
     canvas.drawPath(floorPath,
