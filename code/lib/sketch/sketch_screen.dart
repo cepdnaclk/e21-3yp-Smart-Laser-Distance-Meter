@@ -11,6 +11,9 @@ import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
 import 'sketch_widgets.dart';
+import 'room_object.dart';
+import 'room_object_utils.dart';
+import 'room_3d_screen.dart';
 
 
 class SketchScreen extends StatefulWidget {
@@ -58,6 +61,26 @@ class _SketchScreenState extends State<SketchScreen>
   double? _pendingBleMm;
   bool _waitingForBle = false;
   SketchShape get activeShape => shapes[activeIndex];
+  // ── From Venuka — object placement ──────────────────────────
+  final List<RoomObject> _roomObjects = [];
+  RoomObjectType? _draggingObjectType;  
+  String? _selectedObjectId;            
+  Offset? _dragObjectScreenPos;         
+  WallHitResult? _dragWallHit;          
+  int _objectCounter = 0;  
+  // ── From Venuka — wall vector chain ─────────────────────────
+  List<double> _wallAngles = [];
+  List<double> _wallDrawnLengths = [];
+  final List<List<double>> _undoWallAnglesStack = [];
+  final List<List<double>> _undoWallLengthsStack = [];
+  final List<Map<int, double>> _undoWallRealMmStack = [];
+  final List<List<double>> _redoWallAnglesStack = [];
+  final List<List<double>> _redoWallLengthsStack = [];
+  final List<Map<int, double>> _redoWallRealMmStack = [];             
+
+  String? _movingObjectId;        
+  Offset? _moveStartScreenPos;    
+  bool _objectMoveOccurred = false;
 
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => activeShape.points;
