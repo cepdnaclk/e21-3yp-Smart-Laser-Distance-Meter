@@ -1,4 +1,5 @@
 // lib/sketch/sketch_constants.dart
+import 'dart:math' as math;
 
 const double mmPerUnit = 5.0;
 const double unitsPerMeter = 200.0;
@@ -14,6 +15,22 @@ const double pointSnapRadiusScreen = 30.0;
 const double pointSelectRadiusScreen = 22.0;
 const double snapThresholdDeg = 3.0;
 const double minAngleDistance = 10.0;
+const double wallThickness = 10.0;
+
+List<Offset> thickWallRect(Offset a, Offset b, double thickness) {
+  final dx = b.dx - a.dx;
+  final dy = b.dy - a.dy;
+  final len = math.sqrt(dx * dx + dy * dy);
+  if (len == 0) return [];
+  final px = -dy / len * (thickness / 2);
+  final py = dx / len * (thickness / 2);
+  return [
+    Offset(a.dx + px, a.dy + py),
+    Offset(b.dx + px, b.dy + py),
+    Offset(b.dx - px, b.dy - py),
+    Offset(a.dx - px, a.dy - py),
+  ];
+}// world units (~50mm real)
 
 const List<double> snapAngles = [
   0, 30, 45, 60, 75, 90, 105, 120, 135, 150,
