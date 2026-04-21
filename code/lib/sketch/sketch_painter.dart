@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
+import 'sketch_shape.dart';
 
 class SketchPainter extends CustomPainter {
   final Offset panOffset;
@@ -30,6 +31,8 @@ class SketchPainter extends CustomPainter {
   final bool nextWallSnapped;
   final int selectedWallIndex;
   final Map<int, double> wallRealMm;
+  /// All rooms that are NOT the active one — drawn greyed-out behind the active room.
+  final List<SketchShape> inactiveShapes;
 
   const SketchPainter({
     required this.panOffset,
@@ -59,6 +62,7 @@ class SketchPainter extends CustomPainter {
     required this.nextWallSnapped,
     required this.selectedWallIndex,
     required this.wallRealMm,
+    this.inactiveShapes = const [],
   });
 
   Offset worldToScreen(Offset world) => world * scale + panOffset;
@@ -87,6 +91,10 @@ class SketchPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     _drawGrid(canvas, size);
     _drawAxes(canvas, size);
+    // Draw inactive rooms first (behind everything)
+    for (final shape in inactiveShapes) {
+      _drawInactiveShape(canvas, shape);
+    }
     if (points.isNotEmpty) {
       _drawSnapGuides(canvas, size);
       _drawRoom(canvas);
@@ -96,6 +104,71 @@ class SketchPainter extends CustomPainter {
       _drawMiddlePointAngles(canvas);
     }
     _drawSnapCursor(canvas);
+  }
+
+  // ── Draw an inactive (completed or in-progress) room greyed out ───────────
+  void _drawInactiveShape(Canvas canvas, SketchShape shape) {
+    if (shape.points.length < 2) return;
+
+    final pts = shape.points;
+    final sp = pts.map<Offset>(worldToScreen).toList();
+    final int n = pts.length;
+    final bool closed = shape.isClosed;
+
+    // Faint fill
+    if (closed && n >= 3) {
+      final path = Path()..addPolygon(sp, true);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF888888).withOpacity(0.06)
+          ..style = PaintingStyle.fill,
+      );
+    }
+
+    // Greyed walls
+    final wallPaint = Paint()
+      ..color = const Color(0xFF999999).withOpacity(0.55)
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    final int wallCount = closed ? n : n - 1;
+    for (int i = 0; i < wallCount; i++) {
+      canvas.drawLine(sp[i], sp[(i + 1) % n], wallPaint);
+    }
+
+    // Greyed corner dots
+    for (int i = 0; i < n; i++) {
+      canvas.drawCircle(
+        sp[i],
+        3,
+        Paint()
+          ..color = const Color(0xFFAAAAAA).withOpacity(0.6)
+          ..style = PaintingStyle.fill,
+      );
+    }
+
+    // Room label if present
+    if (shape.label != null && closed) {
+      double cx = 0, cy = 0;
+      for (final p in pts) { cx += p.dx; cy += p.dy; }
+      final centroidScreen = worldToScreen(Offset(cx / n, cy / n));
+      final tp = TextPainter(
+        text: TextSpan(
+          text: shape.label,
+          style: const TextStyle(
+            color: Color(0xFFAAAAAA),
+            fontSize: 11,
+            fontFamily: 'monospace',
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas,
+          Offset(centroidScreen.dx - tp.width / 2,
+              centroidScreen.dy - tp.height / 2));
+    }
   }
 
   void _drawWallLengthLabel(Canvas canvas, Offset fromWorld, Offset toWorld,

@@ -1,5 +1,3 @@
-// lib/sketch/sketch_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:math' as math;
@@ -10,6 +8,7 @@ import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
 import 'sketch_widgets.dart';
+import 'sketch_shape.dart';
 
 
 class SketchScreen extends StatefulWidget {
@@ -23,12 +22,26 @@ class SketchScreen extends StatefulWidget {
 class _SketchScreenState extends State<SketchScreen>
     with SketchDialogsMixin<SketchScreen> {
 
-  // ── State fields ─────────────────────────────────────────────────────────
+  // ── Multi-room state ──────────────────────────────────────────────────────
+  /// All shapes on the canvas. Always has at least one entry.
+  final List<SketchShape> _shapes = [
+    SketchShape(id: 'shape_0'),
+  ];
+  /// Index of the shape currently being drawn / edited.
+  int _activeShapeIndex = 0;
+
+  // ── Convenience shims — all existing logic keeps working unchanged ────────
+  SketchShape get _activeShape => _shapes[_activeShapeIndex];
+  List<Offset> get _points => _activeShape.points;
+  bool get _isClosed => _activeShape.isClosed;
+  Map<int, double> get _wallRealMm => _activeShape.wallRealMm;
+  // Setters used internally
+  set _isClosed(bool v) => _activeShape.isClosed = v;
+
+  // ── Canvas / interaction state ────────────────────────────────────────────
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
-  List<Offset> _points = [];
-  bool _isClosed = false;
   Offset? _cursorWorld;
   bool _isDraggingLastPoint = false;
   bool _dragOccurred = false;
@@ -36,10 +49,6 @@ class _SketchScreenState extends State<SketchScreen>
   int _activePointIndex = -1;
   bool _isDraggingActivePoint = false;
   int? _snapTargetIndex;
-  final List<List<Offset>> _undoStack = [];
-  final List<List<Offset>> _redoStack = [];
-  final List<bool> _undoClosedStack = [];
-  final List<bool> _redoClosedStack = [];
   TapDownDetails? _pendingTap;
   bool _tapCancelled = false;
   double? _snappedAngle;
@@ -54,11 +63,17 @@ class _SketchScreenState extends State<SketchScreen>
   double? _nearestSnapAngleDeg;
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
-  final Map<int, double> _wallRealMm = {};
   double? _pendingBleMm;
   bool _waitingForBle = false;
 
-  // ── Mixin contract — expose private state via public getters ─────────────
+  // ── Undo / redo — now snapshots the full shape list ───────────────────────
+  final List<List<SketchShape>> _undoStack = [];
+  final List<List<SketchShape>> _redoStack = [];
+  // Also track which shape was active so undo restores it correctly
+  final List<int> _undoActiveIndex = [];
+  final List<int> _redoActiveIndex = [];
+
+  // ── Mixin contract ────────────────────────────────────────────────────────
   @override List<Offset> get sketchPoints => _points;
   @override bool get sketchIsClosed => _isClosed;
   @override double? get sketchCurrentAngleDeg => _currentAngleDeg;
@@ -99,7 +114,7 @@ class _SketchScreenState extends State<SketchScreen>
     super.dispose();
   }
 
-  // ── Coordinate helpers ───────────────────────────────────────────────────
+  // ── Coordinate helpers ────────────────────────────────────────────────────
   Offset worldToScreen(Offset world) => world * _scale + _panOffset;
   Offset screenToWorld(Offset screen) => (screen - _panOffset) / _scale;
 
@@ -111,7 +126,7 @@ class _SketchScreenState extends State<SketchScreen>
     return Offset(snappedX, snappedY);
   }
 
-  // ── Point helpers ────────────────────────────────────────────────────────
+  // ── Point helpers ─────────────────────────────────────────────────────────
   bool _isNearLastPoint(Offset screenPos) {
     if (_points.isEmpty || _isClosed) return false;
     if (_activePointIndex >= 0) return false;
@@ -128,21 +143,29 @@ class _SketchScreenState extends State<SketchScreen>
     return -1;
   }
 
-  // ── Undo / redo ──────────────────────────────────────────────────────────
+  // ── Undo / redo ───────────────────────────────────────────────────────────
+  /// Deep-copies the entire shape list for a snapshot.
+  List<SketchShape> _snapshotShapes() =>
+      _shapes.map((s) => SketchShape.copy(s)).toList();
+
   void _saveUndo() {
-    _undoStack.add(List<Offset>.of(_points));
-    _undoClosedStack.add(_isClosed);
+    _undoStack.add(_snapshotShapes());
+    _undoActiveIndex.add(_activeShapeIndex);
     _redoStack.clear();
-    _redoClosedStack.clear();
+    _redoActiveIndex.clear();
   }
 
   void _undo() {
     if (_undoStack.isEmpty) return;
-    _redoStack.add(List<Offset>.of(_points));
-    _redoClosedStack.add(_isClosed);
+    _redoStack.add(_snapshotShapes());
+    _redoActiveIndex.add(_activeShapeIndex);
     setState(() {
-      _points = _undoStack.removeLast();
-      _isClosed = _undoClosedStack.removeLast();
+      final snapshot = _undoStack.removeLast();
+      final savedActive = _undoActiveIndex.removeLast();
+      _shapes
+        ..clear()
+        ..addAll(snapshot);
+      _activeShapeIndex = savedActive.clamp(0, _shapes.length - 1);
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -155,11 +178,15 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _redo() {
     if (_redoStack.isEmpty) return;
-    _undoStack.add(List<Offset>.of(_points));
-    _undoClosedStack.add(_isClosed);
+    _undoStack.add(_snapshotShapes());
+    _undoActiveIndex.add(_activeShapeIndex);
     setState(() {
-      _points = _redoStack.removeLast();
-      _isClosed = _redoClosedStack.removeLast();
+      final snapshot = _redoStack.removeLast();
+      final savedActive = _redoActiveIndex.removeLast();
+      _shapes
+        ..clear()
+        ..addAll(snapshot);
+      _activeShapeIndex = savedActive.clamp(0, _shapes.length - 1);
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -170,11 +197,13 @@ class _SketchScreenState extends State<SketchScreen>
     });
   }
 
-  void _clear() {
+  /// Clear only the active room (matches original "clear" behaviour).
+  void _clearActiveRoom() {
     _saveUndo();
     setState(() {
-      _points.clear();
-      _isClosed = false;
+      _activeShape.points.clear();
+      _activeShape.isClosed = false;
+      _activeShape.wallRealMm.clear();
       _cursorWorld = null;
       _isDraggingLastPoint = false;
       _dragOccurred = false;
@@ -191,10 +220,77 @@ class _SketchScreenState extends State<SketchScreen>
       _snapTargetIndex = null;
       _prevWallAngle = null;
       _nextWallAngle = null;
+      _selectedWallIndex = -1;
     });
   }
 
-  // ── Angle math ───────────────────────────────────────────────────────────
+  /// Add a brand-new empty room and switch drawing to it.
+  void _addNewRoom() {
+    // Only allow adding a new room when current room has at least 1 point
+    // (prevents accidentally stacking empty rooms).
+    if (_points.isEmpty) return;
+    _saveUndo();
+    setState(() {
+      final newId = 'shape_${DateTime.now().microsecondsSinceEpoch}';
+      _shapes.add(SketchShape(id: newId));
+      _activeShapeIndex = _shapes.length - 1;
+      // Reset drawing interaction state
+      _cursorWorld = null;
+      _isDraggingLastPoint = false;
+      _dragOccurred = false;
+      _activePointIndex = -1;
+      _isDraggingActivePoint = false;
+      _snapTargetIndex = null;
+      _currentAngleDeg = null;
+      _nearestSnapAngleDeg = null;
+      _snapDiffDeg = null;
+      _snappedAngle = null;
+      _isAngleSnapped = false;
+      _selectedWallIndex = -1;
+      _prevWallAngle = null;
+      _nextWallAngle = null;
+    });
+  }
+
+  /// Switch the active room by tapping its index in the room selector strip.
+  void _selectRoom(int index) {
+    if (index == _activeShapeIndex) return;
+    setState(() {
+      _activeShapeIndex = index;
+      _cursorWorld = null;
+      _isDraggingLastPoint = false;
+      _activePointIndex = -1;
+      _isDraggingActivePoint = false;
+      _snapTargetIndex = null;
+      _currentAngleDeg = null;
+      _nearestSnapAngleDeg = null;
+      _snapDiffDeg = null;
+      _snappedAngle = null;
+      _isAngleSnapped = false;
+      _selectedWallIndex = -1;
+      _prevWallAngle = null;
+      _nextWallAngle = null;
+    });
+  }
+
+  /// Delete the active room (must keep at least one).
+  void _deleteActiveRoom() {
+    if (_shapes.length <= 1) {
+      // Only one room — just clear it instead of deleting
+      _clearActiveRoom();
+      return;
+    }
+    _saveUndo();
+    setState(() {
+      _shapes.removeAt(_activeShapeIndex);
+      _activeShapeIndex = (_activeShapeIndex - 1).clamp(0, _shapes.length - 1);
+      _cursorWorld = null;
+      _activePointIndex = -1;
+      _selectedWallIndex = -1;
+    });
+  }
+
+  // ── Angle math ────────────────────────────────────────────────────────────
   double _computeAngleDeg(Offset from, Offset to) {
     final dx = to.dx - from.dx;
     final dy = -(to.dy - from.dy);
@@ -338,7 +434,7 @@ class _SketchScreenState extends State<SketchScreen>
     return rawPos;
   }
 
-  // ── Wall helpers ─────────────────────────────────────────────────────────
+  // ── Wall helpers ──────────────────────────────────────────────────────────
   double _wallLengthWorld(int wallIndex) {
     final Offset a = _points[wallIndex];
     final Offset b = _points[(wallIndex + 1) % _points.length];
@@ -377,17 +473,17 @@ class _SketchScreenState extends State<SketchScreen>
     _saveUndo();
     final Offset anchor = _points[wallIndex];
     setState(() {
-      _points = _points.map((pt) {
+      _activeShape.points = _points.map((pt) {
         final dx = pt.dx - anchor.dx, dy = pt.dy - anchor.dy;
         return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
       }).toList();
-      _wallRealMm[wallIndex] = realMm;
+      _activeShape.wallRealMm[wallIndex] = realMm;
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
   }
 
-  // ── Geometry calculations ────────────────────────────────────────────────
+  // ── Geometry calculations ─────────────────────────────────────────────────
   double _totalPerimeter() {
     if (_points.length < 2) return 0;
     double total = 0;
@@ -416,7 +512,7 @@ class _SketchScreenState extends State<SketchScreen>
     return area.abs() / 2.0;
   }
 
-  // ── Label helper ─────────────────────────────────────────────────────────
+  // ── Label helper ──────────────────────────────────────────────────────────
   String _angleLabel() {
     if (_currentAngleDeg == null) return '';
     if (_isAngleSnapped && _snappedAngle != null) {
@@ -425,7 +521,7 @@ class _SketchScreenState extends State<SketchScreen>
     return '${_currentAngleDeg!.toStringAsFixed(1)}°';
   }
 
-  // ── Gesture handlers ─────────────────────────────────────────────────────
+  // ── Gesture handlers ──────────────────────────────────────────────────────
   void _onPointerDown(PointerDownEvent event) {
     _dragOccurred = false;
     _panStartPosition = event.localPosition;
@@ -484,9 +580,7 @@ class _SketchScreenState extends State<SketchScreen>
         final Offset pos = snapIdx >= 0
             ? _points[snapIdx]
             : _updateMiddlePointAngles(_activePointIndex, raw);
-        if (snapIdx < 0) {
-          // angles already updated inside _updateMiddlePointAngles
-        } else {
+        if (snapIdx >= 0) {
           _prevWallAngle = null;
           _nextWallAngle = null;
           _prevWallSnapped = false;
@@ -660,7 +754,7 @@ class _SketchScreenState extends State<SketchScreen>
           _activePointIndex = -1;
           _selectedWallIndex = wallIdx;
         });
-        showSketchWallEditDialog(wallIdx);   // ← mixin method
+        showSketchWallEditDialog(wallIdx);
         return;
       }
       setState(() {
@@ -737,7 +831,7 @@ class _SketchScreenState extends State<SketchScreen>
     });
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
@@ -769,11 +863,17 @@ class _SketchScreenState extends State<SketchScreen>
         _points.length >= 2 &&
         !_isClosed;
 
+    // Build the inactive shapes list for the painter (everything except active)
+    final List<SketchShape> inactiveShapes = [
+      for (int i = 0; i < _shapes.length; i++)
+        if (i != _activeShapeIndex) _shapes[i]
+    ];
+
     return Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
       body: Stack(
         children: [
-          // ── Canvas ───────────────────────────────────────────────────
+          // ── Canvas ─────────────────────────────────────────────────
           Listener(
             onPointerSignal: _onPointerSignal,
             onPointerDown: _onPointerDown,
@@ -814,6 +914,7 @@ class _SketchScreenState extends State<SketchScreen>
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
                   wallRealMm: _wallRealMm,
+                  inactiveShapes: inactiveShapes,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -845,7 +946,7 @@ class _SketchScreenState extends State<SketchScreen>
                                         ? 'Point device at wall → press BOOT button'
                                         : 'Tap a wall to edit its length'
                             : _points.isEmpty
-                                ? 'Tap to place first corner'
+                                ? 'Tap to place first corner  (Room ${_activeShapeIndex + 1})'
                                 : _isDraggingLastPoint
                                     ? 'Drag | ${_angleLabel()}'
                                     : _activePointIndex >= 0
@@ -896,6 +997,13 @@ class _SketchScreenState extends State<SketchScreen>
                 ),
               ),
             ),
+          ),
+
+          // ── Room selector strip ──────────────────────────────────────
+          Positioned(
+            top: topPadding + 48,
+            left: 0, right: 0,
+            child: _buildRoomSelectorStrip(),
           ),
 
           // ── Polar tracking HUD ───────────────────────────────────────
@@ -1032,7 +1140,7 @@ class _SketchScreenState extends State<SketchScreen>
               children: [
                 if (showAngleStrip)
                   GestureDetector(
-                    onTap: showSketchAngleEditor,  // ← mixin method
+                    onTap: showSketchAngleEditor,
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
@@ -1093,9 +1201,9 @@ class _SketchScreenState extends State<SketchScreen>
                                     : const Color(0xFF666666),
                               ),
                             ),
-                            child: Row(
+                            child: const Row(
                               mainAxisSize: MainAxisSize.min,
-                              children: const [
+                              children: [
                                 Icon(Icons.edit,
                                     size: 11, color: Color(0xFFAAAAAA)),
                                 SizedBox(width: 4),
@@ -1138,6 +1246,10 @@ class _SketchScreenState extends State<SketchScreen>
                               ),
                               const SizedBox(width: 8),
                               StatusItem(
+                                  label: 'ROOM',
+                                  value: '${_activeShapeIndex + 1}/${_shapes.length}'),
+                              const SizedBox(width: 8),
+                              StatusItem(
                                   label: 'PTS',
                                   value: '${_points.length}'),
                               if (_isClosed && _points.length >= 2) ...[
@@ -1154,17 +1266,20 @@ class _SketchScreenState extends State<SketchScreen>
                                   value: formatArea(_totalArea()),
                                 ),
                               ],
-                              if (_activePointIndex >= 0 &&
-                                  _activePointIndex < _points.length) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PT',
-                                  value: '${_activePointIndex + 1}',
-                                ),
-                              ],
                             ],
                           ),
                         ),
+                      ),
+                      // Add room button
+                      IconButton(
+                        icon: const Icon(Icons.add_box_outlined, size: 18),
+                        onPressed: _points.isEmpty ? null : _addNewRoom,
+                        color: const Color(0xFF00AAFF),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Add room',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
                       ),
                       IconButton(
                         icon: const Icon(Icons.undo, size: 18),
@@ -1189,10 +1304,12 @@ class _SketchScreenState extends State<SketchScreen>
                       const SizedBox(width: 4),
                       IconButton(
                         icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: _points.isEmpty ? null : _clear,
+                        onPressed: _points.isEmpty && _shapes.length <= 1
+                            ? null
+                            : _deleteActiveRoom,
                         color: const Color(0xFFFF4444),
                         disabledColor: const Color(0xFF555555),
-                        tooltip: 'Clear',
+                        tooltip: 'Delete room',
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
                             minWidth: 36, minHeight: 36),
@@ -1200,14 +1317,10 @@ class _SketchScreenState extends State<SketchScreen>
                       const SizedBox(width: 4),
                       IconButton(
                         icon: const Icon(Icons.picture_as_pdf, size: 18),
-                        onPressed: _points.length >= 2
+                        onPressed: _shapes.any((s) => s.points.length >= 2)
                             ? () => exportSketchPdf(
                                   context: context,
-                                  points: _points,
-                                  isClosed: _isClosed,
-                                  wallRealMm: _wallRealMm,
-                                  totalPerimeter: _totalPerimeter(),
-                                  totalArea: _totalArea(),
+                                  shapes: _shapes,
                                 )
                             : null,
                         color: const Color(0xFFFF4488),
@@ -1224,6 +1337,75 @@ class _SketchScreenState extends State<SketchScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Room selector strip widget ─────────────────────────────────────────────
+  Widget _buildRoomSelectorStrip() {
+    if (_shapes.length <= 1 && _shapes[0].points.isEmpty) {
+      // Nothing to show when there's only one empty room
+      return const SizedBox.shrink();
+    }
+    return Container(
+      height: 32,
+      color: const Color(0xFF242424),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        itemCount: _shapes.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 4),
+        itemBuilder: (context, i) {
+          final isActive = i == _activeShapeIndex;
+          final shape = _shapes[i];
+          final label = shape.label ?? 'Room ${i + 1}';
+          return GestureDetector(
+            onTap: () => _selectRoom(i),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? const Color(0xFF00AAFF).withOpacity(0.18)
+                    : const Color(0xFF383838),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color: isActive
+                      ? const Color(0xFF00AAFF)
+                      : const Color(0xFF555555),
+                  width: isActive ? 1.5 : 1.0,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (shape.isClosed)
+                    const Icon(Icons.check_circle,
+                        size: 10, color: Color(0xFF00CC44))
+                  else if (shape.points.isNotEmpty)
+                    const Icon(Icons.edit,
+                        size: 10, color: Color(0xFFFFAA00))
+                  else
+                    const Icon(Icons.radio_button_unchecked,
+                        size: 10, color: Color(0xFF666666)),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: isActive
+                          ? const Color(0xFF00AAFF)
+                          : const Color(0xFF999999),
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      fontWeight:
+                          isActive ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
