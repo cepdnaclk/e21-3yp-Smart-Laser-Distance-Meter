@@ -610,24 +610,26 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawRoom(Canvas canvas, SketchShape shape, bool isActive) {
-    final wallPaint = Paint()
-      ..color = const Color(0xFF1A1A1A)
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    final snapWallPaint = Paint()
-      ..color = const Color(0xFF00CC44)
-      ..strokeWidth = 3.0
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
     final rubberPaint = Paint()
-      ..color =
-          isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFF00AAFF)
+      ..color = isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFF00AAFF)
       ..strokeWidth = isAngleSnapped ? 2.0 : 1.5
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
+
     final fillPaint = Paint()
       ..color = const Color(0xFF00AAFF).withOpacity(isActive ? 0.07 : 0.03)
+      ..style = PaintingStyle.fill;
+
+    final wallFillPaint = Paint()
+      ..color = const Color(0xFF1A1A1A)
+      ..style = PaintingStyle.fill;
+
+    final selectedWallFillPaint = Paint()
+      ..color = const Color(0xFFFF8800)
+      ..style = PaintingStyle.fill;
+
+    final snapWallFillPaint = Paint()
+      ..color = const Color(0xFF00CC44)
       ..style = PaintingStyle.fill;
 
     final List<Offset> sp =
@@ -646,34 +648,44 @@ class SketchPainter extends CustomPainter {
       centroid = Offset(cx / allPts.length, cy / allPts.length);
     }
 
+    // 1. Draw room fill first (so walls paint over it)
     if (shape.isClosed && sp.length >= 3) {
       final path = Path()..addPolygon(sp, true);
       canvas.drawPath(path, fillPaint);
     }
 
-    final selectedWallPaint = Paint()
-      ..color = const Color(0xFFFF8800)
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
+    // 2. Helper to draw one thick wall segment
+    void drawThickWall(Offset aWorld, Offset bWorld, Paint paint) {
+      final corners = thickWallRect(aWorld, bWorld, wallThickness);
+      if (corners.isEmpty) return;
+      final screenCorners = corners.map((c) => worldToScreen(c)).toList();
+      final path = Path()
+        ..moveTo(screenCorners[0].dx, screenCorners[0].dy)
+        ..lineTo(screenCorners[1].dx, screenCorners[1].dy)
+        ..lineTo(screenCorners[2].dx, screenCorners[2].dy)
+        ..lineTo(screenCorners[3].dx, screenCorners[3].dy)
+        ..close();
+      canvas.drawPath(path, paint);
+    }
 
-    for (int i = 0; i < sp.length - 1; i++) {
+    // 3. Draw walls between consecutive points
+    for (int i = 0; i < shape.points.length - 1; i++) {
       final isPrevWall = isActive && activePointIndex >= 0 && i == activePointIndex - 1;
       final isNextWall = isActive && activePointIndex >= 0 && i == activePointIndex;
-      final isPrevWallWrapped = isActive && activePointIndex == 0 && i == sp.length - 1;
-      final isNextWallWrapped =
-          isActive && activePointIndex == sp.length - 1 && i == 0;
+      final isPrevWallWrapped = isActive && activePointIndex == 0 && i == shape.points.length - 1;
+      final isNextWallWrapped = isActive && activePointIndex == shape.points.length - 1 && i == 0;
 
-      Paint paint = wallPaint;
+      Paint paint = wallFillPaint;
       if (isActive && i == selectedWallIndex) {
-        paint = selectedWallPaint;
+        paint = selectedWallFillPaint;
       } else if ((isPrevWall || isPrevWallWrapped) && prevWallSnapped) {
-        paint = snapWallPaint;
+        paint = snapWallFillPaint;
       } else if ((isNextWall || isNextWallWrapped) && nextWallSnapped) {
-        paint = snapWallPaint;
+        paint = snapWallFillPaint;
       }
-      canvas.drawLine(sp[i], sp[i + 1], paint);
-      
+
+      drawThickWall(shape.points[i], shape.points[i + 1], paint);
+
       if (isActive) {
         _drawWallLengthLabel(canvas, shape.points[i], shape.points[i + 1],
             centroid: centroid,
@@ -682,18 +694,20 @@ class SketchPainter extends CustomPainter {
       }
     }
 
-    if (shape.isClosed && sp.length >= 2) {
-      final int closingWallIdx = sp.length - 1;
-      Paint paint = wallPaint;
+    // 4. Draw closing wall if shape is closed
+    if (shape.isClosed && shape.points.length >= 2) {
+      final int closingWallIdx = shape.points.length - 1;
+      Paint paint = wallFillPaint;
       if (isActive && closingWallIdx == selectedWallIndex) {
-        paint = selectedWallPaint;
+        paint = selectedWallFillPaint;
       } else if (isActive && activePointIndex == 0 && prevWallSnapped) {
-        paint = snapWallPaint;
-      } else if (isActive && activePointIndex == sp.length - 1 && nextWallSnapped) {
-        paint = snapWallPaint;
+        paint = snapWallFillPaint;
+      } else if (isActive && activePointIndex == shape.points.length - 1 && nextWallSnapped) {
+        paint = snapWallFillPaint;
       }
-      canvas.drawLine(sp.last, sp.first, paint);
-      
+
+      drawThickWall(shape.points.last, shape.points.first, paint);
+
       if (isActive) {
         _drawWallLengthLabel(canvas, shape.points.last, shape.points.first,
             centroid: centroid,
@@ -702,6 +716,7 @@ class SketchPainter extends CustomPainter {
       }
     }
 
+    // 5. Rubber band line while drawing
     if (isActive &&
         !shape.isClosed &&
         cursorWorld != null &&
