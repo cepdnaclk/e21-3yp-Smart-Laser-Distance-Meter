@@ -968,8 +968,6 @@ class _SketchScreenState extends State<SketchScreen>
                   scale: _scale,
                   minorGrid: minorGrid,
                   majorGrid: majorGrid,
-                  roomObjects: _roomObjects,
-                  draggingObjectId: _selectedObjectId,
                   cursorWorld: _cursorWorld,
                   snapRadiusWorld: snapRadiusWorld,
                   isDraggingLastPoint: _isDraggingLastPoint,

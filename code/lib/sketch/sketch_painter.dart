@@ -14,8 +14,6 @@ class SketchPainter extends CustomPainter {
   // New shape variables replacing the old single-room variables
   final List<SketchShape> shapes;
   final int activeIndex;
-  final List<RoomObject> roomObjects;
-  final String? draggingObjectId;
 
   final Offset? cursorWorld;
   final double snapRadiusWorld;
@@ -65,8 +63,7 @@ class SketchPainter extends CustomPainter {
     required this.prevWallSnapped,
     required this.nextWallSnapped,
     required this.selectedWallIndex,
-    required this.roomObjects,
-    required this.draggingObjectId,
+    
   });
 
   Offset worldToScreen(Offset world) => world * scale + panOffset;
@@ -104,8 +101,8 @@ class SketchPainter extends CustomPainter {
       if (shape.points.isNotEmpty) {
         _drawSnapGuides(canvas, size, shape, isActive);
         _drawRoom(canvas, shape, isActive);
-        if (shapes[activeIndex].isClosed) {
-          _drawRoomObjects(canvas);
+        if (shape.isClosed) {
+          _drawRoomObjects(canvas, shape);
         }
         _drawPoints(canvas, shape, isActive);
         _drawAngleIndicator(canvas, shape, isActive);
@@ -663,67 +660,95 @@ class SketchPainter extends CustomPainter {
       canvas.drawPath(path, fillPaint);
     }
 
-    // 2. Helper to draw one thick wall segment
-    void drawThickWall(Offset aWorld, Offset bWorld, Paint paint) {
-      final corners = thickWallRect(aWorld, bWorld, wallThickness);
-      if (corners.isEmpty) return;
-      final screenCorners = corners.map((c) => worldToScreen(c)).toList();
-      final path = Path()
-        ..moveTo(screenCorners[0].dx, screenCorners[0].dy)
-        ..lineTo(screenCorners[1].dx, screenCorners[1].dy)
-        ..lineTo(screenCorners[2].dx, screenCorners[2].dy)
-        ..lineTo(screenCorners[3].dx, screenCorners[3].dy)
-        ..close();
-      canvas.drawPath(path, paint);
-    }
-
-    // 3. Draw walls between consecutive points
-    for (int i = 0; i < shape.points.length - 1; i++) {
-      final isPrevWall = isActive && activePointIndex >= 0 && i == activePointIndex - 1;
-      final isNextWall = isActive && activePointIndex >= 0 && i == activePointIndex;
-      final isPrevWallWrapped = isActive && activePointIndex == 0 && i == shape.points.length - 1;
-      final isNextWallWrapped = isActive && activePointIndex == shape.points.length - 1 && i == 0;
-
-      Paint paint = wallFillPaint;
-      if (isActive && i == selectedWallIndex) {
-        paint = selectedWallFillPaint;
-      } else if ((isPrevWall || isPrevWallWrapped) && prevWallSnapped) {
-        paint = snapWallFillPaint;
-      } else if ((isNextWall || isNextWallWrapped) && nextWallSnapped) {
-        paint = snapWallFillPaint;
-      }
-
-      drawThickWall(shape.points[i], shape.points[i + 1], paint);
-
-      if (isActive) {
-        _drawWallLengthLabel(canvas, shape.points[i], shape.points[i + 1],
-            centroid: centroid,
-            overrideMm: shape.wallRealMm[i],
-            isSelected: i == selectedWallIndex);
-      }
-    }
-
-    // 4. Draw closing wall if shape is closed
     if (shape.isClosed && shape.points.length >= 2) {
-      final int closingWallIdx = shape.points.length - 1;
-      Paint paint = wallFillPaint;
-      if (isActive && closingWallIdx == selectedWallIndex) {
-        paint = selectedWallFillPaint;
-      } else if (isActive && activePointIndex == 0 && prevWallSnapped) {
-        paint = snapWallFillPaint;
-      } else if (isActive && activePointIndex == shape.points.length - 1 && nextWallSnapped) {
-        paint = snapWallFillPaint;
+      final int n = shape.points.length;
+
+      // Build offset lines for each wall
+      // Each entry: (outerA, outerB, innerA, innerB)
+      List<(Offset, Offset, Offset, Offset)> wallLines = [];
+      for (int i = 0; i < n; i++) {
+        final a = shape.points[i];
+        final b = shape.points[(i + 1) % n];
+        final corners = thickWallRect(a, b, wallThickness);
+        // thickWallRect returns [outerA, outerB, innerB, innerA]
+        wallLines.add((corners[0], corners[1], corners[3], corners[2]));
       }
 
-      drawThickWall(shape.points.last, shape.points.first, paint);
+      // Compute mitre corners
+      List<Offset> outerCorners = [];
+      List<Offset> innerCorners = [];
+      for (int i = 0; i < n; i++) {
+        final next = (i + 1) % n;
+        final (oA, oB, iA, iB) = wallLines[i];
+        final (oC, oD, iC, iD) = wallLines[next];
 
+        final oDir1 = oB - oA;
+        final oDir2 = oD - oC;
+        final iDir1 = iB - iA;
+        final iDir2 = iD - iC;
+
+        final outerMitre = lineIntersect(oA, oDir1, oC, oDir2) ?? oB;
+        final innerMitre = lineIntersect(iA, iDir1, iC, iDir2) ?? iB;
+
+        outerCorners.add(worldToScreen(outerMitre));
+        innerCorners.add(worldToScreen(innerMitre));
+      }
+
+      // Draw single filled wall path
+      final wallPath = Path();
+      wallPath.moveTo(outerCorners[0].dx, outerCorners[0].dy);
+      for (int i = 1; i < n; i++) {
+        wallPath.lineTo(outerCorners[i].dx, outerCorners[i].dy);
+      }
+      wallPath.close();
+
+      // Cut out interior
+      wallPath.moveTo(innerCorners[0].dx, innerCorners[0].dy);
+      for (int i = 1; i < n; i++) {
+        wallPath.lineTo(innerCorners[i].dx, innerCorners[i].dy);
+      }
+      wallPath.close();
+
+      wallPath.fillType = PathFillType.evenOdd;
+      canvas.drawPath(
+        wallPath,
+        Paint()
+          ..color = const Color(0xFF1A1A1A)
+          ..style = PaintingStyle.fill,
+      );
+
+      // Draw dimension labels
       if (isActive) {
-        _drawWallLengthLabel(canvas, shape.points.last, shape.points.first,
-            centroid: centroid,
-            overrideMm: shape.wallRealMm[closingWallIdx],
-            isSelected: closingWallIdx == selectedWallIndex);
+        for (int i = 0; i < n; i++) {
+          final a = shape.points[i];
+          final b = shape.points[(i + 1) % n];
+          _drawWallLengthLabel(canvas, a, b,
+              centroid: centroid,
+              overrideMm: shape.wallRealMm[i],
+              isSelected: i == selectedWallIndex);
+        }
       }
-    }
+    } else {
+      // Shape not closed yet — draw individual thick walls while drawing
+      for (int i = 0; i < shape.points.length - 1; i++) {
+        final corners = thickWallRect(shape.points[i], shape.points[i + 1], wallThickness);
+        if (corners.isEmpty) continue;
+        final sc = corners.map((c) => worldToScreen(c)).toList();
+        final path = Path()
+          ..moveTo(sc[0].dx, sc[0].dy)
+          ..lineTo(sc[1].dx, sc[1].dy)
+          ..lineTo(sc[2].dx, sc[2].dy)
+          ..lineTo(sc[3].dx, sc[3].dy)
+          ..close();
+        canvas.drawPath(path, wallFillPaint);
+        if (isActive) {
+          _drawWallLengthLabel(canvas, shape.points[i], shape.points[i + 1],
+              centroid: centroid,
+              overrideMm: shape.wallRealMm[i],
+              isSelected: i == selectedWallIndex);
+        }
+      }
+    } 
 
     // 5. Rubber band line while drawing
     if (isActive &&
@@ -860,13 +885,12 @@ class SketchPainter extends CustomPainter {
   @override
   bool shouldRepaint(SketchPainter oldDelegate) => true;
 
-  void _drawRoomObjects(Canvas canvas) {
+  void _drawRoomObjects(Canvas canvas, SketchShape shape) {
     const double doorWidthScreen = 20.0;
-    final shape = shapes[activeIndex];
     final pts = shape.points;
     final isClosed = shape.isClosed;
 
-    for (final obj in roomObjects) {
+    for (final obj in shape.roomObjects) {
       if (obj.wallIndex >= (isClosed ? pts.length : pts.length - 1)) continue;
 
       // Find centre point in screen coords
@@ -885,8 +909,7 @@ class SketchPainter extends CustomPainter {
       );
       final perp = Offset(-dir.dy, dir.dx); // perpendicular, points inward
 
-      final bool isSelected = draggingObjectId == obj.id;
-
+      const bool isSelected = false;
       if (obj.isDoor) {
         _drawDoor(canvas, centreScreen, dir, perp, doorWidthScreen, isSelected);
       } else {
