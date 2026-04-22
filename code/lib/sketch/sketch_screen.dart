@@ -88,6 +88,11 @@ class _SketchScreenState extends State<SketchScreen>
   Offset? _moveStartScreenPos;    
   bool _objectMoveOccurred = false;
 
+  // ── Room move mode ───────────────────────────────────────────
+  bool _isMoveMode = false;
+  int _movingShapeIndex = -1;
+  Offset? _moveStartWorld;
+
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => activeShape.points;
   @override bool get sketchIsClosed => activeShape.isClosed;
@@ -602,6 +607,25 @@ class _SketchScreenState extends State<SketchScreen>
     _prevWallAngle = null;
     _nextWallAngle = null;
 
+    // ── MOVE MODE ──────────────────────────────────────────────
+    if (_isMoveMode) {
+      for (int s = 0; s < shapes.length; s++) {
+        if (!shapes[s].isClosed) continue;
+        if (_pointInsidePolygon(event.localPosition, shapes[s].points)) {
+          _saveUndo();
+          setState(() {
+            _movingShapeIndex = s;
+            activeIndex = s;
+            _moveStartWorld = screenToWorld(event.localPosition);
+            _activePointIndex = -1;
+          });
+          return;
+        }
+      }
+      return; // move mode but not on any shape -> do nothing
+    }
+    // ── end move mode ──────────────────────────────────────────
+
     if (activeShape.isClosed) {
       final idx = _findNearPoint(event.localPosition,
           radius: pointSelectRadiusScreen);
@@ -642,6 +666,20 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── MOVE MODE ──────────────────────────────────────────────
+    if (_movingShapeIndex >= 0 && _moveStartWorld != null) {
+      _dragOccurred = true;
+      final currentWorld = screenToWorld(event.localPosition);
+      final delta = currentWorld - _moveStartWorld!;
+      setState(() {
+        final shape = shapes[_movingShapeIndex];
+        shape.points = shape.points.map((p) => p + delta).toList();
+        _moveStartWorld = currentWorld;
+      });
+      return;
+    }
+    // ── end move mode ──────────────────────────────────────────
+
     if (activeShape.isClosed) {
       if (_isDraggingActivePoint && _activePointIndex >= 0) {
         _dragOccurred = true;
@@ -731,6 +769,20 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── MOVE MODE ──────────────────────────────────────────────
+    if (_movingShapeIndex >= 0) {
+      setState(() {
+        _movingShapeIndex = -1;
+        _moveStartWorld = null;
+      });
+      _isDraggingLastPoint = false;
+      _isDraggingActivePoint = false;
+      _panStartPosition = null;
+      _panConfirmed = false;
+      return;
+    }
+    // ── end move mode ──────────────────────────────────────────
+
     if (_isDraggingLastPoint &&
         _snapTargetIndex == 0 &&
         activeShape.points.length >= 3) {
@@ -796,7 +848,7 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
-    if (_isDraggingLastPoint || _isDraggingActivePoint) return;
+    if (_isDraggingLastPoint || _isDraggingActivePoint || _movingShapeIndex >= 0) return;
     if (d.pointerCount >= 2) {
       _isMultiTouch = true;
       _tapCancelled = true;
@@ -827,6 +879,7 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _onTapDown(TapDownDetails details) {
     if (_isMultiTouch) return;
+    if (_isMoveMode) return; // taps handled by pointer down/up in move mode
     if (_dragOccurred) { _dragOccurred = false; return; }
 
     // Check if tap is inside a different closed shape -> switch active
@@ -1542,6 +1595,25 @@ class _SketchScreenState extends State<SketchScreen>
                         tooltip: 'Add Room',
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.open_with,
+                          size: 18,
+                          color: _isMoveMode
+                              ? const Color(0xFF00FF99)
+                              : const Color(0xFF00AAFF),
+                        ),
+                        onPressed: () => setState(() {
+                          _isMoveMode = !_isMoveMode;
+                          _movingShapeIndex = -1;
+                          _moveStartWorld = null;
+                          _activePointIndex = -1;
+                        }),
+                        tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
                     ],
                   ),
