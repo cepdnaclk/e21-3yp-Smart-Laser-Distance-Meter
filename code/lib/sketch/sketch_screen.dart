@@ -448,23 +448,37 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _applyRealMeasurement(int wallIndex, double realMm) {
-    final double pixelLen = _wallLengthWorld(wallIndex);
-    if (pixelLen < 1e-6) return;
-    final double ratio = (realMm / mmPerUnit) / pixelLen;
-    if (ratio <= 0) return;
+    if (wallIndex >= _wallAngles.length) return;
+    if (_wallLengthWorld(wallIndex) < 1e-6) return;
+    
     _saveUndo();
-    final Offset anchor = activeShape.points[wallIndex];
     setState(() {
-      activeShape.points = activeShape.points.map((pt) {
-        final dx = pt.dx - anchor.dx, dy = pt.dy - anchor.dy;
-        return Offset(anchor.dx + dx * ratio, anchor.dy + dy * ratio);
-      }).toList();
       activeShape.wallRealMm[wallIndex] = realMm;
+      _rebuildPointsFromChain();
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
   }
 
+  void _rebuildPointsFromChain() {
+    if (_wallAngles.isEmpty || activeShape.points.isEmpty) return;
+    
+    final pts = [activeShape.points[0]];
+    for (int i = 0; i < _wallAngles.length; i++) {
+      final len = activeShape.wallRealMm.containsKey(i)
+          ? activeShape.wallRealMm[i]! / mmPerUnit
+          : _wallDrawnLengths[i];
+          
+      pts.add(Offset(
+        pts.last.dx + len * math.cos(_wallAngles[i]),
+        pts.last.dy + len * math.sin(_wallAngles[i]),
+      ));
+    }
+    
+    activeShape.points
+      ..clear()
+      ..addAll(pts);
+  }
   // ── Geometry calculations ────────────────────────────────────────────────
   double _totalPerimeter() {
     if (activeShape.points.length < 2) return 0;
@@ -646,6 +660,7 @@ class _SketchScreenState extends State<SketchScreen>
       _saveUndo();
       setState(() {
         activeShape.isClosed = true;
+        _syncWallDefinitions();
         _cursorWorld = null;
         _currentAngleDeg = null;
         _nearestSnapAngleDeg = null;
@@ -658,6 +673,7 @@ class _SketchScreenState extends State<SketchScreen>
       });
     } else {
       if (_isDraggingActivePoint && _dragOccurred) _saveUndo();
+      _syncWallDefinitions();
       setState(() {
         _snapTargetIndex = null;
         _prevWallAngle = null;
@@ -806,6 +822,7 @@ class _SketchScreenState extends State<SketchScreen>
     _saveUndo();
     setState(() {
       activeShape.points.add(pos);
+      _syncWallDefinitions();
       _cursorWorld = null;
       _currentAngleDeg = null;
       _nearestSnapAngleDeg = null;
@@ -814,7 +831,19 @@ class _SketchScreenState extends State<SketchScreen>
       _isAngleSnapped = false;
     });
   }
-
+  void _syncWallDefinitions() {
+    _wallAngles.clear();
+    _wallDrawnLengths.clear();
+    final pts = activeShape.points;
+    final n = pts.length;
+    if (n < 2) return;
+    for (int i = 0; i < n - 1; i++) {
+      final a = pts[i], b = pts[i + 1];
+      final dx = b.dx - a.dx, dy = b.dy - a.dy;
+      _wallAngles.add(math.atan2(dy, dx));
+      _wallDrawnLengths.add(math.sqrt(dx * dx + dy * dy));
+    }
+  }
   // ── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
