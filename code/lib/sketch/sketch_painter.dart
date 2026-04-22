@@ -35,6 +35,8 @@ class SketchPainter extends CustomPainter {
   final bool prevWallSnapped;
   final bool nextWallSnapped;
   final int selectedWallIndex;
+  final int snapCandidateShape;
+  final int snapCandidateWall;
 
   const SketchPainter({
     required this.panOffset,
@@ -63,6 +65,8 @@ class SketchPainter extends CustomPainter {
     required this.prevWallSnapped,
     required this.nextWallSnapped,
     required this.selectedWallIndex,
+    required this.snapCandidateShape,
+    required this.snapCandidateWall,
     
   });
 
@@ -100,7 +104,7 @@ class SketchPainter extends CustomPainter {
 
       if (shape.points.isNotEmpty) {
         _drawSnapGuides(canvas, size, shape, isActive);
-        _drawRoom(canvas, shape, isActive);
+        _drawRoom(canvas, shape, isActive, s);
         if (shape.isClosed) {
           _drawRoomObjects(canvas, shape);
         }
@@ -615,7 +619,7 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawRoom(Canvas canvas, SketchShape shape, bool isActive) {
+  void _drawRoom(Canvas canvas, SketchShape shape, bool isActive, int s) {
     final rubberPaint = Paint()
       ..color = isAngleSnapped ? const Color(0xFF00CC44) : const Color(0xFF00AAFF)
       ..strokeWidth = isAngleSnapped ? 2.0 : 1.5
@@ -725,6 +729,45 @@ class SketchPainter extends CustomPainter {
           ..color = const Color(0xFF1A1A1A)
           ..style = PaintingStyle.fill,
       );
+
+      // Draw shared (interior) walls thinner in a different color
+      for (final sw in shape.sharedWalls) {
+        final int i = sw.myWallIndex;
+        if (i >= n) continue;
+        final Offset a = shape.points[i];
+        final Offset b = shape.points[(i + 1) % n];
+        final corners = thickWallRect(a, b, wallThickness * 0.3); // 30% thickness
+        if (corners.isEmpty) continue;
+        final sc = corners.map((c) => worldToScreen(c)).toList();
+        final thinPath = Path()
+          ..moveTo(sc[0].dx, sc[0].dy)
+          ..lineTo(sc[1].dx, sc[1].dy)
+          ..lineTo(sc[2].dx, sc[2].dy)
+          ..lineTo(sc[3].dx, sc[3].dy)
+          ..close();
+        canvas.drawPath(
+            thinPath,
+            Paint()
+              ..color = const Color(0xFF555555)
+              ..style = PaintingStyle.fill);
+      }
+
+      // Highlight snap candidate wall during drag (green glow)
+      if (s == snapCandidateShape && snapCandidateWall >= 0) {
+        final int i = snapCandidateWall;
+        if (i < shape.points.length) {
+          final aS = worldToScreen(shape.points[i]);
+          final bS = worldToScreen(shape.points[(i + 1) % shape.points.length]);
+          canvas.drawLine(
+              aS,
+              bS,
+              Paint()
+                ..color = const Color(0xFF00CC44)
+                ..strokeWidth = 4.0
+                ..style = PaintingStyle.stroke
+                ..strokeCap = StrokeCap.round);
+        }
+      }
 
       // Draw dimension labels
       if (isActive) {

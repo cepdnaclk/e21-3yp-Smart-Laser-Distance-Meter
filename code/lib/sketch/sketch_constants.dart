@@ -60,3 +60,5 @@ Offset? lineIntersect(Offset p1, Offset d1, Offset p2, Offset d2) {
   final t = ((p2.dx - p1.dx) * d2.dy - (p2.dy - p1.dy) * d2.dx) / cross;
   return Offset(p1.dx + t * d1.dx, p1.dy + t * d1.dy);
 }
+
+const double wallSnapThresholdWorld = 18.0; // how close walls must be to snap/merge
