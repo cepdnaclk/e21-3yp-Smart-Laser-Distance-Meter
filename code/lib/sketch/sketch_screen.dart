@@ -1443,6 +1443,7 @@ class _SketchScreenState extends State<SketchScreen>
                                   shapes: shapes,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
+                                  roomObjects: _roomObjects,
                                 )
                             : null,
                         color: const Color(0xFFFF4488),
