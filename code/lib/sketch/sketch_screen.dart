@@ -42,6 +42,8 @@ class _SketchScreenState extends State<SketchScreen>
   int? _snapTargetIndex;
   final List<List<Offset>> _undoStack = [];
   final List<List<Offset>> _redoStack = [];
+  final List<List<RoomObject>> _undoObjectsStack = [];
+  final List<List<RoomObject>> _redoObjectsStack = [];
   final List<bool> _undoClosedStack = [];
   final List<bool> _redoClosedStack = [];
   TapDownDetails? _pendingTap;
@@ -165,7 +167,7 @@ class _SketchScreenState extends State<SketchScreen>
     _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+    _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
 
     _redoStack.clear();
     _redoClosedStack.clear();
@@ -183,7 +185,7 @@ class _SketchScreenState extends State<SketchScreen>
     _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     _redoWallAnglesStack.add(List<double>.of(_wallAngles));
     _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _redoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+    _redoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
 
     setState(() {
       activeShape.points = _undoStack.removeLast();
@@ -195,7 +197,7 @@ class _SketchScreenState extends State<SketchScreen>
       if (_undoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_undoWallAnglesStack.removeLast());
         _wallDrawnLengths..clear()..addAll(_undoWallLengthsStack.removeLast());
-        _wallRealMm..clear()..addAll(_undoWallRealMmStack.removeLast());
+        activeShape.wallRealMm..clear()..addAll(_undoWallRealMmStack.removeLast());
       }
 
       _activePointIndex = -1;
@@ -216,7 +218,7 @@ class _SketchScreenState extends State<SketchScreen>
     _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+    _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
 
     setState(() {
       activeShape.points = _redoStack.removeLast();
@@ -228,7 +230,7 @@ class _SketchScreenState extends State<SketchScreen>
       if (_redoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_redoWallAnglesStack.removeLast());
         _wallDrawnLengths..clear()..addAll(_redoWallLengthsStack.removeLast());
-        _wallRealMm..clear()..addAll(_redoWallRealMmStack.removeLast());
+        activeShape.wallRealMm..clear()..addAll(_redoWallRealMmStack.removeLast());
       }
 
       _activePointIndex = -1;
@@ -249,7 +251,7 @@ class _SketchScreenState extends State<SketchScreen>
       _roomObjects.clear();
       _wallAngles.clear();
       _wallDrawnLengths.clear();
-      _wallRealMm.clear();
+      activeShape.wallRealMm.clear();
       
       _cursorWorld = null;
       _isDraggingLastPoint = false;
@@ -816,6 +818,70 @@ class _SketchScreenState extends State<SketchScreen>
   // ── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+
+    // Called when user drags an object from the panel and releases it
+    void _onObjectDropped(Offset screenPos) {
+      if (_draggingObjectType == null || !activeShape.isClosed) return;
+      
+      // Check if they dropped it near a wall
+      final hit = findNearestWall(
+        screenPos: screenPos,
+        points: activeShape.points,     
+        isClosed: activeShape.isClosed, 
+        worldToScreen: worldToScreen,
+        screenToWorld: screenToWorld,
+      );
+      
+      if (hit == null) {
+        setState(() {
+          _draggingObjectType = null;
+          _dragObjectScreenPos = null;
+          _dragWallHit = null;
+        });
+        return;
+      }
+      
+      _saveUndo();
+      setState(() {
+        _objectCounter++;
+        _roomObjects.add(RoomObject(
+          id: 'obj_$_objectCounter',
+          type: _draggingObjectType!,
+          wallIndex: hit.wallIndex,
+          positionAlong: hit.positionAlong,
+          widthMm: _draggingObjectType == RoomObjectType.door ? 900 : 1200,
+          heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
+          elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
+        ));
+        _draggingObjectType = null;
+        _dragObjectScreenPos = null;
+        _dragWallHit = null;
+      });
+    }
+
+    // Called when user taps a placed object to edit/delete it
+    void _onObjectTapped(String id) {
+      final obj = _roomObjects.firstWhere((o) => o.id == id);
+      showDialog(
+        context: context,
+        builder: (ctx) => ObjectMeasurementDialog(
+          roomObject: obj,
+          onSave: (updatedObj) {
+            setState(() {
+              final idx = _roomObjects.indexWhere((o) => o.id == id);
+              if (idx >= 0) _roomObjects[idx] = updatedObj;
+            });
+          },
+          onDelete: () {
+            _saveUndo();
+            setState(() {
+              _roomObjects.removeWhere((o) => o.id == id);
+              _selectedObjectId = null;
+            });
+          },
+        ),
+      );
+    }
     final topPadding = MediaQuery.of(context).padding.top;
 
     Offset? angleRefWorld;
@@ -901,7 +967,7 @@ class _SketchScreenState extends State<SketchScreen>
           ),
 
           // ── Object panel (right side) — only shown when room is closed ───────────
-          if (_isClosed)
+          if (activeShape.isClosed)
             Positioned(
               right: 8,
               top: 80,
@@ -927,7 +993,7 @@ class _SketchScreenState extends State<SketchScreen>
             ),
 
           // ── 3D View button ────────────────────────────────────────────────────────
-          if (_isClosed && _points.length >= 3)
+          if (activeShape.isClosed && activeShape.points.length >= 3)
             Positioned(
               right: 8,
               bottom: 62,
@@ -947,9 +1013,9 @@ class _SketchScreenState extends State<SketchScreen>
                     context,
                     MaterialPageRoute(
                       builder: (_) => Room3DScreen(
-                        points: _points,
+                        points: activeShape.points,
                         roomObjects: _roomObjects,
-                        wallRealMm: _wallRealMm,
+                        wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
                       ),
                     ),
@@ -957,6 +1023,8 @@ class _SketchScreenState extends State<SketchScreen>
                 },
               ),
             ),
+
+          
           // ── Top toolbar ──────────────────────────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
