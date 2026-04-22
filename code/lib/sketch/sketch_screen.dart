@@ -852,6 +852,63 @@ class _SketchScreenState extends State<SketchScreen>
             ),
           ),
 
+          // ── Object panel (right side) — only shown when room is closed ───────────
+          if (_isClosed)
+            Positioned(
+              right: 8,
+              top: 80,
+              child: Column(
+                children: [
+                  _ObjectPanelButton(
+                    icon: Icons.door_front_door,
+                    label: 'Door',
+                    onDragStarted: () => setState(() =>
+                        _draggingObjectType = RoomObjectType.door),
+                    onDragEnd: (details) => _onObjectDropped(details.offset),
+                  ),
+                  const SizedBox(height: 8),
+                  _ObjectPanelButton(
+                    icon: Icons.window,
+                    label: 'Window',
+                    onDragStarted: () => setState(() =>
+                        _draggingObjectType = RoomObjectType.window),
+                    onDragEnd: (details) => _onObjectDropped(details.offset),
+                  ),
+                ],
+              ),
+            ),
+
+          // ── 3D View button ────────────────────────────────────────────────────────
+          if (_isClosed && _points.length >= 3)
+            Positioned(
+              right: 8,
+              bottom: 62,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.view_in_ar, size: 16),
+                label: const Text('3D View',
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7B2FBE),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => Room3DScreen(
+                        points: _points,
+                        roomObjects: _roomObjects,
+                        wallRealMm: _wallRealMm,
+                        bleManager: widget.bleManager,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
           // ── Top toolbar ──────────────────────────────────────────────
           Positioned(
             top: 0, left: 0, right: 0,
@@ -1262,6 +1319,65 @@ class _SketchScreenState extends State<SketchScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ObjectPanelButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onDragStarted;
+  final void Function(DraggableDetails) onDragEnd;
+
+  const _ObjectPanelButton({
+    required this.icon,
+    required this.label,
+    required this.onDragStarted,
+    required this.onDragEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Draggable<String>(
+      data: label,
+      onDragStarted: onDragStarted,
+      onDragEnd: onDragEnd,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF00AAFF),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: const [
+              BoxShadow(color: Colors.black38, blurRadius: 8)
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: 28),
+        ),
+      ),
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E2A3A),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF334466)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: const Color(0xFF00AAFF), size: 20),
+            const SizedBox(height: 2),
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFF778899),
+                    fontSize: 9,
+                    fontFamily: 'monospace')),
+          ],
+        ),
       ),
     );
   }
