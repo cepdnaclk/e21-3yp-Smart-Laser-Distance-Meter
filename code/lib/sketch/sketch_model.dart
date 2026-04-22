@@ -18,7 +18,7 @@ class SketchShape {
     List<RoomObject>? roomObjects,
     
   })  : points = points ?? [],
-        wallRealMm = wallRealMm ?? {};
+        wallRealMm = wallRealMm ?? {},
         roomObjects = roomObjects ?? [];
 
   // Creates a fresh empty room
