@@ -92,6 +92,8 @@ class _SketchScreenState extends State<SketchScreen>
   bool _isMoveMode = false;
   int _movingShapeIndex = -1;
   Offset? _moveStartWorld;
+  int _snapCandidateShape = -1; // shape index whose wall is highlighted
+  int _snapCandidateWall = -1; // wall index on that shape
 
   // ── Mixin contract — expose private state via public getters ─────────────
   @override List<Offset> get sketchPoints => activeShape.points;
@@ -516,6 +518,34 @@ class _SketchScreenState extends State<SketchScreen>
     return (p - proj).distance;
   }
 
+  /// For each wall of [movingShape], check all walls of all other closed shapes.
+  /// Returns the first pair whose world midpoints are within [wallSnapThresholdWorld].
+  /// Returns (-1, -1, -1, -1) if none found.
+  (int, int, int, int) _findWallSnapCandidate(SketchShape movingShape) {
+    final int n = movingShape.points.length;
+    for (int mi = 0; mi < n; mi++) {
+      final Offset mA = movingShape.points[mi];
+      final Offset mB = movingShape.points[(mi + 1) % n];
+      final Offset mMid = Offset((mA.dx + mB.dx) / 2, (mA.dy + mB.dy) / 2);
+
+      for (int s = 0; s < shapes.length; s++) {
+        if (s == _movingShapeIndex) continue;
+        if (!shapes[s].isClosed) continue;
+        final other = shapes[s];
+        final int on = other.points.length;
+        for (int oi = 0; oi < on; oi++) {
+          final Offset oA = other.points[oi];
+          final Offset oB = other.points[(oi + 1) % on];
+          final Offset oMid = Offset((oA.dx + oB.dx) / 2, (oA.dy + oB.dy) / 2);
+          if ((mMid - oMid).distance < wallSnapThresholdWorld) {
+            return (mi, s, oi, 0); // myWall, otherShape, otherWall, unused
+          }
+        }
+      }
+    }
+    return (-1, -1, -1, -1);
+  }
+
   void _syncWallDefinitions() {
     _wallAngles.clear();
     _wallDrawnLengths.clear();
@@ -676,6 +706,16 @@ class _SketchScreenState extends State<SketchScreen>
         shape.points = shape.points.map((p) => p + delta).toList();
         _moveStartWorld = currentWorld;
       });
+
+      // Check for wall snap candidate during drag
+      final movingShape = shapes[_movingShapeIndex];
+      if (movingShape.isClosed) {
+        final (mw, os, ow, _) = _findWallSnapCandidate(movingShape);
+        setState(() {
+          _snapCandidateShape = os;
+          _snapCandidateWall = ow;
+        });
+      }
       return;
     }
     // ── end move mode ──────────────────────────────────────────
@@ -771,6 +811,51 @@ class _SketchScreenState extends State<SketchScreen>
   void _onPointerUp(PointerUpEvent event) {
     // ── MOVE MODE ──────────────────────────────────────────────
     if (_movingShapeIndex >= 0) {
+      // Commit wall merge if we have a candidate
+      if (_snapCandidateShape >= 0 &&
+          _snapCandidateWall >= 0 &&
+          _movingShapeIndex >= 0) {
+        final movingShape = shapes[_movingShapeIndex];
+        if (movingShape.isClosed) {
+          final (mw, os, ow, _) = _findWallSnapCandidate(movingShape);
+          if (mw >= 0) {
+            // Snap the moving shape so its wall exactly aligns to the other wall
+            final other = shapes[os];
+            final Offset oA = other.points[ow];
+            final Offset oB = other.points[(ow + 1) % other.points.length];
+            final Offset mA = movingShape.points[mw];
+            final Offset mB =
+                movingShape.points[(mw + 1) % movingShape.points.length];
+            // Translate moving shape so its wall midpoint matches the other wall midpoint
+            final Offset oMid = Offset((oA.dx + oB.dx) / 2, (oA.dy + oB.dy) / 2);
+            final Offset mMid = Offset((mA.dx + mB.dx) / 2, (mA.dy + mB.dy) / 2);
+            final Offset delta = oMid - mMid;
+            movingShape.points = movingShape.points.map((p) => p + delta).toList();
+
+            // Record shared wall on both shapes
+            movingShape.sharedWalls.removeWhere((sw) => sw.myWallIndex == mw);
+            other.sharedWalls.removeWhere((sw) =>
+                sw.otherShapeIndex == _movingShapeIndex &&
+                sw.otherWallIndex == mw);
+
+            movingShape.sharedWalls.add(SharedWall(
+              otherShapeIndex: os,
+              myWallIndex: mw,
+              otherWallIndex: ow,
+            ));
+            other.sharedWalls.add(SharedWall(
+              otherShapeIndex: _movingShapeIndex,
+              myWallIndex: ow,
+              otherWallIndex: mw,
+            ));
+          }
+        }
+      }
+      setState(() {
+        _snapCandidateShape = -1;
+        _snapCandidateWall = -1;
+      });
+
       setState(() {
         _movingShapeIndex = -1;
         _moveStartWorld = null;
@@ -1125,6 +1210,8 @@ class _SketchScreenState extends State<SketchScreen>
                   prevWallSnapped: _prevWallSnapped,
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
+                  snapCandidateShape: _snapCandidateShape,
+                  snapCandidateWall: _snapCandidateWall,
                   shapes: shapes,
                   activeIndex: activeIndex,
                 ),
