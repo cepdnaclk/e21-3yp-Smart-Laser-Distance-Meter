@@ -869,6 +869,8 @@ class _SketchScreenState extends State<SketchScreen>
                   majorGrid: majorGrid,
                   //points: activeShape.points,
                   //isClosed: activeShape.isClosed,
+                  roomObjects: _roomObjects,
+                  draggingObjectId: _selectedObjectId,
                   cursorWorld: _cursorWorld,
                   snapRadiusWorld: snapRadiusWorld,
                   isDraggingLastPoint: _isDraggingLastPoint,
