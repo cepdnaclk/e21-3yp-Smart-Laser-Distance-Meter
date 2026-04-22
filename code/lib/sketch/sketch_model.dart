@@ -8,14 +8,18 @@ class SketchShape {
   bool isClosed;
   String label;
   Map<int, double> wallRealMm;
+  List<RoomObject> roomObjects;
 
   SketchShape({
     List<Offset>? points,
     this.isClosed = false,
     this.label = '',
     Map<int, double>? wallRealMm,
+    List<RoomObject>? roomObjects,
+    
   })  : points = points ?? [],
         wallRealMm = wallRealMm ?? {};
+        roomObjects = roomObjects ?? [];
 
   // Creates a fresh empty room
   factory SketchShape.empty() => SketchShape();
