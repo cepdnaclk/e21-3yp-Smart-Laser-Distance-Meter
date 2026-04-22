@@ -162,17 +162,42 @@ class _SketchScreenState extends State<SketchScreen>
   void _saveUndo() {
     _undoStack.add(List<Offset>.of(activeShape.points));
     _undoClosedStack.add(activeShape.isClosed);
+    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+
     _redoStack.clear();
     _redoClosedStack.clear();
+    _redoObjectsStack.clear();
+    _redoWallAnglesStack.clear();
+    _redoWallLengthsStack.clear();
+    _redoWallRealMmStack.clear();
   }
 
   void _undo() {
     if (_undoStack.isEmpty) return;
+
     _redoStack.add(List<Offset>.of(activeShape.points));
     _redoClosedStack.add(activeShape.isClosed);
+    _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _redoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _redoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+
     setState(() {
       activeShape.points = _undoStack.removeLast();
       activeShape.isClosed = _undoClosedStack.removeLast();
+
+      if (_undoObjectsStack.isNotEmpty) {
+        _roomObjects..clear()..addAll(_undoObjectsStack.removeLast());
+      }
+      if (_undoWallAnglesStack.isNotEmpty) {
+        _wallAngles..clear()..addAll(_undoWallAnglesStack.removeLast());
+        _wallDrawnLengths..clear()..addAll(_undoWallLengthsStack.removeLast());
+        _wallRealMm..clear()..addAll(_undoWallRealMmStack.removeLast());
+      }
+
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -185,11 +210,27 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _redo() {
     if (_redoStack.isEmpty) return;
+
     _undoStack.add(List<Offset>.of(activeShape.points));
     _undoClosedStack.add(activeShape.isClosed);
+    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoWallAnglesStack.add(List<double>.of(_wallAngles));
+    _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoWallRealMmStack.add(Map<int, double>.of(_wallRealMm));
+
     setState(() {
       activeShape.points = _redoStack.removeLast();
       activeShape.isClosed = _redoClosedStack.removeLast();
+
+      if (_redoObjectsStack.isNotEmpty) {
+        _roomObjects..clear()..addAll(_redoObjectsStack.removeLast());
+      }
+      if (_redoWallAnglesStack.isNotEmpty) {
+        _wallAngles..clear()..addAll(_redoWallAnglesStack.removeLast());
+        _wallDrawnLengths..clear()..addAll(_redoWallLengthsStack.removeLast());
+        _wallRealMm..clear()..addAll(_redoWallRealMmStack.removeLast());
+      }
+
       _activePointIndex = -1;
       _cursorWorld = null;
       _currentAngleDeg = null;
@@ -205,6 +246,11 @@ class _SketchScreenState extends State<SketchScreen>
     setState(() {
       activeShape.points.clear();
       activeShape.isClosed = false;
+      _roomObjects.clear();
+      _wallAngles.clear();
+      _wallDrawnLengths.clear();
+      _wallRealMm.clear();
+      
       _cursorWorld = null;
       _isDraggingLastPoint = false;
       _dragOccurred = false;
