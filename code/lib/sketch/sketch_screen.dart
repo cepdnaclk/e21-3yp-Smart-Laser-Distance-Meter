@@ -40,12 +40,18 @@ class _SketchScreenState extends State<SketchScreen>
   int _activePointIndex = -1;
   bool _isDraggingActivePoint = false;
   int? _snapTargetIndex;
-  final List<List<Offset>> _undoStack = [];
-  final List<List<Offset>> _redoStack = [];
-  final List<List<RoomObject>> _undoObjectsStack = [];
-  final List<List<RoomObject>> _redoObjectsStack = [];
-  final List<bool> _undoClosedStack = [];
-  final List<bool> _redoClosedStack = [];
+  // full-canvas undo snapshots (all shapes + activeIndex)
+  final List<List<List<Offset>>> _undoAllPointsStack = [];
+  final List<List<bool>> _undoAllClosedStack = [];
+  final List<List<List<RoomObject>>> _undoAllObjectsStack = [];
+  final List<List<Map<int, double>>> _undoAllRealMmStack = [];
+  final List<int> _undoActiveIndexStack = [];
+
+  final List<List<List<Offset>>> _redoAllPointsStack = [];
+  final List<List<bool>> _redoAllClosedStack = [];
+  final List<List<List<RoomObject>>> _redoAllObjectsStack = [];
+  final List<List<Map<int, double>>> _redoAllRealMmStack = [];
+  final List<int> _redoActiveIndexStack = [];
   TapDownDetails? _pendingTap;
   bool _tapCancelled = false;
   double? _snappedAngle;
@@ -74,10 +80,9 @@ class _SketchScreenState extends State<SketchScreen>
   final List<double> _wallDrawnLengths = [];
   final List<List<double>> _undoWallAnglesStack = [];
   final List<List<double>> _undoWallLengthsStack = [];
-  final List<Map<int, double>> _undoWallRealMmStack = [];
   final List<List<double>> _redoWallAnglesStack = [];
   final List<List<double>> _redoWallLengthsStack = [];
-  final List<Map<int, double>> _redoWallRealMmStack = [];             
+            
 
   String? _movingObjectId;        
   Offset? _moveStartScreenPos;    
@@ -166,6 +171,7 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _addNewRoom() {
+    _saveUndo();
     setState(() {
       shapes.add(SketchShape.empty());
       activeIndex = shapes.length - 1;
@@ -173,42 +179,61 @@ class _SketchScreenState extends State<SketchScreen>
   }
   // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
-    _undoStack.add(List<Offset>.of(activeShape.points));
-    _undoClosedStack.add(activeShape.isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
+    _undoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
+    _undoAllClosedStack.add(shapes.map((s) => s.isClosed).toList());
+    _undoAllObjectsStack
+        .add(shapes.map((s) => List<RoomObject>.of(s.roomObjects)).toList());
+    _undoAllRealMmStack
+        .add(shapes.map((s) => Map<int, double>.of(s.wallRealMm)).toList());
+    _undoActiveIndexStack.add(activeIndex);
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
 
-    _redoStack.clear();
-    _redoClosedStack.clear();
-    _redoObjectsStack.clear();
+    _redoAllPointsStack.clear();
+    _redoAllClosedStack.clear();
+    _redoAllObjectsStack.clear();
+    _redoAllRealMmStack.clear();
+    _redoActiveIndexStack.clear();
     _redoWallAnglesStack.clear();
     _redoWallLengthsStack.clear();
-    _redoWallRealMmStack.clear();
   }
 
   void _undo() {
-    if (_undoStack.isEmpty) return;
+    if (_undoAllPointsStack.isEmpty) return;
 
-    _redoStack.add(List<Offset>.of(activeShape.points));
-    _redoClosedStack.add(activeShape.isClosed);
-    _redoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
+    // save current state to redo
+    _redoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
+    _redoAllClosedStack.add(shapes.map((s) => s.isClosed).toList());
+    _redoAllObjectsStack
+        .add(shapes.map((s) => List<RoomObject>.of(s.roomObjects)).toList());
+    _redoAllRealMmStack
+        .add(shapes.map((s) => Map<int, double>.of(s.wallRealMm)).toList());
+    _redoActiveIndexStack.add(activeIndex);
     _redoWallAnglesStack.add(List<double>.of(_wallAngles));
     _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _redoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
+
+    // restore snapshot
+    final pts = _undoAllPointsStack.removeLast();
+    final closed = _undoAllClosedStack.removeLast();
+    final objs = _undoAllObjectsStack.removeLast();
+    final mm = _undoAllRealMmStack.removeLast();
+    final idx = _undoActiveIndexStack.removeLast();
 
     setState(() {
-      activeShape.points = _undoStack.removeLast();
-      activeShape.isClosed = _undoClosedStack.removeLast();
+      // rebuild the shapes list from the snapshot
+      shapes = List.generate(pts.length, (i) {
+        final s = SketchShape.empty();
+        s.points = pts[i];
+        s.isClosed = closed[i];
+        s.roomObjects..clear()..addAll(objs[i]);
+        s.wallRealMm..clear()..addAll(mm[i]);
+        return s;
+      });
+      activeIndex = idx;
 
-      if (_undoObjectsStack.isNotEmpty) {
-        activeShape.roomObjects..clear()..addAll(_undoObjectsStack.removeLast());
-      }
       if (_undoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_undoWallAnglesStack.removeLast());
         _wallDrawnLengths..clear()..addAll(_undoWallLengthsStack.removeLast());
-        activeShape.wallRealMm..clear()..addAll(_undoWallRealMmStack.removeLast());
       }
 
       _activePointIndex = -1;
@@ -222,26 +247,38 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _redo() {
-    if (_redoStack.isEmpty) return;
+    if (_redoAllPointsStack.isEmpty) return;
 
-    _undoStack.add(List<Offset>.of(activeShape.points));
-    _undoClosedStack.add(activeShape.isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
+    _undoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
+    _undoAllClosedStack.add(shapes.map((s) => s.isClosed).toList());
+    _undoAllObjectsStack
+        .add(shapes.map((s) => List<RoomObject>.of(s.roomObjects)).toList());
+    _undoAllRealMmStack
+        .add(shapes.map((s) => Map<int, double>.of(s.wallRealMm)).toList());
+    _undoActiveIndexStack.add(activeIndex);
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
-    _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
+
+    final pts = _redoAllPointsStack.removeLast();
+    final closed = _redoAllClosedStack.removeLast();
+    final objs = _redoAllObjectsStack.removeLast();
+    final mm = _redoAllRealMmStack.removeLast();
+    final idx = _redoActiveIndexStack.removeLast();
 
     setState(() {
-      activeShape.points = _redoStack.removeLast();
-      activeShape.isClosed = _redoClosedStack.removeLast();
+      shapes = List.generate(pts.length, (i) {
+        final s = SketchShape.empty();
+        s.points = pts[i];
+        s.isClosed = closed[i];
+        s.roomObjects..clear()..addAll(objs[i]);
+        s.wallRealMm..clear()..addAll(mm[i]);
+        return s;
+      });
+      activeIndex = idx;
 
-      if (_redoObjectsStack.isNotEmpty) {
-        activeShape.roomObjects..clear()..addAll(_redoObjectsStack.removeLast());
-      }
       if (_redoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_redoWallAnglesStack.removeLast());
         _wallDrawnLengths..clear()..addAll(_redoWallLengthsStack.removeLast());
-        activeShape.wallRealMm..clear()..addAll(_redoWallRealMmStack.removeLast());
       }
 
       _activePointIndex = -1;
@@ -1450,7 +1487,7 @@ class _SketchScreenState extends State<SketchScreen>
                       ),
                       IconButton(
                         icon: const Icon(Icons.undo, size: 18),
-                        onPressed: _undoStack.isEmpty ? null : _undo,
+                        onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
                         color: const Color(0xFFFFAA00),
                         disabledColor: const Color(0xFF555555),
                         tooltip: 'Undo',
@@ -1460,7 +1497,7 @@ class _SketchScreenState extends State<SketchScreen>
                       ),
                       IconButton(
                         icon: const Icon(Icons.redo, size: 18),
-                        onPressed: _redoStack.isEmpty ? null : _redo,
+                        onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
                         color: const Color(0xFFFFAA00),
                         disabledColor: const Color(0xFF555555),
                         tooltip: 'Redo',
