@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
 import 'sketch_widgets.dart';
-import 'sketch_model.dart';
 import 'room_object.dart';
 
 mixin SketchDialogsMixin<T extends StatefulWidget> on State<T> {
