@@ -64,7 +64,6 @@ class _SketchScreenState extends State<SketchScreen>
   bool _waitingForBle = false;
   SketchShape get activeShape => shapes[activeIndex];
   // ── From Venuka — object placement ──────────────────────────
-  final List<RoomObject> _roomObjects = [];
   RoomObjectType? _draggingObjectType;  
   String? _selectedObjectId;            
   Offset? _dragObjectScreenPos;         
@@ -154,6 +153,18 @@ class _SketchScreenState extends State<SketchScreen>
     return -1;
   }
 
+  Offset? _findSnapPointAcrossShapes(Offset screenPos,
+      {double radius = pointSnapRadiusScreen}) {
+    for (int s = 0; s < shapes.length; s++) {
+      if (s == activeIndex) continue; // skip active shape, handled separately
+      if (!shapes[s].isClosed) continue;
+      for (final pt in shapes[s].points) {
+        if ((screenPos - worldToScreen(pt)).distance < radius) return pt;
+      }
+    }
+    return null;
+  }
+
   void _addNewRoom() {
     setState(() {
       shapes.add(SketchShape.empty());
@@ -164,7 +175,7 @@ class _SketchScreenState extends State<SketchScreen>
   void _saveUndo() {
     _undoStack.add(List<Offset>.of(activeShape.points));
     _undoClosedStack.add(activeShape.isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
     _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
@@ -182,7 +193,7 @@ class _SketchScreenState extends State<SketchScreen>
 
     _redoStack.add(List<Offset>.of(activeShape.points));
     _redoClosedStack.add(activeShape.isClosed);
-    _redoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _redoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
     _redoWallAnglesStack.add(List<double>.of(_wallAngles));
     _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
     _redoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
@@ -192,7 +203,7 @@ class _SketchScreenState extends State<SketchScreen>
       activeShape.isClosed = _undoClosedStack.removeLast();
 
       if (_undoObjectsStack.isNotEmpty) {
-        _roomObjects..clear()..addAll(_undoObjectsStack.removeLast());
+        activeShape.roomObjects..clear()..addAll(_undoObjectsStack.removeLast());
       }
       if (_undoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_undoWallAnglesStack.removeLast());
@@ -215,7 +226,7 @@ class _SketchScreenState extends State<SketchScreen>
 
     _undoStack.add(List<Offset>.of(activeShape.points));
     _undoClosedStack.add(activeShape.isClosed);
-    _undoObjectsStack.add(List<RoomObject>.of(_roomObjects));
+    _undoObjectsStack.add(List<RoomObject>.of(activeShape.roomObjects));
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
     _undoWallRealMmStack.add(Map<int, double>.of(activeShape.wallRealMm));
@@ -225,7 +236,7 @@ class _SketchScreenState extends State<SketchScreen>
       activeShape.isClosed = _redoClosedStack.removeLast();
 
       if (_redoObjectsStack.isNotEmpty) {
-        _roomObjects..clear()..addAll(_redoObjectsStack.removeLast());
+        activeShape.roomObjects..clear()..addAll(_redoObjectsStack.removeLast());
       }
       if (_redoWallAnglesStack.isNotEmpty) {
         _wallAngles..clear()..addAll(_redoWallAnglesStack.removeLast());
@@ -248,7 +259,7 @@ class _SketchScreenState extends State<SketchScreen>
     setState(() {
       activeShape.points.clear();
       activeShape.isClosed = false;
-      _roomObjects.clear();
+      activeShape.roomObjects.clear();
       _wallAngles.clear();
       _wallDrawnLengths.clear();
       activeShape.wallRealMm.clear();
@@ -436,6 +447,22 @@ class _SketchScreenState extends State<SketchScreen>
       }
     }
     return -1;
+  }
+
+  bool _pointInsidePolygon(Offset screenPos, List<Offset> worldPoints) {
+    final pts = worldPoints.map(worldToScreen).toList();
+    bool inside = false;
+    int j = pts.length - 1;
+    for (int i = 0; i < pts.length; i++) {
+      if (((pts[i].dy > screenPos.dy) != (pts[j].dy > screenPos.dy)) &&
+          (screenPos.dx < (pts[j].dx - pts[i].dx) *
+              (screenPos.dy - pts[i].dy) /
+              (pts[j].dy - pts[i].dy) + pts[i].dx)) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    return inside;
   }
 
   double _pointToSegmentDist(Offset p, Offset a, Offset b) {
@@ -661,7 +688,8 @@ class _SketchScreenState extends State<SketchScreen>
 
     if (activeShape.points.isNotEmpty && _activePointIndex < 0) {
       final raw = snapToGrid(screenToWorld(event.localPosition));
-      setState(() => _cursorWorld = _computeAngle(activeShape.points.last, raw));
+      final crossSnap = _findSnapPointAcrossShapes(event.localPosition);
+      setState(() => _cursorWorld = crossSnap ?? _computeAngle(activeShape.points.last, raw));
     }
   }
 
@@ -764,6 +792,21 @@ class _SketchScreenState extends State<SketchScreen>
     if (_isMultiTouch) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
 
+    // Check if tap is inside a different closed shape -> switch active
+    for (int s = 0; s < shapes.length; s++) {
+      if (s == activeIndex) continue;
+      if (!shapes[s].isClosed) continue;
+      if (_pointInsidePolygon(details.localPosition, shapes[s].points)) {
+        setState(() {
+          activeIndex = s;
+          _activePointIndex = -1;
+          _selectedWallIndex = -1;
+          _cursorWorld = null;
+        });
+        return;
+      }
+    }
+
     if (activeShape.isClosed) {
       final wallIdx = _findNearWall(details.localPosition);
       if (wallIdx >= 0) {
@@ -834,7 +877,11 @@ class _SketchScreenState extends State<SketchScreen>
   void _commitTap(TapDownDetails details) {
     if (activeShape.isClosed || _isMultiTouch) return;
     final raw = snapToGrid(screenToWorld(details.localPosition));
-    final pos = activeShape.points.isNotEmpty ? _computeAngle(activeShape.points.last, raw) : raw;
+    final crossSnap = _findSnapPointAcrossShapes(details.localPosition);
+    final pos = crossSnap ??
+      (activeShape.points.isNotEmpty
+        ? _computeAngle(activeShape.points.last, raw)
+        : raw);
     if (activeShape.points.isNotEmpty &&
         (pos - activeShape.points.last).distance < minPointDistance) return;
     _saveUndo();
@@ -879,7 +926,7 @@ class _SketchScreenState extends State<SketchScreen>
       _saveUndo();
       setState(() {
         _objectCounter++;
-        _roomObjects.add(RoomObject(
+        activeShape.roomObjects.add(RoomObject(
           id: 'obj_$_objectCounter',
           type: _draggingObjectType!,
           wallIndex: hit.wallIndex,
@@ -896,21 +943,21 @@ class _SketchScreenState extends State<SketchScreen>
 
     // Called when user taps a placed object to edit/delete it
     void _onObjectTapped(String id) {
-      final obj = _roomObjects.firstWhere((o) => o.id == id);
+      final obj = activeShape.roomObjects.firstWhere((o) => o.id == id);
       showDialog(
         context: context,
         builder: (ctx) => ObjectMeasurementDialog(
           roomObject: obj,
           onSave: (updatedObj) {
             setState(() {
-              final idx = _roomObjects.indexWhere((o) => o.id == id);
-              if (idx >= 0) _roomObjects[idx] = updatedObj;
+              final idx = activeShape.roomObjects.indexWhere((o) => o.id == id);
+              if (idx >= 0) activeShape.roomObjects[idx] = updatedObj;
             });
           },
           onDelete: () {
             _saveUndo();
             setState(() {
-              _roomObjects.removeWhere((o) => o.id == id);
+              activeShape.roomObjects.removeWhere((o) => o.id == id);
               _selectedObjectId = null;
             });
           },
@@ -1044,7 +1091,7 @@ class _SketchScreenState extends State<SketchScreen>
                     MaterialPageRoute(
                       builder: (_) => Room3DScreen(
                         points: activeShape.points,
-                        roomObjects: _roomObjects,
+                        roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
                       ),
@@ -1441,7 +1488,7 @@ class _SketchScreenState extends State<SketchScreen>
                                   shapes: shapes,
                                   totalPerimeter: _totalPerimeter(),
                                   totalArea: _totalArea(),
-                                  roomObjects: _roomObjects,
+                                  roomObjects: activeShape.roomObjects,
                                 )
                             : null,
                         color: const Color(0xFFFF4488),
