@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'sketch_constants.dart';
 import 'sketch_widgets.dart';
 import 'sketch_model.dart';
+import 'room_object.dart';
 
 mixin SketchDialogsMixin<T extends StatefulWidget> on State<T> {
 
@@ -392,6 +393,171 @@ mixin SketchDialogsMixin<T extends StatefulWidget> on State<T> {
           ),
         ],
       ),
+    );
+  }
+}
+// ── Object Measurement Dialog ──────────────────────────────────────────────
+class ObjectMeasurementDialog extends StatefulWidget {
+  final RoomObject roomObject;
+  final ValueChanged<RoomObject> onSave;
+  final VoidCallback onDelete;
+
+  const ObjectMeasurementDialog({
+    super.key,
+    required this.roomObject,
+    required this.onSave,
+    required this.onDelete,
+  });
+
+  @override
+  State<ObjectMeasurementDialog> createState() =>
+      _ObjectMeasurementDialogState();
+}
+
+class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
+  late TextEditingController _widthCtrl;
+  late TextEditingController _heightCtrl;
+  late TextEditingController _elevationCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _widthCtrl = TextEditingController(
+        text: widget.roomObject.widthMm.toStringAsFixed(0));
+    _heightCtrl = TextEditingController(
+        text: widget.roomObject.heightMm.toStringAsFixed(0));
+    _elevationCtrl = TextEditingController(
+        text: widget.roomObject.elevationMm.toStringAsFixed(0));
+  }
+
+  @override
+  void dispose() {
+    _widthCtrl.dispose();
+    _heightCtrl.dispose();
+    _elevationCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDoor = widget.roomObject.isDoor;
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E2A3A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      title: Row(
+        children: [
+          Icon(isDoor ? Icons.door_front_door : Icons.window,
+              color: const Color(0xFF00AAFF), size: 20),
+          const SizedBox(width: 8),
+          Text(isDoor ? 'Edit Door' : 'Edit Window',
+              style: const TextStyle(
+                  color: Color(0xFFCCDDEE),
+                  fontFamily: 'monospace',
+                  fontSize: 15)),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Width (mm)',
+              style: TextStyle(
+                  color: Color(0xFF778899),
+                  fontFamily: 'monospace',
+                  fontSize: 11)),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _widthCtrl,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: Color(0xFF00DDFF), fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+              filled: true,
+              fillColor: Color(0xFF0D1A27),
+              enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF334466))),
+              focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF00AAFF))),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text('Height (mm)',
+              style: TextStyle(
+                  color: Color(0xFF778899),
+                  fontFamily: 'monospace',
+                  fontSize: 11)),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _heightCtrl,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: Color(0xFF00DDFF), fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+              filled: true,
+              fillColor: Color(0xFF0D1A27),
+              enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF334466))),
+              focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF00AAFF))),
+            ),
+          ),
+          if (!isDoor) ...[
+            const SizedBox(height: 12),
+            const Text('Elevation from floor (mm)',
+                style: TextStyle(
+                    color: Color(0xFF778899),
+                    fontFamily: 'monospace',
+                    fontSize: 11)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _elevationCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Color(0xFF00DDFF), fontFamily: 'monospace'),
+              decoration: const InputDecoration(
+                filled: true,
+                fillColor: Color(0xFF0D1A27),
+                enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF334466))),
+                focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF00AAFF))),
+              ),
+            ),
+          ]
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            widget.onDelete();
+          },
+          child: const Text('DELETE',
+              style: TextStyle(color: Color(0xFFFF4444), fontFamily: 'monospace')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('CANCEL',
+              style: TextStyle(color: Color(0xFF556677), fontFamily: 'monospace')),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00AAFF),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () {
+            final w = double.tryParse(_widthCtrl.text) ?? widget.roomObject.widthMm;
+            final h = double.tryParse(_heightCtrl.text) ?? widget.roomObject.heightMm;
+            final e = isDoor
+                ? 0.0
+                : (double.tryParse(_elevationCtrl.text) ??
+                    widget.roomObject.elevationMm);
+
+            widget.onSave(widget.roomObject
+                .copyWith(widthMm: w, heightMm: h, elevationMm: e));
+            Navigator.pop(context);
+          },
+          child: const Text('SAVE', style: TextStyle(fontFamily: 'monospace')),
+        ),
+      ],
     );
   }
 }
