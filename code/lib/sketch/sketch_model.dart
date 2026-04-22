@@ -1,6 +1,7 @@
 // lib/sketch/sketch_model.dart
 
 import 'package:flutter/material.dart';
+import 'room_object.dart';
 
 class SketchShape {
   List<Offset> points;
