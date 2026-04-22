@@ -672,7 +672,11 @@ class _SketchScreenState extends State<SketchScreen>
         _nextWallAngle = null;
       });
     } else {
-      if (_isDraggingActivePoint && _dragOccurred) _saveUndo();
+      if (_isDraggingActivePoint && _dragOccurred) {
+        if (_activePointIndex > 0) activeShape.wallRealMm.remove(_activePointIndex - 1);
+        if (_activePointIndex < _wallAngles.length) activeShape.wallRealMm.remove(_activePointIndex);
+        _saveUndo();
+      }
       _syncWallDefinitions();
       setState(() {
         _snapTargetIndex = null;
@@ -962,8 +966,6 @@ class _SketchScreenState extends State<SketchScreen>
                   scale: _scale,
                   minorGrid: minorGrid,
                   majorGrid: majorGrid,
-                  //points: activeShape.points,
-                  //isClosed: activeShape.isClosed,
                   roomObjects: _roomObjects,
                   draggingObjectId: _selectedObjectId,
                   cursorWorld: _cursorWorld,
@@ -986,7 +988,6 @@ class _SketchScreenState extends State<SketchScreen>
                   prevWallSnapped: _prevWallSnapped,
                   nextWallSnapped: _nextWallSnapped,
                   selectedWallIndex: _selectedWallIndex,
-                  //wallRealMm: activeShape.wallRealMm,
                   shapes: shapes,
                   activeIndex: activeIndex,
                 ),
