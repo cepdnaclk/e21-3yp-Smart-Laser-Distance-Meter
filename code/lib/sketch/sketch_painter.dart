@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'sketch_constants.dart';
 import 'sketch_model.dart';
+import 'room_object.dart';
+import 'room_object_utils.dart';
 
 class SketchPainter extends CustomPainter {
   final Offset panOffset;
@@ -12,6 +14,8 @@ class SketchPainter extends CustomPainter {
   // New shape variables replacing the old single-room variables
   final List<SketchShape> shapes;
   final int activeIndex;
+  final List<RoomObject> roomObjects;
+  final String? draggingObjectId;
 
   final Offset? cursorWorld;
   final double snapRadiusWorld;
@@ -61,6 +65,8 @@ class SketchPainter extends CustomPainter {
     required this.prevWallSnapped,
     required this.nextWallSnapped,
     required this.selectedWallIndex,
+    required this.roomObjects,
+    required this.draggingObjectId,
   });
 
   Offset worldToScreen(Offset world) => world * scale + panOffset;
@@ -98,6 +104,9 @@ class SketchPainter extends CustomPainter {
       if (shape.points.isNotEmpty) {
         _drawSnapGuides(canvas, size, shape, isActive);
         _drawRoom(canvas, shape, isActive);
+        if (shapes[activeIndex].isClosed) {
+          _drawRoomObjects(canvas);
+        }
         _drawPoints(canvas, shape, isActive);
         _drawAngleIndicator(canvas, shape, isActive);
         _drawNearestSnapLine(canvas, size, shape, isActive);
@@ -850,4 +859,149 @@ class SketchPainter extends CustomPainter {
   @override
   @override
   bool shouldRepaint(SketchPainter oldDelegate) => true;
+
+  void _drawRoomObjects(Canvas canvas) {
+    const double doorWidthScreen = 20.0;
+    final shape = shapes[activeIndex];
+    final pts = shape.points;
+    final isClosed = shape.isClosed;
+
+    for (final obj in roomObjects) {
+      if (obj.wallIndex >= (isClosed ? pts.length : pts.length - 1)) continue;
+
+      // Find centre point in screen coords
+      final centre = objectCentreWorld(
+        obj: obj,
+        points: pts,
+        wallCount: isClosed ? pts.length : pts.length - 1,
+      );
+      final centreScreen = worldToScreen(centre);
+
+      // Wall direction vector (screen)
+      final dir = wallDirectionScreen(
+        wallIndex: obj.wallIndex,
+        points: pts,
+        worldToScreen: worldToScreen,
+      );
+      final perp = Offset(-dir.dy, dir.dx); // perpendicular, points inward
+
+      final bool isSelected = draggingObjectId == obj.id;
+
+      if (obj.isDoor) {
+        _drawDoor(canvas, centreScreen, dir, perp, doorWidthScreen, isSelected);
+      } else {
+        _drawWindow(canvas, centreScreen, dir, doorWidthScreen, isSelected);
+      }
+    }
+  }
+
+  void _drawDoor(Canvas canvas, Offset centre, Offset dir, Offset perp,
+      double halfW, bool isSelected) {
+    final Color color = isSelected
+        ? const Color(0xFFFF8800)
+        : const Color(0xFF1155CC);
+
+    // Gap in wall
+    final Paint wallGapPaint = Paint()
+      ..color = const Color(0xFFFFFFFF)
+      ..strokeWidth = 5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawLine(
+      Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW),
+      Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
+      wallGapPaint,
+    );
+
+    // Door leaf (rectangle)
+    final Paint doorPaint = Paint()
+      ..color = color.withOpacity(0.15)
+      ..style = PaintingStyle.fill;
+    final Paint doorBorder = Paint()
+      ..color = color
+      ..strokeWidth = isSelected ? 2.0 : 1.5
+      ..style = PaintingStyle.stroke;
+
+    final Offset p1 = Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW);
+    final Offset p2 = Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW);
+    final Offset p3 = Offset(p2.dx + perp.dx * halfW * 2, p2.dy + perp.dy * halfW * 2);
+    final Offset p4 = Offset(p1.dx + perp.dx * halfW * 2, p1.dy + perp.dy * halfW * 2);
+
+    final path = Path()
+      ..moveTo(p1.dx, p1.dy)
+      ..lineTo(p2.dx, p2.dy)
+      ..lineTo(p3.dx, p3.dy)
+      ..lineTo(p4.dx, p4.dy)
+      ..close();
+    canvas.drawPath(path, doorPaint);
+    canvas.drawPath(path, doorBorder);
+
+    // Swing arc
+    canvas.drawArc(
+      Rect.fromCenter(center: p1, width: halfW * 4, height: halfW * 4),
+      math.atan2(dir.dy, dir.dx),
+      math.pi / 2,
+      false,
+      Paint()
+        ..color = color.withOpacity(0.4)
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Label
+    final tp = TextPainter(
+      text: TextSpan(
+        text: 'D',
+        style: TextStyle(color: color, fontSize: 9, fontFamily: 'monospace',
+            fontWeight: FontWeight.bold),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas,
+        Offset(centre.dx - tp.width / 2, centre.dy - tp.height / 2));
+  }
+
+  void _drawWindow(Canvas canvas, Offset centre, Offset dir,
+      double halfW, bool isSelected) {
+    final Color color = isSelected
+        ? const Color(0xFFFF8800)
+        : const Color(0xFF0099CC);
+
+    // Gap in wall
+    canvas.drawLine(
+      Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW),
+      Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
+      Paint()
+        ..color = const Color(0xFFFFFFFF)
+        ..strokeWidth = 5
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Three lines (classic window symbol)
+    for (final offset in [-0.5, 0.0, 0.5]) {
+      canvas.drawLine(
+        Offset(centre.dx - dir.dx * halfW + dir.dy * offset * 6,
+              centre.dy - dir.dy * halfW - dir.dx * offset * 6),
+        Offset(centre.dx + dir.dx * halfW + dir.dy * offset * 6,
+              centre.dy + dir.dy * halfW - dir.dx * offset * 6),
+        Paint()
+          ..color = color
+          ..strokeWidth = offset == 0 ? 2.0 : 1.0
+          ..style = PaintingStyle.stroke,
+      );
+    }
+
+    // Label
+    final tp = TextPainter(
+      text: TextSpan(
+        text: 'W',
+        style: TextStyle(color: color, fontSize: 9, fontFamily: 'monospace',
+            fontWeight: FontWeight.bold),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas,
+        Offset(centre.dx - tp.width / 2 + dir.dy * 14,
+              centre.dy - tp.height / 2 - dir.dx * 14));
+  }
 }
