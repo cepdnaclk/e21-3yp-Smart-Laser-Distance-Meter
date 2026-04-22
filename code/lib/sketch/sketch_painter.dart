@@ -660,6 +660,15 @@ class SketchPainter extends CustomPainter {
       canvas.drawPath(path, fillPaint);
     }
 
+    // Draw active shape outline highlight
+    if (isActive && shape.isClosed && sp.length >= 3) {
+      final path = Path()..addPolygon(sp, true);
+      canvas.drawPath(path, Paint()
+        ..color = const Color(0xFF00AAFF).withOpacity(0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0);
+    }
+
     if (shape.isClosed && shape.points.length >= 2) {
       final int n = shape.points.length;
 
