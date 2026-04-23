@@ -10,6 +10,7 @@ class RoomObject {
   double widthMm;         // real-world width in mm
   double heightMm;        // real-world height in mm (for 3D)
   double elevationMm;     // mm from floor (windows only, doors = 0)
+  final bool swingFlipped;  // flips door arc to other side of wall
 
   RoomObject({
     required this.id,
@@ -19,6 +20,7 @@ class RoomObject {
     this.widthMm = 900,
     this.heightMm = 2100,
     this.elevationMm = 0,
+    this.swingFlipped = false,
   });
 
   bool get isDoor => type == RoomObjectType.door;
@@ -30,6 +32,7 @@ class RoomObject {
     double? widthMm,
     double? heightMm,
     double? elevationMm,
+    bool? swingFlipped,
   }) {
     return RoomObject(
       id: id,
@@ -39,6 +42,7 @@ class RoomObject {
       widthMm: widthMm ?? this.widthMm,
       heightMm: heightMm ?? this.heightMm,
       elevationMm: elevationMm ?? this.elevationMm,
+      swingFlipped: swingFlipped ?? this.swingFlipped,
     );
   }
 }

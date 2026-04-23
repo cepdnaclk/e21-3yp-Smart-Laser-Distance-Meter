@@ -400,12 +400,16 @@ class ObjectMeasurementDialog extends StatefulWidget {
   final RoomObject roomObject;
   final ValueChanged<RoomObject> onSave;
   final VoidCallback onDelete;
+  final VoidCallback? onFlip;
+  final double? wallLengthMm;
 
   const ObjectMeasurementDialog({
     super.key,
     required this.roomObject,
     required this.onSave,
     required this.onDelete,
+    this.onFlip,
+    this.wallLengthMm,
   });
 
   @override
@@ -479,6 +483,17 @@ class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
                   borderSide: BorderSide(color: Color(0xFF00AAFF))),
             ),
           ),
+          if (widget.wallLengthMm != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Wall: ${widget.wallLengthMm!.toStringAsFixed(0)} mm',
+              style: const TextStyle(
+                color: Color(0xFF556677),
+                fontFamily: 'monospace',
+                fontSize: 10,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           const Text('Height (mm)',
               style: TextStyle(
@@ -520,10 +535,22 @@ class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
                     borderSide: BorderSide(color: Color(0xFF00AAFF))),
               ),
             ),
-          ]
+          ],
         ],
       ),
       actions: [
+        if (isDoor && widget.onFlip != null)
+          TextButton.icon(
+            onPressed: () {
+              widget.onFlip!.call();
+              Navigator.pop(context);
+            },
+            icon: const Icon(Icons.flip, size: 16, color: Color(0xFF00AAFF)),
+            label: const Text(
+              'FLIP SWING',
+              style: TextStyle(color: Color(0xFF00AAFF), fontFamily: 'monospace'),
+            ),
+          ),
         TextButton(
           onPressed: () {
             Navigator.pop(context);

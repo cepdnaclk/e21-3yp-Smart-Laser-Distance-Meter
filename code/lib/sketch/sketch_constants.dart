@@ -53,3 +53,12 @@ String formatArea(double worldUnitsSquared) {
   if (m2 >= 0.01) return '${m2.toStringAsFixed(2)} m²';
   return '${mm2.toStringAsFixed(0)} mm²';
 }
+
+Offset? lineIntersect(Offset p1, Offset d1, Offset p2, Offset d2) {
+  final cross = d1.dx * d2.dy - d1.dy * d2.dx;
+  if (cross.abs() < 1e-6) return null; // parallel
+  final t = ((p2.dx - p1.dx) * d2.dy - (p2.dy - p1.dy) * d2.dx) / cross;
+  return Offset(p1.dx + t * d1.dx, p1.dy + t * d1.dy);
+}
+
+const double wallSnapThresholdWorld = 18.0; // how close walls must be to snap/merge
