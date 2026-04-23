@@ -137,6 +137,36 @@ class _SketchScreenState extends State<SketchScreen>
     super.dispose();
   }
 
+  void _showRoomNameDialog() {
+    final controller = TextEditingController(text: activeShape.label);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Room Name'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'e.g. Bedroom, Kitchen...'),
+          onSubmitted: (_) => Navigator.pop(ctx),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Skip'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => activeShape.label = controller.text.trim());
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Coordinate helpers ───────────────────────────────────────────────────
   Offset worldToScreen(Offset world) => world * _scale + _panOffset;
   Offset screenToWorld(Offset screen) => (screen - _panOffset) / _scale;
@@ -1028,6 +1058,7 @@ class _SketchScreenState extends State<SketchScreen>
         _nextWallAngle = null;
       });
       _syncWallDefinitions();
+      _showRoomNameDialog();
     } else {
       if (_isDraggingActivePoint && _dragOccurred) {
         if (_activePointIndex > 0) activeShape.wallRealMm.remove(_activePointIndex - 1);
@@ -1173,6 +1204,7 @@ class _SketchScreenState extends State<SketchScreen>
           _activePointIndex = -1;
         });
         _syncWallDefinitions();
+        _showRoomNameDialog();
         return;
       }
     }

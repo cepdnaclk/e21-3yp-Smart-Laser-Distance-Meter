@@ -109,6 +109,7 @@ class SketchPainter extends CustomPainter {
         _drawRoom(canvas, shape, isActive, s);
         if (shape.isClosed) {
           _drawRoomObjects(canvas, shape);
+          _drawRoomLabel(canvas, shape);
         }
         _drawPoints(canvas, shape, isActive);
         _drawAngleIndicator(canvas, shape, isActive);
@@ -282,6 +283,67 @@ class SketchPainter extends CustomPainter {
         shapeIndex: shapeIndex,
       ));
     }
+  }
+
+  void _drawRoomLabel(Canvas canvas, SketchShape shape) {
+    if (!shape.isClosed || shape.points.length < 3) return;
+
+    // Compute centroid
+    double cx = 0, cy = 0;
+    for (final p in shape.points) {
+      cx += p.dx;
+      cy += p.dy;
+    }
+    final centroid = Offset(cx / shape.points.length, cy / shape.points.length);
+    final centre = worldToScreen(centroid);
+
+    // Compute area (shoelace)
+    double area = 0;
+    final n = shape.points.length;
+    for (int i = 0; i < n; i++) {
+      final a = shape.points[i];
+      final b = shape.points[(i + 1) % n];
+      area += a.dx * b.dy - b.dx * a.dy;
+    }
+    final areaMm2 = (area.abs() / 2) * mmPerUnit * mmPerUnit;
+    final areaM2 = areaMm2 / 1e6;
+    final areaStr = '${areaM2.toStringAsFixed(2)} m²';
+
+    final name = shape.label.isEmpty ? 'Room' : shape.label;
+
+    // Draw name
+    final nameTp = TextPainter(
+      text: TextSpan(
+        text: name,
+        style: const TextStyle(
+          color: Color(0xFF333333),
+          fontSize: 13,
+          fontFamily: 'monospace',
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    // Draw area below name
+    final areaTp = TextPainter(
+      text: TextSpan(
+        text: areaStr,
+        style: const TextStyle(
+          color: Color(0xFF666666),
+          fontSize: 10,
+          fontFamily: 'monospace',
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final totalH = nameTp.height + 3 + areaTp.height;
+    final namePos = Offset(centre.dx - nameTp.width / 2, centre.dy - totalH / 2);
+    final areaPos = Offset(centre.dx - areaTp.width / 2, namePos.dy + nameTp.height + 3);
+
+    nameTp.paint(canvas, namePos);
+    areaTp.paint(canvas, areaPos);
   }
 
   void _drawNearestSnapLine(Canvas canvas, Size size, SketchShape shape, bool isActive) {
