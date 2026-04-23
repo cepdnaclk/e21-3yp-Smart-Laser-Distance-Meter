@@ -524,44 +524,6 @@ class _SketchScreenState extends State<SketchScreen>
     return -1;
   }
 
-  /// Inserts a new point on wall [wallIndex] at the screen position,
-  /// then immediately enters drag mode on the new point.
-  void _insertPointOnWall(int wallIndex, Offset screenPos) {
-    _saveUndo();
-    final Offset a = activeShape.points[wallIndex];
-    final Offset b = activeShape.points[(wallIndex + 1) % activeShape.points.length];
-
-    // Project screenPos onto the wall to get exact world position
-    final aS = worldToScreen(a);
-    final bS = worldToScreen(b);
-    final ab = bS - aS;
-    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
-    final t = len2 == 0
-        ? 0.5
-        : ((screenPos - aS).dx * ab.dx + (screenPos - aS).dy * ab.dy) / len2;
-    final tC = t.clamp(0.05, 0.95);
-    final newWorld = Offset(a.dx + tC * (b.dx - a.dx), a.dy + tC * (b.dy - a.dy));
-
-    setState(() {
-      // Insert after wallIndex
-      activeShape.points.insert(wallIndex + 1, newWorld);
-      // Invalidate wallRealMm for affected walls
-      activeShape.wallRealMm.remove(wallIndex);
-      // Shift keys above insertion point
-      final newMm = <int, double>{};
-      activeShape.wallRealMm.forEach((k, v) {
-        newMm[k <= wallIndex ? k : k + 1] = v;
-      });
-      activeShape.wallRealMm
-        ..clear()
-        ..addAll(newMm);
-      // Enter drag mode on the new point
-      _activePointIndex = wallIndex + 1;
-      _isDraggingActivePoint = true;
-    });
-    _syncWallDefinitions();
-  }
-
   bool _pointInsidePolygon(Offset screenPos, List<Offset> worldPoints) {
     final pts = worldPoints.map(worldToScreen).toList();
     bool inside = false;
@@ -1174,36 +1136,8 @@ class _SketchScreenState extends State<SketchScreen>
     });
   }
 
-  void _onLongPress(LongPressStartDetails details) {
-    // Only works on a closed active shape
-    if (!activeShape.isClosed) return;
-    if (_isMoveMode) return;
-
-    // Make sure tap is not on an existing point
-    final nearPt = _findNearPoint(details.localPosition, radius: pointSelectRadiusScreen);
-    if (nearPt >= 0) return;
-
-    final wallIdx = _findNearWall(details.localPosition);
-    if (wallIdx < 0) return;
-
-    _insertPointOnWall(wallIdx, details.localPosition);
-  }
-
   void _onTapDown(TapDownDetails details) {
     if (_isMultiTouch) return;
-    if (_isMoveMode) return; // taps handled by pointer down/up in move mode
-
-    // Prioritize direct wall taps over label hit-rect taps
-    if (activeShape.isClosed) {
-      final wallIdx = _findNearWall(details.localPosition);
-      if (wallIdx >= 0) {
-        setState(() {
-          _activePointIndex = -1;
-          _selectedWallIndex = wallIdx;
-        });
-        return;
-      }
-    }
 
     // Tap on dimension label -> edit that wall
     for (final hit in _labelHitRects) {
@@ -1217,6 +1151,8 @@ class _SketchScreenState extends State<SketchScreen>
         return;
       }
     }
+
+    if (_isMoveMode) return; // taps handled by pointer down/up in move mode
     if (_dragOccurred) { _dragOccurred = false; return; }
 
     // Check if tap is inside a different closed shape -> switch active
@@ -1235,6 +1171,15 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     if (activeShape.isClosed) {
+      final wallIdx = _findNearWall(details.localPosition);
+      if (wallIdx >= 0) {
+        setState(() {
+          _activePointIndex = -1;
+          _selectedWallIndex = wallIdx;
+        });
+        showSketchWallEditDialog(wallIdx);   // ← mixin method
+        return;
+      }
       setState(() {
         _activePointIndex = _findNearPoint(details.localPosition,
             radius: pointSelectRadiusScreen);
@@ -1430,7 +1375,6 @@ class _SketchScreenState extends State<SketchScreen>
               onScaleUpdate: _onScaleUpdate,
               onScaleEnd: _onScaleEnd,
               onTapDown: _onTapDown,
-              onLongPressStart: _onLongPress,
               child: CustomPaint(
                 painter: SketchPainter(
                   panOffset: _panOffset,
