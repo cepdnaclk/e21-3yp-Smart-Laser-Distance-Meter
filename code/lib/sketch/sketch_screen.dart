@@ -66,6 +66,7 @@ class _SketchScreenState extends State<SketchScreen>
   double? _nearestSnapAngleDeg;
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
+  final List<({Rect rect, int wallIndex, int shapeIndex})> _labelHitRects = [];
   double? _pendingBleMm;
   bool _waitingForBle = false;
   SketchShape get activeShape => shapes[activeIndex];
@@ -1106,6 +1107,20 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _onTapDown(TapDownDetails details) {
     if (_isMultiTouch) return;
+
+    // Tap on dimension label -> edit that wall
+    for (final hit in _labelHitRects) {
+      if (hit.rect.contains(details.localPosition)) {
+        setState(() {
+          activeIndex = hit.shapeIndex;
+          _selectedWallIndex = hit.wallIndex;
+          _activePointIndex = -1;
+        });
+        showSketchWallEditDialog(hit.wallIndex);
+        return;
+      }
+    }
+
     if (_isMoveMode) return; // taps handled by pointer down/up in move mode
     if (_dragOccurred) { _dragOccurred = false; return; }
 
@@ -1310,6 +1325,8 @@ class _SketchScreenState extends State<SketchScreen>
         activeShape.points.length >= 2 &&
         !activeShape.isClosed;
 
+    _labelHitRects.clear();
+
     return Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
       body: Stack(
@@ -1354,6 +1371,7 @@ class _SketchScreenState extends State<SketchScreen>
                   selectedWallIndex: _selectedWallIndex,
                   snapCandidateShape: _snapCandidateShape,
                   snapCandidateWall: _snapCandidateWall,
+                  labelHitRects: _labelHitRects,
                   shapes: shapes,
                   activeIndex: activeIndex,
                 ),

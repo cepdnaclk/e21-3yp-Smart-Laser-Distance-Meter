@@ -37,6 +37,7 @@ class SketchPainter extends CustomPainter {
   final int selectedWallIndex;
   final int snapCandidateShape;
   final int snapCandidateWall;
+  final List<({Rect rect, int wallIndex, int shapeIndex})> labelHitRects;
 
   const SketchPainter({
     required this.panOffset,
@@ -67,6 +68,7 @@ class SketchPainter extends CustomPainter {
     required this.selectedWallIndex,
     required this.snapCandidateShape,
     required this.snapCandidateWall,
+    required this.labelHitRects,
     
   });
 
@@ -121,102 +123,137 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawWallLengthLabel(Canvas canvas, Offset fromWorld, Offset toWorld,
-      {Offset? centroid, double? overrideMm, bool isSelected = false}) {
+      {Offset? centroid,
+      double? overrideMm,
+      bool isSelected = false,
+      int wallIndex = -1,
+      int shapeIndex = -1}) {
     final fromScreen = worldToScreen(fromWorld);
     final toScreen = worldToScreen(toWorld);
 
     final worldUnits = _worldDist(fromWorld, toWorld);
     if (worldUnits < 5) return;
-
     final screenLen = _worldDist(fromScreen, toScreen);
     if (screenLen < 28) return;
 
     final dx = toScreen.dx - fromScreen.dx;
     final dy = toScreen.dy - fromScreen.dy;
     final wallLen = math.sqrt(dx * dx + dy * dy);
-    final ux = dx / wallLen;
+    final ux = dx / wallLen; // unit along wall
     final uy = dy / wallLen;
-    double nx = -uy;
+    double nx = -uy; // unit perpendicular
     double ny = ux;
 
-    final wallMidX = (fromScreen.dx + toScreen.dx) / 2;
-    final wallMidY = (fromScreen.dy + toScreen.dy) / 2;
-
+    // Flip perpendicular so dimension line sits OUTSIDE the room
     if (centroid != null) {
       final cScreen = worldToScreen(centroid);
-      final toCx = cScreen.dx - wallMidX;
-      final toCy = cScreen.dy - wallMidY;
-      if (toCx * nx + toCy * ny > 0) {
+      final wallMidX = (fromScreen.dx + toScreen.dx) / 2;
+      final wallMidY = (fromScreen.dy + toScreen.dy) / 2;
+      if ((cScreen.dx - wallMidX) * nx + (cScreen.dy - wallMidY) * ny > 0) {
         nx = -nx;
         ny = -ny;
       }
     }
 
-    const double dimOffset = 22.0;
-    const double extOverrun = 5.0;
-    const double tickLen = 7.0;
-
-    final dFrom = Offset(
-        fromScreen.dx + nx * dimOffset, fromScreen.dy + ny * dimOffset);
-    final dTo =
-        Offset(toScreen.dx + nx * dimOffset, toScreen.dy + ny * dimOffset);
+    const double dimOffset = 26.0; // distance from wall face to dim line
+    const double extGap = 3.0; // gap between wall and start of extension line
+    const double extOverrun = 5.0; // how far extension line goes past dim line
+    const double arrowSize = 6.0; // arrowhead length
 
     final Color dimColor = overrideMm != null
         ? const Color(0xFF00AA44)
         : isSelected
             ? const Color(0xFFFF8800)
-            : const Color(0xFF0055AA);
+            : const Color(0xFF2255CC);
 
-    final dimPaint = Paint()
-      ..color = dimColor
-      ..strokeWidth = isSelected ? 1.4 : 1.0
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final extPaint = Paint()
-      ..color = dimColor.withOpacity(0.5)
-      ..strokeWidth = 0.8
+    // --- Extension lines (dashed) ---
+    final dashPaint = Paint()
+      ..color = dimColor.withOpacity(0.7)
+      ..strokeWidth = 0.7
       ..style = PaintingStyle.stroke;
 
-    canvas.drawLine(
-      Offset(fromScreen.dx + nx * 3, fromScreen.dy + ny * 3),
-      Offset(dFrom.dx + nx * extOverrun, dFrom.dy + ny * extOverrun),
-      extPaint,
-    );
-    canvas.drawLine(
-      Offset(toScreen.dx + nx * 3, toScreen.dy + ny * 3),
-      Offset(dTo.dx + nx * extOverrun, dTo.dy + ny * extOverrun),
-      extPaint,
-    );
-
-    void drawTick(Offset centre) {
-      final tx = (ux + nx) / math.sqrt(2);
-      final ty = (uy + ny) / math.sqrt(2);
-      canvas.drawLine(
-        Offset(centre.dx - tx * tickLen / 2, centre.dy - ty * tickLen / 2),
-        Offset(centre.dx + tx * tickLen / 2, centre.dy + ty * tickLen / 2),
-        Paint()
-          ..color = dimColor
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round,
-      );
+    void drawDashedLine(Offset a, Offset b) {
+      const double dashLen = 4.0, gapLen = 3.0;
+      final lx = b.dx - a.dx, ly = b.dy - a.dy;
+      final total = math.sqrt(lx * lx + ly * ly);
+      final sx = lx / total, sy = ly / total;
+      double dist = 0;
+      bool drawing = true;
+      while (dist < total) {
+        final segEnd = math.min(dist + (drawing ? dashLen : gapLen), total);
+        if (drawing) {
+          canvas.drawLine(
+            Offset(a.dx + sx * dist, a.dy + sy * dist),
+            Offset(a.dx + sx * segEnd, a.dy + sy * segEnd),
+            dashPaint,
+          );
+        }
+        dist = segEnd;
+        drawing = !drawing;
+      }
     }
 
-    drawTick(dFrom);
-    drawTick(dTo);
+    // Extension line from wall endpoint outward past dim line
+    drawDashedLine(
+      Offset(fromScreen.dx + nx * extGap, fromScreen.dy + ny * extGap),
+      Offset(fromScreen.dx + nx * (dimOffset + extOverrun),
+          fromScreen.dy + ny * (dimOffset + extOverrun)),
+    );
+    drawDashedLine(
+      Offset(toScreen.dx + nx * extGap, toScreen.dy + ny * extGap),
+      Offset(toScreen.dx + nx * (dimOffset + extOverrun),
+          toScreen.dy + ny * (dimOffset + extOverrun)),
+    );
 
+    // Dim line endpoints
+    final dFrom =
+        Offset(fromScreen.dx + nx * dimOffset, fromScreen.dy + ny * dimOffset);
+    final dTo = Offset(toScreen.dx + nx * dimOffset, toScreen.dy + ny * dimOffset);
+
+    // --- Main dimension line (thin solid) ---
+    canvas.drawLine(
+        dFrom,
+        dTo,
+        Paint()
+          ..color = dimColor
+          ..strokeWidth = 0.8
+          ..style = PaintingStyle.stroke);
+
+    // --- Arrowheads (filled triangles) ---
+    void drawArrow(Offset tip, double dirX, double dirY) {
+      final perpX = -dirY, perpY = dirX;
+      final base = Offset(tip.dx - dirX * arrowSize, tip.dy - dirY * arrowSize);
+      final path = Path()
+        ..moveTo(tip.dx, tip.dy)
+        ..lineTo(base.dx + perpX * arrowSize * 0.35,
+            base.dy + perpY * arrowSize * 0.35)
+        ..lineTo(base.dx - perpX * arrowSize * 0.35,
+            base.dy - perpY * arrowSize * 0.35)
+        ..close();
+      canvas.drawPath(
+          path,
+          Paint()
+            ..color = dimColor
+            ..style = PaintingStyle.fill);
+    }
+
+    drawArrow(dFrom, -ux, -uy); // pointing toward dTo
+    drawArrow(dTo, ux, uy); // pointing toward dFrom
+
+    // --- Length text ---
     final mid = Offset((dFrom.dx + dTo.dx) / 2, (dFrom.dy + dTo.dy) / 2);
+    final text = overrideMm != null
+        ? formatLength(overrideMm / mmPerUnit)
+        : formatLength(worldUnits);
 
-    final text = formatLength(worldUnits);
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: const TextStyle(
-          color: Color(0xFF003399),
-          fontSize: 10,
+        style: TextStyle(
+          color: isSelected ? const Color(0xFFFF8800) : dimColor,
+          fontSize: 9,
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,
-          letterSpacing: 0.3,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -224,20 +261,27 @@ class SketchPainter extends CustomPainter {
 
     canvas.save();
     canvas.translate(mid.dx, mid.dy);
-
     double angle = math.atan2(uy, ux);
     if (angle > math.pi / 2 || angle < -math.pi / 2) angle += math.pi;
     canvas.rotate(angle);
 
-    final halfW = tp.width / 2 + 3;
-    final halfH = tp.height / 2 + 1;
+    final halfW = tp.width / 2 + 4;
+    final halfH = tp.height / 2 + 2;
+    // White background so text is readable over dim line
     canvas.drawRect(
-      Rect.fromLTRB(-halfW, -halfH, halfW, halfH),
-      Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.93),
-    );
-
-    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2 - 1));
+        Rect.fromLTRB(-halfW, -halfH, halfW, halfH),
+        Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.92));
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
     canvas.restore();
+
+    if (wallIndex >= 0) {
+      // Store unrotated screen rect centred on mid for tap detection
+      labelHitRects.add((
+        rect: Rect.fromCenter(center: mid, width: halfW * 2 + 10, height: 24),
+        wallIndex: wallIndex,
+        shapeIndex: shapeIndex,
+      ));
+    }
   }
 
   void _drawNearestSnapLine(Canvas canvas, Size size, SketchShape shape, bool isActive) {
@@ -787,7 +831,9 @@ class SketchPainter extends CustomPainter {
           _drawWallLengthLabel(canvas, a, b,
               centroid: centroid,
               overrideMm: shape.wallRealMm[i],
-              isSelected: i == selectedWallIndex);
+              isSelected: i == selectedWallIndex,
+              wallIndex: i,
+              shapeIndex: s);
         }
       }
     } else {
@@ -807,7 +853,9 @@ class SketchPainter extends CustomPainter {
           _drawWallLengthLabel(canvas, shape.points[i], shape.points[i + 1],
               centroid: centroid,
               overrideMm: shape.wallRealMm[i],
-              isSelected: i == selectedWallIndex);
+              isSelected: i == selectedWallIndex,
+              wallIndex: i,
+              shapeIndex: s);
         }
       }
     } 
