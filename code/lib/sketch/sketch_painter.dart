@@ -730,13 +730,17 @@ class SketchPainter extends CustomPainter {
           ..style = PaintingStyle.fill,
       );
 
-      // Draw shared (interior) walls thinner in a different color
+      // Draw ONLY the shared sub-segment thin — the rest of the wall stays full thickness
       for (final sw in shape.sharedWalls) {
-        final int i = sw.myWallIndex;
-        if (i >= n) continue;
-        final Offset a = shape.points[i];
-        final Offset b = shape.points[(i + 1) % n];
-        final corners = thickWallRect(a, b, wallThickness * 0.3); // 30% thickness
+        if (sw.myWallIndex >= n) continue;
+        final Offset wallA = shape.points[sw.myWallIndex];
+        final Offset wallB = shape.points[(sw.myWallIndex + 1) % n];
+        // Recompute from t-values — always follows the room's current position
+        final Offset a = wallA + (wallB - wallA) * sw.tStart;
+        final Offset b = wallA + (wallB - wallA) * sw.tEnd;
+        if ((a - b).distance < 2.0) continue;
+
+        final corners = thickWallRect(a, b, wallThickness * 0.28);
         if (corners.isEmpty) continue;
         final sc = corners.map((c) => worldToScreen(c)).toList();
         final thinPath = Path()
@@ -745,10 +749,16 @@ class SketchPainter extends CustomPainter {
           ..lineTo(sc[2].dx, sc[2].dy)
           ..lineTo(sc[3].dx, sc[3].dy)
           ..close();
+        // First erase that strip (paint over with background) then draw thin
         canvas.drawPath(
             thinPath,
             Paint()
-              ..color = const Color(0xFF555555)
+              ..color = const Color(0xFFF5F5F0) // match your floor/background color
+              ..style = PaintingStyle.fill);
+        canvas.drawPath(
+            thinPath,
+            Paint()
+              ..color = const Color(0xFF1A1A1A)
               ..style = PaintingStyle.fill);
       }
 

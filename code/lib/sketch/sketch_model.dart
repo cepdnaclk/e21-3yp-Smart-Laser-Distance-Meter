@@ -7,10 +7,15 @@ class SharedWall {
   final int otherShapeIndex;
   final int myWallIndex;
   final int otherWallIndex;
+  final double tStart; // 0.0-1.0 along myWallIndex segment
+  final double tEnd; // 0.0-1.0 along myWallIndex segment
+
   SharedWall({
     required this.otherShapeIndex,
     required this.myWallIndex,
     required this.otherWallIndex,
+    required this.tStart,
+    required this.tEnd,
   });
 }
 
