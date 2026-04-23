@@ -90,6 +90,8 @@ class _SketchScreenState extends State<SketchScreen>
   bool _objectMoveOccurred = false;
   bool _isDraggingObject = false;
   bool _objectDragOccurred = false;
+  double _objectPinchStartScale = 1.0;
+  double _objectPinchStartWidthMm = 0.0;
 
   // ── Room move mode ───────────────────────────────────────────
   bool _isMoveMode = false;
@@ -1165,6 +1167,19 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleStart(ScaleStartDetails d) {
+    // If an object is selected and 2 fingers — start object pinch resize
+    if (_selectedObjectId != null && d.pointerCount >= 2) {
+      final selIdx = activeShape.roomObjects
+          .indexWhere((o) => o.id == _selectedObjectId);
+      if (selIdx >= 0) {
+        _objectPinchStartScale = 1.0;
+        _objectPinchStartWidthMm = activeShape.roomObjects[selIdx].widthMm;
+        _isMultiTouch = true;
+        _tapCancelled = true;
+        _pendingTap = null;
+        return; // don't start canvas scale
+      }
+    }
     if (_isDraggingObject) return;
     _scaleStart = _scale;
     _panConfirmed = false;
@@ -1176,6 +1191,21 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
+    // Object pinch resize — 2 fingers while object selected
+    if (_selectedObjectId != null && d.pointerCount >= 2 && _objectPinchStartWidthMm > 0) {
+      final selIdx = activeShape.roomObjects
+          .indexWhere((o) => o.id == _selectedObjectId);
+      if (selIdx >= 0) {
+        final obj = activeShape.roomObjects[selIdx];
+        final wallLenMm = _wallLengthWorld(obj.wallIndex) * mmPerUnit;
+        final newW = (_objectPinchStartWidthMm * d.scale)
+            .clamp(200.0, wallLenMm * 0.95);
+        setState(() {
+          activeShape.roomObjects[selIdx] = obj.copyWith(widthMm: newW);
+        });
+      }
+      return;
+    }
     if (_isDraggingLastPoint || _isDraggingActivePoint || _movingShapeIndex >= 0 || _isDraggingObject) return;
     if (d.pointerCount >= 2) {
       _isMultiTouch = true;
@@ -1198,6 +1228,12 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleEnd(ScaleEndDetails d) {
+    // If we were doing object pinch, save undo and reset
+    if (_selectedObjectId != null && _objectPinchStartWidthMm > 0) {
+      _saveUndo();
+      _objectPinchStartWidthMm = 0.0;
+      _objectPinchStartScale = 1.0;
+    }
     _panConfirmed = false;
     Future.delayed(const Duration(milliseconds: 150), () {
       _isMultiTouch = false;
@@ -1541,6 +1577,7 @@ class _SketchScreenState extends State<SketchScreen>
                   labelHitRects: _labelHitRects,
                   shapes: shapes,
                   activeIndex: activeIndex,
+                  selectedObjectId: _selectedObjectId,
                 ),
                 child: const SizedBox.expand(),
               ),
