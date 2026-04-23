@@ -88,6 +88,8 @@ class _SketchScreenState extends State<SketchScreen>
   String? _movingObjectId;        
   Offset? _moveStartScreenPos;    
   bool _objectMoveOccurred = false;
+  bool _isDraggingObject = false;
+  bool _objectDragOccurred = false;
 
   // ── Room move mode ───────────────────────────────────────────
   bool _isMoveMode = false;
@@ -792,11 +794,38 @@ class _SketchScreenState extends State<SketchScreen>
     // ── end move mode ──────────────────────────────────────────
 
     if (activeShape.isClosed) {
+      // ── Check if touching a placed door/window first ──────────
+      for (final obj in activeShape.roomObjects) {
+        if (obj.wallIndex >= activeShape.points.length) continue;
+        final wA = activeShape.points[obj.wallIndex];
+        final wB = activeShape.points[
+            (obj.wallIndex + 1) % activeShape.points.length];
+        final wallLenWorld = (wB - wA).distance;
+        if (wallLenWorld < 1) continue;
+        final objWidthWorld = obj.widthMm / mmPerUnit;
+        final wallLenScreen = (worldToScreen(wB) - worldToScreen(wA)).distance;
+        final halfWScreen = (objWidthWorld / wallLenWorld) * wallLenScreen / 2;
+        final centreWorld = wA + (wB - wA) * obj.positionAlong;
+        final centreScreen = worldToScreen(centreWorld);
+        if ((event.localPosition - centreScreen).distance < halfWScreen + 16) {
+          setState(() {
+            _selectedObjectId = obj.id;
+            _isDraggingObject = true;
+            _objectDragOccurred = false;
+            _activePointIndex = -1;
+          });
+          _panStartPosition = null;
+          _panConfirmed = false;
+          return;
+        }
+      }
+      // ── Normal point selection ─────────────────────────────────
       final idx = _findNearPoint(event.localPosition,
           radius: pointSelectRadiusScreen);
       setState(() {
         _activePointIndex = idx;
         _isDraggingActivePoint = idx >= 0;
+        if (idx < 0) _selectedObjectId = null; // deselect object when tapping empty
       });
       return;
     }
@@ -831,6 +860,34 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── OBJECT DRAG ────────────────────────────────────────────
+    if (_isDraggingObject && _selectedObjectId != null) {
+      final selIdx = activeShape.roomObjects
+          .indexWhere((o) => o.id == _selectedObjectId);
+      if (selIdx >= 0) {
+        final obj = activeShape.roomObjects[selIdx];
+        final wA = activeShape.points[obj.wallIndex];
+        final wB = activeShape.points[
+            (obj.wallIndex + 1) % activeShape.points.length];
+        final wallLenWorld = (wB - wA).distance;
+        if (wallLenWorld > 0) {
+          final touchWorld = screenToWorld(event.localPosition);
+          final ab = wB - wA;
+          final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+          final t = ((touchWorld - wA).dx * ab.dx +
+                     (touchWorld - wA).dy * ab.dy) / len2;
+          final halfT = (obj.widthMm / mmPerUnit) / (2 * wallLenWorld);
+          setState(() {
+            _objectDragOccurred = true;
+            activeShape.roomObjects[selIdx] =
+                obj.copyWith(positionAlong: t.clamp(halfT, 1.0 - halfT));
+          });
+        }
+      }
+      return;
+    }
+    // ── end object drag ────────────────────────────────────────
+
     // ── MOVE MODE ──────────────────────────────────────────────
     if (_movingShapeIndex >= 0 && _moveStartWorld != null) {
       // Clear stale shared walls every frame during move - prevents ghost walls
@@ -954,6 +1011,17 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── OBJECT DRAG END ────────────────────────────────────────
+    if (_isDraggingObject) {
+      if (_objectDragOccurred) _saveUndo();
+      setState(() {
+        _isDraggingObject = false;
+        _objectDragOccurred = false;
+      });
+      return;
+    }
+    // ── end object drag ────────────────────────────────────────
+
     // ── MOVE MODE ──────────────────────────────────────────────
     if (_movingShapeIndex >= 0) {
       if (_movingShapeIndex >= 0) {
@@ -1097,6 +1165,7 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleStart(ScaleStartDetails d) {
+    if (_isDraggingObject) return;
     _scaleStart = _scale;
     _panConfirmed = false;
     if (d.pointerCount >= 2) {
@@ -1107,7 +1176,7 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
-    if (_isDraggingLastPoint || _isDraggingActivePoint || _movingShapeIndex >= 0) return;
+    if (_isDraggingLastPoint || _isDraggingActivePoint || _movingShapeIndex >= 0 || _isDraggingObject) return;
     if (d.pointerCount >= 2) {
       _isMultiTouch = true;
       _tapCancelled = true;
@@ -1152,8 +1221,9 @@ class _SketchScreenState extends State<SketchScreen>
       }
     }
 
-    if (_isMoveMode) return; // taps handled by pointer down/up in move mode
+    if (_isMoveMode) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
+    if (_objectDragOccurred) { _objectDragOccurred = false; return; }
 
     // Check if tap is inside a different closed shape -> switch active
     for (int s = 0; s < shapes.length; s++) {
@@ -1171,6 +1241,41 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     if (activeShape.isClosed) {
+      for (final obj in activeShape.roomObjects) {
+        if (obj.wallIndex >= activeShape.points.length) continue;
+        final center = objectCentreWorld(
+          obj: obj,
+          points: activeShape.points,
+          wallCount: activeShape.points.length,
+        );
+        final centerScreen = worldToScreen(center);
+        final dir = wallDirectionScreen(
+          wallIndex: obj.wallIndex,
+          points: activeShape.points,
+          worldToScreen: worldToScreen,
+        );
+        final wallA = activeShape.points[obj.wallIndex];
+        final wallB = activeShape.points[(obj.wallIndex + 1) % activeShape.points.length];
+        final wallLen = (wallB - wallA).distance;
+        if (wallLen <= 1) continue;
+        final objWidthWorld = (obj.widthMm / mmPerUnit).clamp(50.0, wallLen * 0.98);
+        final scaleRatio =
+            (worldToScreen(wallB) - worldToScreen(wallA)).distance / wallLen;
+        final halfWScreen = (objWidthWorld / 2) * scaleRatio;
+        final endA = centerScreen - dir * halfWScreen;
+        final endB = centerScreen + dir * halfWScreen;
+
+        if (_pointToSegmentDist(details.localPosition, endA, endB) < 14.0) {
+          setState(() {
+            _selectedObjectId = obj.id;
+            _selectedWallIndex = -1;
+            _activePointIndex = -1;
+          });
+          _onObjectTapped(obj.id);
+          return;
+        }
+      }
+
       final wallIdx = _findNearWall(details.localPosition);
       if (wallIdx >= 0) {
         setState(() {
@@ -1260,6 +1365,49 @@ class _SketchScreenState extends State<SketchScreen>
     });
     _syncWallDefinitions();
   }
+
+  double _wallLengthMmForObject(RoomObject obj) {
+    if (obj.wallIndex >= activeShape.points.length) return 0;
+    final a = activeShape.points[obj.wallIndex];
+    final b = activeShape.points[(obj.wallIndex + 1) % activeShape.points.length];
+    return (b - a).distance * mmPerUnit;
+  }
+
+  void _onObjectTapped(String id) {
+    final idx = activeShape.roomObjects.indexWhere((o) => o.id == id);
+    if (idx < 0) return;
+    final obj = activeShape.roomObjects[idx];
+    showDialog(
+      context: context,
+      builder: (ctx) => ObjectMeasurementDialog(
+        roomObject: obj,
+        wallLengthMm: _wallLengthMmForObject(obj),
+        onFlip: obj.isDoor
+            ? () {
+                _saveUndo();
+                setState(() {
+                  activeShape.roomObjects[idx] =
+                      activeShape.roomObjects[idx].copyWith(
+                    swingFlipped: !activeShape.roomObjects[idx].swingFlipped,
+                  );
+                });
+              }
+            : null,
+        onSave: (updatedObj) {
+          setState(() {
+            activeShape.roomObjects[idx] = updatedObj;
+          });
+        },
+        onDelete: () {
+          _saveUndo();
+          setState(() {
+            activeShape.roomObjects.removeWhere((o) => o.id == id);
+            _selectedObjectId = null;
+          });
+        },
+      ),
+    );
+  }
   
   // ── Build ────────────────────────────────────────────────────────────────
   @override
@@ -1294,8 +1442,18 @@ class _SketchScreenState extends State<SketchScreen>
           id: 'obj_$_objectCounter',
           type: _draggingObjectType!,
           wallIndex: hit.wallIndex,
-          positionAlong: hit.positionAlong,
-          widthMm: _draggingObjectType == RoomObjectType.door ? 900 : 1200,
+          positionAlong: () {
+            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
+            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
+            final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
+            final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
+            return hit.positionAlong.clamp(halfT, 1.0 - halfT);
+          }(),
+          widthMm: () {
+            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
+            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
+            return math.min(defaultMm, wallLenMm * 0.8);
+          }(),
           heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
           elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
         ));
@@ -1305,29 +1463,6 @@ class _SketchScreenState extends State<SketchScreen>
       });
     }
 
-    // Called when user taps a placed object to edit/delete it
-    void _onObjectTapped(String id) {
-      final obj = activeShape.roomObjects.firstWhere((o) => o.id == id);
-      showDialog(
-        context: context,
-        builder: (ctx) => ObjectMeasurementDialog(
-          roomObject: obj,
-          onSave: (updatedObj) {
-            setState(() {
-              final idx = activeShape.roomObjects.indexWhere((o) => o.id == id);
-              if (idx >= 0) activeShape.roomObjects[idx] = updatedObj;
-            });
-          },
-          onDelete: () {
-            _saveUndo();
-            setState(() {
-              activeShape.roomObjects.removeWhere((o) => o.id == id);
-              _selectedObjectId = null;
-            });
-          },
-        ),
-      );
-    }
     final topPadding = MediaQuery.of(context).padding.top;
 
     Offset? angleRefWorld;

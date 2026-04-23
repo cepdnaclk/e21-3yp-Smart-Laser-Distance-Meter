@@ -285,6 +285,196 @@ class SketchPainter extends CustomPainter {
     }
   }
 
+  void _drawSegmentedWallDimension(
+    Canvas canvas,
+    SketchShape shape,
+    int wallIndex,
+    Offset centroid,
+  ) {
+    final pts = shape.points;
+    final n = pts.length;
+    final wA = pts[wallIndex];
+    final wB = pts[(wallIndex + 1) % n];
+
+    final wallLenWorld = (wB - wA).distance;
+    if (wallLenWorld < 5) return;
+
+    // Collect all objects on this wall, sorted by positionAlong
+    final objs = shape.roomObjects
+        .where((o) => o.wallIndex == wallIndex)
+        .toList()
+      ..sort((a, b) => a.positionAlong.compareTo(b.positionAlong));
+
+    if (objs.isEmpty) return; // no objects → no segmented dim needed
+
+    // Build segments: [wallStart, obj1Start, obj1End, obj2Start, obj2End, ..., wallEnd]
+    // Each segment: (worldStart, worldEnd, label, isObject, isLocked)
+    final List<(Offset, Offset, String, bool, bool)> segments = [];
+
+    final wallDir = (wB - wA) / wallLenWorld;
+
+    double prevT = 0.0;
+    for (final obj in objs) {
+      final objWidthWorld = obj.widthMm / mmPerUnit;
+      final halfT = (objWidthWorld / 2) / wallLenWorld;
+      final objStartT = (obj.positionAlong - halfT).clamp(0.0, 1.0);
+      final objEndT   = (obj.positionAlong + halfT).clamp(0.0, 1.0);
+
+      // Gap before object
+      if (objStartT - prevT > 0.001) {
+        final gapStart = wA + (wB - wA) * prevT;
+        final gapEnd   = wA + (wB - wA) * objStartT;
+        final gapMm = (gapEnd - gapStart).distance * mmPerUnit;
+        segments.add((gapStart, gapEnd, formatLength((gapEnd - gapStart).distance), false, false));
+      }
+
+      // Object itself
+      final objStart = wA + (wB - wA) * objStartT;
+      final objEnd   = wA + (wB - wA) * objEndT;
+      final hasRealMm = obj.widthMm > 0;
+      segments.add((objStart, objEnd,
+        formatLength(objWidthWorld),
+        true, hasRealMm));
+
+      prevT = objEndT;
+    }
+
+    // Gap after last object
+    if (1.0 - prevT > 0.001) {
+      final gapStart = wA + (wB - wA) * prevT;
+      segments.add((gapStart, wB,
+        formatLength((wB - gapStart).distance), false, false));
+    }
+
+    // Total wall dim (drawn further out)
+    _drawWallLengthLabel(canvas, wA, wB,
+      centroid: centroid,
+      overrideMm: shape.wallRealMm[wallIndex],
+      isSelected: false,
+      wallIndex: -1,   // -1 = don't register hit rect for total
+      shapeIndex: -1,
+    );
+
+    // Now draw each segment dim closer to the wall
+    const double segDimOffset = 14.0; // closer than the 26px total dim
+
+    // Perpendicular direction outward from centroid
+    final fromScreen = worldToScreen(wA);
+    final toScreen   = worldToScreen(wB);
+    final dx = toScreen.dx - fromScreen.dx;
+    final dy = toScreen.dy - fromScreen.dy;
+    final wallLen = math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 1) return;
+    double nx = -dy / wallLen;
+    double ny =  dx / wallLen;
+    final cScreen = worldToScreen(centroid);
+    final wallMidX = (fromScreen.dx + toScreen.dx) / 2;
+    final wallMidY = (fromScreen.dy + toScreen.dy) / 2;
+    if ((cScreen.dx - wallMidX) * nx + (cScreen.dy - wallMidY) * ny > 0) {
+      nx = -nx; ny = -ny;
+    }
+
+    for (final seg in segments) {
+      final (sWorld, eWorld, label, isObj, isLocked) = seg;
+      final sScreen = worldToScreen(sWorld);
+      final eScreen = worldToScreen(eWorld);
+      final segScreenLen = (eScreen - sScreen).distance;
+      if (segScreenLen < 8) continue;
+
+      final Color segColor = isObj
+          ? const Color(0xFF0066CC)
+          : const Color(0xFF2255CC);
+
+      final midScreen = Offset(
+        (sScreen.dx + eScreen.dx) / 2 + nx * segDimOffset,
+        (sScreen.dy + eScreen.dy) / 2 + ny * segDimOffset,
+      );
+
+      // Short tick marks at segment ends
+      final tickPaint = Paint()
+        ..color = segColor
+        ..strokeWidth = 0.8
+        ..style = PaintingStyle.stroke;
+
+      canvas.drawLine(
+        Offset(sScreen.dx + nx * (segDimOffset - 4), sScreen.dy + ny * (segDimOffset - 4)),
+        Offset(sScreen.dx + nx * (segDimOffset + 4), sScreen.dy + ny * (segDimOffset + 4)),
+        tickPaint,
+      );
+      canvas.drawLine(
+        Offset(eScreen.dx + nx * (segDimOffset - 4), eScreen.dy + ny * (segDimOffset - 4)),
+        Offset(eScreen.dx + nx * (segDimOffset + 4), eScreen.dy + ny * (segDimOffset + 4)),
+        tickPaint,
+      );
+
+      // Dim line between ticks
+      canvas.drawLine(
+        Offset(sScreen.dx + nx * segDimOffset, sScreen.dy + ny * segDimOffset),
+        Offset(eScreen.dx + nx * segDimOffset, eScreen.dy + ny * segDimOffset),
+        Paint()
+          ..color = segColor
+          ..strokeWidth = 0.8
+          ..style = PaintingStyle.stroke,
+      );
+
+      // Label
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(
+            color: segColor,
+            fontSize: 8,
+            fontFamily: 'monospace',
+            fontWeight: isObj ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      // Arrowheads on the dim line
+      void drawSegArrow(Offset tip, double dirX, double dirY) {
+        const double arrowSize = 5.0;
+        final perpX = -dirY, perpY = dirX;
+        final base = Offset(tip.dx - dirX * arrowSize, tip.dy - dirY * arrowSize);
+        final path = Path()
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo(base.dx + perpX * arrowSize * 0.35,
+                  base.dy + perpY * arrowSize * 0.35)
+          ..lineTo(base.dx - perpX * arrowSize * 0.35,
+                  base.dy - perpY * arrowSize * 0.35)
+          ..close();
+        canvas.drawPath(path,
+          Paint()..color = segColor..style = PaintingStyle.fill);
+      }
+
+      final ux = (eScreen.dx - sScreen.dx) / segScreenLen;
+      final uy = (eScreen.dy - sScreen.dy) / segScreenLen;
+      final sOnLine = Offset(
+        sScreen.dx + nx * segDimOffset,
+        sScreen.dy + ny * segDimOffset,
+      );
+      final eOnLine = Offset(
+        eScreen.dx + nx * segDimOffset,
+        eScreen.dy + ny * segDimOffset,
+      );
+      drawSegArrow(sOnLine,  -ux, -uy); // pointing inward from start
+      drawSegArrow(eOnLine,   ux,  uy); // pointing inward from end
+
+      if (segScreenLen > tp.width + 10) {
+        canvas.drawRect(
+          Rect.fromCenter(
+            center: midScreen,
+            width: tp.width + 4,
+            height: tp.height + 2,
+          ),
+          Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.92),
+        );
+        tp.paint(canvas,
+          Offset(midScreen.dx - tp.width / 2, midScreen.dy - tp.height / 2));
+      }
+    }
+  }
+
   void _drawRoomLabel(Canvas canvas, SketchShape shape) {
     if (!shape.isClosed || shape.points.length < 3) return;
 
@@ -890,12 +1080,19 @@ class SketchPainter extends CustomPainter {
         for (int i = 0; i < n; i++) {
           final a = shape.points[i];
           final b = shape.points[(i + 1) % n];
-          _drawWallLengthLabel(canvas, a, b,
-              centroid: centroid,
-              overrideMm: shape.wallRealMm[i],
-              isSelected: i == selectedWallIndex,
-              wallIndex: i,
-              shapeIndex: s);
+          // Only draw simple label if no objects on this wall
+          final hasObjects = shape.roomObjects.any((o) => o.wallIndex == i);
+          if (!hasObjects) {
+            _drawWallLengthLabel(canvas, a, b,
+                centroid: centroid,
+                overrideMm: shape.wallRealMm[i],
+                isSelected: i == selectedWallIndex,
+                wallIndex: i,
+                shapeIndex: s);
+          } else {
+            // Draw segmented dims: gap + door/window + gap + total
+            _drawSegmentedWallDimension(canvas, shape, i, centroid!);
+          }
         }
       }
     } else {
@@ -1058,34 +1255,47 @@ class SketchPainter extends CustomPainter {
   bool shouldRepaint(SketchPainter oldDelegate) => true;
 
   void _drawRoomObjects(Canvas canvas, SketchShape shape) {
-    const double doorWidthScreen = 20.0;
     final pts = shape.points;
     final isClosed = shape.isClosed;
+    final wallCount = isClosed ? pts.length : pts.length - 1;
 
     for (final obj in shape.roomObjects) {
-      if (obj.wallIndex >= (isClosed ? pts.length : pts.length - 1)) continue;
+      if (obj.wallIndex >= wallCount) continue;
 
-      // Find centre point in screen coords
+      // Wall segment in world coords
+      final wA = pts[obj.wallIndex];
+      final wB = pts[(obj.wallIndex + 1) % pts.length];
+      final wallLenWorld = (wB - wA).distance;
+      if (wallLenWorld < 1) continue;
+
+      // Convert door width from mm -> world units
+      final objWidthWorld = obj.widthMm / mmPerUnit;
+      // Half-width in screen pixels
+      final scaleRatio =
+          (worldToScreen(wB) - worldToScreen(wA)).distance / wallLenWorld;
+      final halfWScreen = (objWidthWorld / 2) * scaleRatio;
+
       final centre = objectCentreWorld(
         obj: obj,
         points: pts,
-        wallCount: isClosed ? pts.length : pts.length - 1,
+        wallCount: wallCount,
       );
       final centreScreen = worldToScreen(centre);
 
-      // Wall direction vector (screen)
       final dir = wallDirectionScreen(
         wallIndex: obj.wallIndex,
         points: pts,
         worldToScreen: worldToScreen,
       );
-      final perp = Offset(-dir.dy, dir.dx); // perpendicular, points inward
+      final perp = obj.swingFlipped
+          ? Offset(dir.dy, -dir.dx) // flipped side
+          : Offset(-dir.dy, dir.dx); // default inward
 
       const bool isSelected = false;
       if (obj.isDoor) {
-        _drawDoor(canvas, centreScreen, dir, perp, doorWidthScreen, isSelected);
+        _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
       } else {
-        _drawWindow(canvas, centreScreen, dir, doorWidthScreen, isSelected);
+        _drawWindow(canvas, centreScreen, dir, halfWScreen, isSelected);
       }
     }
   }
@@ -1105,20 +1315,19 @@ class SketchPainter extends CustomPainter {
       centre.dy + dir.dy * halfW,
     );
 
-    // 1. White gap — clear wall line under door
+    // 1. Colour-less gap - fill with canvas background colour
     canvas.drawLine(
       hingePoint,
       tipPoint,
       Paint()
         ..color = const Color(0xFFFFFFFF)
-        ..strokeWidth = 7
+        ..strokeWidth = wallThickness * 1.1
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.butt,
     );
 
-    final double radius = halfW * 2; // full door width = swing radius
+    final double radius = halfW * 2;
 
-    // Inward perp angle — choose sweep direction toward room interior
     final double leafAngle = math.atan2(
       tipPoint.dy - hingePoint.dy,
       tipPoint.dx - hingePoint.dx,
@@ -1130,7 +1339,6 @@ class SketchPainter extends CustomPainter {
     final double ccwDiff = ((ccwEnd - perpAngle + math.pi) % (2 * math.pi) - math.pi).abs();
     final double sweepAngle = cwDiff < ccwDiff ? -math.pi / 2 : math.pi / 2;
 
-    // 2. Door leaf — line from hinge perpendicular into room (inward leg of L)
     final Offset leafTip = Offset(
       hingePoint.dx + perp.dx * radius,
       hingePoint.dy + perp.dy * radius,
@@ -1141,13 +1349,13 @@ class SketchPainter extends CustomPainter {
       ..strokeWidth = isSelected ? 2.0 : 1.5
       ..style = PaintingStyle.stroke;
 
-    // Vertical leg: hinge → inward (along perp)
+    // 2. Door leaf line: hinge -> inward
     canvas.drawLine(hingePoint, leafTip, paint);
 
-    // Horizontal leg: hinge → tip (along wall)
+    // 3. Door opening line: hinge -> tip along wall
     canvas.drawLine(hingePoint, tipPoint, paint);
 
-    // 3. Arc from leafTip to tipPoint (quarter circle, centred on hingePoint)
+    // 4. Arc: quarter circle sweep
     canvas.drawArc(
       Rect.fromCenter(
         center: hingePoint,
@@ -1176,7 +1384,7 @@ class SketchPainter extends CustomPainter {
       Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
       Paint()
         ..color = const Color(0xFFFFFFFF)
-        ..strokeWidth = 5
+        ..strokeWidth = wallThickness * 1.1
         ..style = PaintingStyle.stroke,
     );
 
