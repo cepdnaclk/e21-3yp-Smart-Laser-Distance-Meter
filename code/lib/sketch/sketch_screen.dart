@@ -518,15 +518,93 @@ class _SketchScreenState extends State<SketchScreen>
     return (p - proj).distance;
   }
 
-  /// For each wall of [movingShape], check all walls of all other closed shapes.
-  /// Returns the first pair whose world midpoints are within [wallSnapThresholdWorld].
-  /// Returns (-1, -1, -1, -1) if none found.
-  (int, int, int, int) _findWallSnapCandidate(SketchShape movingShape) {
+  /// Projects point [p] onto segment [a→b], returns the clamped parameter t ∈ [0,1]
+  /// and the projected point.
+  (double, Offset) _projectPointOnSegment(Offset p, Offset a, Offset b) {
+    final ab = b - a;
+    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (len2 == 0) return (0.0, a);
+    final t = ((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2;
+    final tc = t.clamp(0.0, 1.0);
+    return (tc, a + ab * tc);
+  }
+
+  double _tAlong(Offset base, Offset vec, double len, Offset pt) {
+    if (len == 0) return 0.0;
+    return ((pt - base).dx * vec.dx + (pt - base).dy * vec.dy) /
+        (len * len);
+  }
+
+  /// Returns the overlapping sub-segment between wall [mA→mB] and wall [oA→oB]
+  /// when they are parallel, collinear (within [perpThresh]), and overlap.
+  /// Returns null if no overlap or not collinear.
+  ({Offset start, Offset end, Offset oStart, Offset oEnd})? _wallOverlapSegment(
+      Offset mA, Offset mB, Offset oA, Offset oB,
+      {double perpThresh = 14.0, double parallelThresh = 0.08}) {
+    final mDir = mB - mA;
+    final mLen = mDir.distance;
+    final oDir = oB - oA;
+    final oLen = oDir.distance;
+    if (mLen < 1 || oLen < 1) return null;
+
+    final mUnit = mDir / mLen;
+    final oUnit = oDir / oLen;
+
+    // Must be parallel (dot product of unit vectors ≈ ±1)
+    final dot = (mUnit.dx * oUnit.dx + mUnit.dy * oUnit.dy).abs();
+    if (dot < 1.0 - parallelThresh) return null;
+
+    // Must be collinear — perpendicular distance from oA to line mA→mB must be small
+    final cross = (oA - mA).dx * mUnit.dy - (oA - mA).dy * mUnit.dx;
+    if (cross.abs() > perpThresh) return null;
+
+    // Project oA and oB onto the mA→mB axis
+    final tOA = (oA - mA).dx * mUnit.dx + (oA - mA).dy * mUnit.dy;
+    final tOB = (oB - mA).dx * mUnit.dx + (oB - mA).dy * mUnit.dy;
+
+    // Overlap along the axis
+    final tStart = tOA < tOB ? tOA : tOB;
+    final tEnd = tOA < tOB ? tOB : tOA;
+    final overlapStart = tStart.clamp(0.0, mLen);
+    final overlapEnd = tEnd.clamp(0.0, mLen);
+    if (overlapEnd - overlapStart < 4.0) return null; // too short, ignore
+
+    final sharedStart = mA + mUnit * overlapStart;
+    final sharedEnd = mA + mUnit * overlapEnd;
+
+    // Corresponding points on the other wall
+    final oUnitSigned = dot > 0 ? oUnit : -oUnit; // match direction
+    final oBase = dot > 0 ? oA : oB;
+    final tOnO_start =
+        (sharedStart - oBase).dx * oUnitSigned.dx + (sharedStart - oBase).dy * oUnitSigned.dy;
+    final tOnO_end =
+        (sharedEnd - oBase).dx * oUnitSigned.dx + (sharedEnd - oBase).dy * oUnitSigned.dy;
+    final oSharedStart = oBase + oUnitSigned * tOnO_start.clamp(0.0, oLen);
+    final oSharedEnd = oBase + oUnitSigned * tOnO_end.clamp(0.0, oLen);
+
+    return (
+      start: sharedStart,
+      end: sharedEnd,
+      oStart: oSharedStart,
+      oEnd: oSharedEnd,
+    );
+  }
+
+  /// Finds the best wall pair between movingShape and all other closed shapes.
+  /// Returns (myWallIndex, otherShapeIndex, otherWallIndex, overlapData) or null.
+  ({
+    int mw,
+    int os,
+    int ow,
+    Offset sharedStart,
+    Offset sharedEnd,
+    Offset oSharedStart,
+    Offset oSharedEnd
+  })? _findWallSnapCandidate(SketchShape movingShape) {
     final int n = movingShape.points.length;
     for (int mi = 0; mi < n; mi++) {
       final Offset mA = movingShape.points[mi];
       final Offset mB = movingShape.points[(mi + 1) % n];
-      final Offset mMid = Offset((mA.dx + mB.dx) / 2, (mA.dy + mB.dy) / 2);
 
       for (int s = 0; s < shapes.length; s++) {
         if (s == _movingShapeIndex) continue;
@@ -536,14 +614,40 @@ class _SketchScreenState extends State<SketchScreen>
         for (int oi = 0; oi < on; oi++) {
           final Offset oA = other.points[oi];
           final Offset oB = other.points[(oi + 1) % on];
-          final Offset oMid = Offset((oA.dx + oB.dx) / 2, (oA.dy + oB.dy) / 2);
-          if ((mMid - oMid).distance < wallSnapThresholdWorld) {
-            return (mi, s, oi, 0); // myWall, otherShape, otherWall, unused
+          final overlap = _wallOverlapSegment(mA, mB, oA, oB);
+          if (overlap != null) {
+            return (
+              mw: mi,
+              os: s,
+              ow: oi,
+              sharedStart: overlap.start,
+              sharedEnd: overlap.end,
+              oSharedStart: overlap.oStart,
+              oSharedEnd: overlap.oEnd,
+            );
           }
         }
       }
     }
-    return (-1, -1, -1, -1);
+    return null;
+  }
+
+  /// Returns (myPointIndex, otherShapeIndex, otherPointIndex) or null
+  ({int mp, int os, int op})? _findVertexSnapCandidate(SketchShape movingShape) {
+    for (int mi = 0; mi < movingShape.points.length; mi++) {
+      final Offset mp = movingShape.points[mi];
+      for (int s = 0; s < shapes.length; s++) {
+        if (s == _movingShapeIndex) continue;
+        if (!shapes[s].isClosed) continue;
+        for (int oi = 0; oi < shapes[s].points.length; oi++) {
+          final Offset op = shapes[s].points[oi];
+          if ((mp - op).distance < wallSnapThresholdWorld) {
+            return (mp: mi, os: s, op: oi);
+          }
+        }
+      }
+    }
+    return null;
   }
 
   void _syncWallDefinitions() {
@@ -698,6 +802,16 @@ class _SketchScreenState extends State<SketchScreen>
   void _onPointerMove(PointerMoveEvent event) {
     // ── MOVE MODE ──────────────────────────────────────────────
     if (_movingShapeIndex >= 0 && _moveStartWorld != null) {
+      // Clear stale shared walls every frame during move - prevents ghost walls
+      for (final sw in shapes[_movingShapeIndex].sharedWalls) {
+        if (sw.otherShapeIndex < shapes.length) {
+          shapes[sw.otherShapeIndex]
+              .sharedWalls
+              .removeWhere((s) => s.otherShapeIndex == _movingShapeIndex);
+        }
+      }
+      shapes[_movingShapeIndex].sharedWalls.clear();
+
       _dragOccurred = true;
       final currentWorld = screenToWorld(event.localPosition);
       final delta = currentWorld - _moveStartWorld!;
@@ -710,10 +824,10 @@ class _SketchScreenState extends State<SketchScreen>
       // Check for wall snap candidate during drag
       final movingShape = shapes[_movingShapeIndex];
       if (movingShape.isClosed) {
-        final (mw, os, ow, _) = _findWallSnapCandidate(movingShape);
+        final candidate = _findWallSnapCandidate(movingShape);
         setState(() {
-          _snapCandidateShape = os;
-          _snapCandidateWall = ow;
+          _snapCandidateShape = candidate?.os ?? -1;
+          _snapCandidateWall = candidate?.ow ?? -1;
         });
       }
       return;
@@ -811,43 +925,71 @@ class _SketchScreenState extends State<SketchScreen>
   void _onPointerUp(PointerUpEvent event) {
     // ── MOVE MODE ──────────────────────────────────────────────
     if (_movingShapeIndex >= 0) {
-      // Commit wall merge if we have a candidate
-      if (_snapCandidateShape >= 0 &&
-          _snapCandidateWall >= 0 &&
-          _movingShapeIndex >= 0) {
+      if (_movingShapeIndex >= 0) {
         final movingShape = shapes[_movingShapeIndex];
         if (movingShape.isClosed) {
-          final (mw, os, ow, _) = _findWallSnapCandidate(movingShape);
-          if (mw >= 0) {
-            // Snap the moving shape so its wall exactly aligns to the other wall
-            final other = shapes[os];
-            final Offset oA = other.points[ow];
-            final Offset oB = other.points[(ow + 1) % other.points.length];
-            final Offset mA = movingShape.points[mw];
-            final Offset mB =
-                movingShape.points[(mw + 1) % movingShape.points.length];
-            // Translate moving shape so its wall midpoint matches the other wall midpoint
-            final Offset oMid = Offset((oA.dx + oB.dx) / 2, (oA.dy + oB.dy) / 2);
-            final Offset mMid = Offset((mA.dx + mB.dx) / 2, (mA.dy + mB.dy) / 2);
-            final Offset delta = oMid - mMid;
+          final candidate = _findWallSnapCandidate(movingShape);
+          if (candidate != null) {
+            final other = shapes[candidate.os];
+            // Snap: translate moving shape so its shared segment aligns to the other
+            final myMid = Offset((candidate.sharedStart.dx + candidate.sharedEnd.dx) / 2,
+                (candidate.sharedStart.dy + candidate.sharedEnd.dy) / 2);
+            final oMid = Offset((candidate.oSharedStart.dx + candidate.oSharedEnd.dx) / 2,
+                (candidate.oSharedStart.dy + candidate.oSharedEnd.dy) / 2);
+            final delta = oMid - myMid;
             movingShape.points = movingShape.points.map((p) => p + delta).toList();
 
-            // Record shared wall on both shapes
-            movingShape.sharedWalls.removeWhere((sw) => sw.myWallIndex == mw);
-            other.sharedWalls.removeWhere((sw) =>
-                sw.otherShapeIndex == _movingShapeIndex &&
-                sw.otherWallIndex == mw);
+            // Recalculate overlap after snapping
+            final mA = movingShape.points[candidate.mw];
+            final mB =
+                movingShape.points[(candidate.mw + 1) % movingShape.points.length];
+            final oA = other.points[candidate.ow];
+            final oB = other.points[(candidate.ow + 1) % other.points.length];
+            final finalOverlap = _wallOverlapSegment(mA, mB, oA, oB);
+            if (finalOverlap != null) {
+              // Remove any existing shared wall for these indices
+              movingShape.sharedWalls.removeWhere((sw) => sw.myWallIndex == candidate.mw);
+              other.sharedWalls.removeWhere((sw) =>
+                  sw.otherShapeIndex == _movingShapeIndex && sw.myWallIndex == candidate.ow);
 
-            movingShape.sharedWalls.add(SharedWall(
-              otherShapeIndex: os,
-              myWallIndex: mw,
-              otherWallIndex: ow,
-            ));
-            other.sharedWalls.add(SharedWall(
-              otherShapeIndex: _movingShapeIndex,
-              myWallIndex: ow,
-              otherWallIndex: mw,
-            ));
+              // Compute parametric t-values along each wall
+              final mVec = mB - mA;
+              final mLen = mVec.distance;
+              final oVec = oB - oA;
+              final oLen = oVec.distance;
+
+              final tMS =
+                  _tAlong(mA, mVec, mLen, finalOverlap.start).clamp(0.0, 1.0);
+              final tME = _tAlong(mA, mVec, mLen, finalOverlap.end).clamp(0.0, 1.0);
+              final tOS =
+                  _tAlong(oA, oVec, oLen, finalOverlap.oStart).clamp(0.0, 1.0);
+              final tOE = _tAlong(oA, oVec, oLen, finalOverlap.oEnd).clamp(0.0, 1.0);
+
+              movingShape.sharedWalls.add(SharedWall(
+                otherShapeIndex: candidate.os,
+                myWallIndex: candidate.mw,
+                otherWallIndex: candidate.ow,
+                tStart: tMS,
+                tEnd: tME,
+              ));
+              other.sharedWalls.add(SharedWall(
+                otherShapeIndex: _movingShapeIndex,
+                myWallIndex: candidate.ow,
+                otherWallIndex: candidate.mw,
+                tStart: tOS,
+                tEnd: tOE,
+              ));
+            }
+          }
+
+          // Vertex-to-vertex snap
+          final vertexCandidate = _findVertexSnapCandidate(movingShape);
+          if (vertexCandidate != null) {
+            final Offset myPt = movingShape.points[vertexCandidate.mp];
+            final Offset otherPt = shapes[vertexCandidate.os].points[vertexCandidate.op];
+            final Offset delta = otherPt - myPt;
+            // Translate entire moving shape so the two vertices meet exactly
+            movingShape.points = movingShape.points.map((p) => p + delta).toList();
           }
         }
       }
