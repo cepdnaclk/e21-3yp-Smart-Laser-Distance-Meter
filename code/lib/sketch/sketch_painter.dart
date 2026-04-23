@@ -38,6 +38,7 @@ class SketchPainter extends CustomPainter {
   final int snapCandidateShape;
   final int snapCandidateWall;
   final List<({Rect rect, int wallIndex, int shapeIndex})> labelHitRects;
+  final String? selectedObjectId;
 
   const SketchPainter({
     required this.panOffset,
@@ -69,6 +70,7 @@ class SketchPainter extends CustomPainter {
     required this.snapCandidateShape,
     required this.snapCandidateWall,
     required this.labelHitRects,
+    required this.selectedObjectId,
     
   });
 
@@ -1291,7 +1293,49 @@ class SketchPainter extends CustomPainter {
           ? Offset(dir.dy, -dir.dx) // flipped side
           : Offset(-dir.dy, dir.dx); // default inward
 
-      const bool isSelected = false;
+      final bool isSelected = obj.id == selectedObjectId;
+
+      // Draw blue selection rectangle when selected
+      if (isSelected) {
+        final double rectHalfW = halfWScreen + 6;
+        final double rectHalfH = halfWScreen + 6; // square-ish like the image
+        final Offset rectA = Offset(
+          centreScreen.dx - dir.dx * rectHalfW - perp.dx * 4,
+          centreScreen.dy - dir.dy * rectHalfW - perp.dy * 4,
+        );
+        final Offset rectB = Offset(
+          centreScreen.dx + dir.dx * rectHalfW - perp.dx * 4,
+          centreScreen.dy + dir.dy * rectHalfW - perp.dy * 4,
+        );
+        final Offset rectC = Offset(
+          centreScreen.dx + dir.dx * rectHalfW + perp.dx * rectHalfH,
+          centreScreen.dy + dir.dy * rectHalfW + perp.dy * rectHalfH,
+        );
+        final Offset rectD = Offset(
+          centreScreen.dx - dir.dx * rectHalfW + perp.dx * rectHalfH,
+          centreScreen.dy - dir.dy * rectHalfW + perp.dy * rectHalfH,
+        );
+        final selPath = Path()
+          ..moveTo(rectA.dx, rectA.dy)
+          ..lineTo(rectB.dx, rectB.dy)
+          ..lineTo(rectC.dx, rectC.dy)
+          ..lineTo(rectD.dx, rectD.dy)
+          ..close();
+        canvas.drawPath(
+          selPath,
+          Paint()
+            ..color = const Color(0xFF0099FF).withOpacity(0.08)
+            ..style = PaintingStyle.fill,
+        );
+        canvas.drawPath(
+          selPath,
+          Paint()
+            ..color = const Color(0xFF0099FF)
+            ..strokeWidth = 1.5
+            ..style = PaintingStyle.stroke,
+        );
+      }
+
       if (obj.isDoor) {
         _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
       } else {
