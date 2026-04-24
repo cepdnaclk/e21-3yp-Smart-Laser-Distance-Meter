@@ -1,54 +1,60 @@
 const express = require('express');
+const pool = require('../db/db');
 const authMiddleware = require('../middleware/auth_middleware');
 
 const router = express.Router();
 
-// Temporary in-memory storage — will replace with PostgreSQL later
-const projects = [];
-
-// Apply authMiddleware to ALL routes in this file
-// This means every request here must have a valid JWT token
+// Protect all routes
 router.use(authMiddleware);
 
-// GET /projects — list all projects for the logged-in user
-router.get('/', (req, res) => {
-  // req.user.userId was set by authMiddleware
-  const userProjects = projects.filter(p => p.userId === req.user.userId);
-  res.json(userProjects);
+// GET /projects — list all projects for logged in user
+router.get('/', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM projects WHERE user_id = $1 ORDER BY updated_at DESC',
+      [req.user.userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
-// POST /projects — create a new project
-router.post('/', (req, res) => {
-  const { name } = req.body;
+// POST /projects — create new project
+router.post('/', async (req, res) => {
+  try {
+    const { name, local_id } = req.body;
 
-  if (!name) {
-    return res.status(400).json({ error: 'Project name is required' });
+    if (!name) {
+      return res.status(400).json({ error: 'Project name is required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO projects (user_id, name, local_id)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [req.user.userId, name, local_id]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  const newProject = {
-    id: projects.length + 1,
-    userId: req.user.userId,
-    name: name,
-    created_at: new Date().toISOString(),
-  };
-
-  projects.push(newProject);
-  res.status(201).json(newProject);
 });
 
-// DELETE /projects/:id — delete a project
-router.delete('/:id', (req, res) => {
-  const projectId = parseInt(req.params.id);
-  const index = projects.findIndex(
-    p => p.id === projectId && p.userId === req.user.userId
-  );
-
-  if (index === -1) {
-    return res.status(404).json({ error: 'Project not found' });
+// DELETE /projects/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM projects WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.userId]
+    );
+    res.json({ message: 'Project deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  projects.splice(index, 1);
-  res.json({ message: 'Project deleted successfully' });
 });
 
 module.exports = router;
