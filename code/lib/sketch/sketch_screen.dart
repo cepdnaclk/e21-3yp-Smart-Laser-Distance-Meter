@@ -16,6 +16,7 @@ import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
+import '../services/api_service.dart';
 
 
 class SketchScreen extends StatefulWidget {
@@ -279,6 +280,117 @@ class _SketchScreenState extends State<SketchScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Save failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _backupToCloud() async {
+    // Check if logged in first
+    final isLoggedIn = await ApiService.isLoggedIn();
+    if (!isLoggedIn) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login first to backup to cloud'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Uploading to cloud...'),
+          backgroundColor: Color(0xFF1A2A3A),
+          duration: Duration(seconds: 60),
+        ),
+      );
+    }
+
+    try {
+      // Build the data structure to send to backend
+      // matching exactly what sync.js expects
+      final projectData = {
+        'project': {
+          'name': 'Room Project ${DateTime.now().millisecondsSinceEpoch}',
+          'local_id': 1,
+        },
+        'shapes': shapes.asMap().entries.map((entry) {
+          final index = entry.key;
+          final shape = entry.value;
+          return {
+            'shape_index': index,
+            'is_closed': shape.isClosed,
+            'points': shape.points.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'x': e.value.dx,
+              'y': e.value.dy,
+            }).toList(),
+            'wall_real_mm': shape.wallRealMm.entries.map((e) => {
+              'wall_index': e.key,
+              'real_mm': e.value,
+            }).toList(),
+            'wall_angles': _wallAngles.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'angle': e.value,
+            }).toList(),
+            'wall_lengths': _wallDrawnLengths.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'length': e.value,
+            }).toList(),
+          };
+        }).toList(),
+        'roomObjects': shapes
+            .expand((shape) => shape.roomObjects)
+            .map((obj) => {
+              'object_id': obj.id,
+              'type': obj.type.name,
+              'wall_index': obj.wallIndex,
+              'position_along': obj.positionAlong,
+              'width_mm': obj.widthMm,
+              'height_mm': obj.heightMm,
+              'elevation_mm': obj.elevationMm,
+        }).toList(),
+      };
+
+      final result = await ApiService.uploadProject(projectData);
+
+      // Hide the uploading snackbar
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
+
+      if (result['error'] != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Backup failed: ${result['error']}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Backed up to cloud successfully'),
+              backgroundColor: Color(0xFF00AA44),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Backup failed: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -2197,6 +2309,15 @@ class _SketchScreenState extends State<SketchScreen>
                         onPressed: _loadProject,
                         color: const Color(0xFF00AAFF),
                         tooltip: 'Load Project',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.cloud_upload, size: 18),
+                        onPressed: activeShape.points.isNotEmpty ? _backupToCloud : null,
+                        color: const Color(0xFF8844FF),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Backup to Cloud',
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
