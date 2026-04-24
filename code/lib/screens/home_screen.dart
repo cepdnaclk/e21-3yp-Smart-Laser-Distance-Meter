@@ -7,7 +7,7 @@ import '../sketch/sketch_screen.dart';
 import '../services/api_service.dart';
 import '../screens/login_screen.dart';
 import '../database/project_list_screen.dart';
-
+import '../database/cloud_projects_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -132,6 +132,28 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   MaterialPageRoute(
                       builder: (_) => const ProjectListScreen()),
+                );
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            // Cloud restore button
+            ElevatedButton.icon(
+              icon: const Icon(Icons.cloud_download),
+              label: const Text('Restore from Cloud'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 32, vertical: 16),
+                textStyle: const TextStyle(fontSize: 18),
+                backgroundColor: const Color(0xFF8844FF),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const CloudProjectsScreen()),
                 );
               },
             ),
