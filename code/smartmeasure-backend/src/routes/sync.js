@@ -30,7 +30,7 @@ router.post('/upload', async (req, res) => {
       const shapeResult = await client.query(
         `INSERT INTO shapes (project_id, shape_index, is_closed)
          VALUES ($1, $2, $3) RETURNING id`,
-        [cloudProjectId, shape.shape_index, shape.is_closed]
+        [cloudProjectId, shape.shape_index, shape.is_closed ? 1 : 0]
       );
       const cloudShapeId = shapeResult.rows[0].id;
 
