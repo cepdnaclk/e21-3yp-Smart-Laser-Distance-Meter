@@ -6,6 +6,11 @@
 #include <Adafruit_SSD1306.h>
 #include <VL53L0X.h>
 
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 #define OLED_ADDRESS  0x3C
@@ -28,6 +33,14 @@ VL53L0X sensor;
 bool sdReady     = false;
 int  recordCount = 0;
 float lastMm     = 0;
+
+// BLE
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+BLEServer*         bleServer    = nullptr;
+BLECharacteristic* bleChar      = nullptr;
+bool               bleConnected = false;
 
 // ── History scroll data ────────────────────────────────────
 int historyOffset = 0;  // which record to start showing from
@@ -170,6 +183,53 @@ void showSaved(float mm) {
   display.display();
 }
 
+// BLE server callbacks and send function
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* s) override {
+    bleConnected = true;
+    beep(2);
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("-- Bluetooth --");
+    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+    display.setCursor(20, 28);
+    display.println("App Connected!");
+    display.display();
+    Serial.println("BLE connected");
+    delay(1000);
+    showIdle();
+  }
+
+  void onDisconnect(BLEServer* s) override {
+    bleConnected = false;
+    s->startAdvertising();
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("-- Bluetooth --");
+    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+    display.setCursor(0, 20); display.println("App disconnected");
+    display.setCursor(0, 32); display.println("Waiting for app...");
+    display.display();
+    Serial.println("BLE disconnected");
+  }
+};
+
+void bleSend(float mm, bool capturing) {
+  if (!bleConnected || bleChar == nullptr) return;
+  uint16_t dist = (uint16_t)constrain(mm, 0, 65535);
+  uint8_t packet[4];
+  packet[0] = (dist >> 8) & 0xFF;
+  packet[1] =  dist       & 0xFF;
+  packet[2] = 80;
+  packet[3] = capturing ? 0x01 : 0x00;
+  bleChar->setValue(packet, 4);
+  bleChar->notify();
+}
+
 void loadHistory() {
   historyTotal = 0;
   if (!sdReady) return;
@@ -303,6 +363,18 @@ void setup() {
     }
   }
 
+  // BLE init
+  BLEDevice::init("SmartMeasure Pro");
+  bleServer = BLEDevice::createServer();
+  bleServer->setCallbacks(new MyServerCallbacks());
+  BLEService* svc = bleServer->createService(SERVICE_UUID);
+  bleChar = svc->createCharacteristic(
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  bleChar->addDescriptor(new BLE2902());
+  svc->start();
+
   Serial.println("Ready - press PWR to start");
 }
 
@@ -339,15 +411,26 @@ void loop() {
         Serial.println("Normal mode");
       } else {
         currentScreen = BLE;
+        normalState   = IDLE;
+
+        // start advertising
+        BLEAdvertising* adv = BLEDevice::getAdvertising();
+        adv->addServiceUUID(SERVICE_UUID);
+        adv->setScanResponse(true);
+        BLEDevice::startAdvertising();
+
         display.clearDisplay();
         display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);
-        display.setCursor(18, 0); display.println("SmartMeasure Pro");
+        display.setCursor(0, 0);
+        display.println("-- Bluetooth --");
         display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
         display.setCursor(0, 20); display.println("BLE Mode");
         display.setCursor(0, 32); display.println("Waiting for app...");
+        display.setCursor(0, 44); display.println("Open SmartMeasure");
+        display.setCursor(0, 54); display.println("PWR=off");
         display.display();
-        Serial.println("BLE mode");
+        Serial.println("BLE advertising");
       }
     }
     if (btnPwr.triggered) {
@@ -473,10 +556,77 @@ void loop() {
 
   // ── BLE MODE ────────────────────────────────────────────
   else if (currentScreen == BLE) {
-    if (btnPwr.triggered) {
-      currentScreen = OFF;
-      display.clearDisplay(); display.display();
-      beep(2);
+
+    // IDLE
+    if (normalState == IDLE) {
+      if (btnMeas.triggered) {
+        digitalWrite(LASER_PIN, HIGH);
+        bleSend(0, true);
+        beep(1);
+        showLaserOn();
+        normalState = LASER_ON;
+      }
+      if (btnPwr.triggered) {
+        currentScreen = OFF;
+        digitalWrite(LASER_PIN, LOW);
+        display.clearDisplay(); display.display();
+        beep(2);
+      }
+    }
+
+    // LASER ON
+    else if (normalState == LASER_ON) {
+      if (btnMeas.triggered) {
+        float mm = doMeasure();
+        if (mm < 0) {
+          beep(1, true);
+          display.clearDisplay();
+          display.setTextColor(SSD1306_WHITE);
+          display.setTextSize(1);
+          display.setCursor(0, 0); display.println("-- Bluetooth --");
+          display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+          display.setCursor(0, 20); display.println("Out of range!");
+          display.setCursor(0, 32); display.println("Move closer");
+          display.display();
+          delay(1500);
+          digitalWrite(LASER_PIN, HIGH);
+          showLaserOn();
+        } else {
+          lastMm = mm;
+          beep(1);
+          bleSend(lastMm, false);  // send to app
+          showResult(lastMm);
+          normalState = MEASURED;
+          Serial.print("BLE sent: "); Serial.print(mm); Serial.println(" mm");
+        }
+      }
+      if (btnPwr.triggered) {
+        digitalWrite(LASER_PIN, LOW);
+        beep(1);
+        showIdle();
+        normalState = IDLE;
+      }
+    }
+
+    // MEASURED
+    else if (normalState == MEASURED) {
+      if (btnMeas.triggered) {
+        bool ok = saveToSD(lastMm);
+        if (ok) {
+          beep(3);
+          showSaved(lastMm);
+          delay(1500);
+        } else {
+          beep(1, true);
+        }
+        showIdle();
+        normalState = IDLE;
+      }
+      if (btnPwr.triggered) {
+        beep(1);
+        showIdle();
+        normalState = IDLE;
+      }
     }
   }
 
