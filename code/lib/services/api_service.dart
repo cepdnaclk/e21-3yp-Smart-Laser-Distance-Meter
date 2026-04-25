@@ -5,11 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
-  // When testing on Android phone on same WiFi as your computer
-  // replace with your computer's actual IP address
-  // example: http://192.168.1.5:3000
-  // To find your IP run ipconfig in terminal and look for IPv4 Address
-  static const String baseUrl = 'http://192.168.1.102:3000';
+  static const String baseUrl =
+      'https://e21-3yp-smart-laser-distance-meter-production.up.railway.app';
 
   static const _storage = FlutterSecureStorage();
 
