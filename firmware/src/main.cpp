@@ -1,11 +1,6 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <SD.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <VL53L0X.h>
 
+<<<<<<< HEAD
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -376,15 +371,22 @@ void setup() {
   svc->start();
 
   Serial.println("Ready - press PWR to start");
+=======
+#define LED_PIN 2  // onboard LED on most ESP32 dev boards
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(LED_PIN, OUTPUT);
+    Serial.println("SmartMeasure ESP32 — board OK");
+>>>>>>> ab36644b1ba6b9f186dc5cc6a09281fd729aec27
 }
 
-// ── Loop ───────────────────────────────────────────────────
 void loop() {
-  updateButton(btnPwr);
-  updateButton(btnSel);
-  updateButton(btnDown);
-  updateButton(btnMeas);
+    digitalWrite(LED_PIN, HIGH);
+    Serial.println("LED ON");
+    delay(500);
 
+<<<<<<< HEAD
   // ── OFF ─────────────────────────────────────────────────
   if (currentScreen == OFF) {
     if (btnPwr.triggered) {
@@ -632,3 +634,9 @@ void loop() {
 
   delay(10);
 }
+=======
+    digitalWrite(LED_PIN, LOW);
+    Serial.println("LED OFF");
+    delay(500);
+}
+>>>>>>> ab36644b1ba6b9f186dc5cc6a09281fd729aec27
