@@ -127,4 +127,91 @@ class ApiService {
       return [];
     }
   }
+
+  static Future<Map<String, dynamic>?> pollForUpdates(
+      int cloudProjectId, String since) async {
+    try {
+      final headers = await _authHeaders();
+      final uri = Uri.parse(
+          '$baseUrl/sync/updates/$cloudProjectId?since=${Uri.encodeComponent(since)}');
+      final response = await http.get(uri, headers: headers);
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (data['updated'] == false) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<Map<String, dynamic>> joinProject(String inviteCode) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.post(
+        Uri.parse('$baseUrl/projects/join'),
+        headers: headers,
+        body: jsonEncode({'invite_code': inviteCode}),
+      );
+      return jsonDecode(response.body);
+    } catch (e) {
+      return {'error': 'Cannot connect to server.'};
+    }
+  }
+
+  static Future<List<dynamic>> getSharedProjects() async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/projects/shared'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static Future<String?> getInviteCode(int cloudProjectId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/projects/$cloudProjectId/invite-code'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) {
+        return (jsonDecode(response.body))['invite_code'] as String?;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<List<dynamic>> getCollaborators(int cloudProjectId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/projects/$cloudProjectId/collaborators'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static Future<bool> leaveProject(int cloudProjectId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/projects/$cloudProjectId/leave'),
+        headers: headers,
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }

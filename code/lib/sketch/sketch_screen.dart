@@ -31,6 +31,7 @@ class _SketchScreenState extends State<SketchScreen>
     with SketchDialogsMixin<SketchScreen> {
 
   // ── State fields ─────────────────────────────────────────────────────────
+  int? _localProjectId;
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
@@ -266,13 +267,14 @@ class _SketchScreenState extends State<SketchScreen>
     if (name == null || name.isEmpty) return;
 
     try {
-      await DatabaseHelper.instance.saveProject(
+      final savedId = await DatabaseHelper.instance.saveProject(
         name: name,
         shapes: shapes,
         roomObjects: activeShape.roomObjects,
         wallAngles: _wallAngles,
         wallDrawnLengths: _wallDrawnLengths,
       );
+      setState(() => _localProjectId = savedId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -308,6 +310,53 @@ class _SketchScreenState extends State<SketchScreen>
       return;
     }
 
+    // Ask for backup name
+    final nameController = TextEditingController(text: 'Room Project');
+    final chosenName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Cloud Backup Name',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Upload',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+    if (chosenName == null || chosenName.isEmpty) return;
+
+    // Ensure we have a local SQLite id
+    if (_localProjectId == null) {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: chosenName,
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+    }
+
     // Show loading indicator
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,8 +373,8 @@ class _SketchScreenState extends State<SketchScreen>
       // matching exactly what sync.js expects
       final projectData = {
         'project': {
-          'name': 'Room Project ${DateTime.now().millisecondsSinceEpoch}',
-          'local_id': 1,
+          'name': chosenName,
+          'local_id': _localProjectId!,
         },
         'shapes': shapes.asMap().entries.map((entry) {
           final index = entry.key;
