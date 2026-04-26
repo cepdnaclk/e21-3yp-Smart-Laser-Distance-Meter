@@ -128,12 +128,18 @@ class _SketchScreenState extends State<SketchScreen>
   void initState() {
     super.initState();
     widget.bleManager?.packetStream.listen((BlePacket packet) {
-      if (_waitingForBle && _selectedWallIndex >= 0) {
+      // Skip capturing packets (laser-on signal) and zero readings
+      if (packet.isCapturing || packet.distanceMm <= 0) return;
+
+      if (_waitingForBle && _selectedWallIndex >= 0 &&
+          _selectedWallIndex < _wallAngles.length) {
+        final wallIdx = _selectedWallIndex;
         setState(() {
           _waitingForBle = false;
           _pendingBleMm = packet.distanceMm;
+          _selectedWallIndex = -1;
         });
-        _applyRealMeasurement(_selectedWallIndex, packet.distanceMm);
+        _applyRealMeasurement(wallIdx, packet.distanceMm);
       }
     });
   }
@@ -1881,6 +1887,9 @@ class _SketchScreenState extends State<SketchScreen>
                         roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
+                        onWallMeasured: (wallIndex, mm) {
+                          _applyRealMeasurement(wallIndex, mm);
+                        },
                       ),
                     ),
                   );

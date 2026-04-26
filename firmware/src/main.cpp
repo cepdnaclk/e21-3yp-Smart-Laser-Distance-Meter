@@ -39,6 +39,7 @@ float lastMm      = 0;
 BLEServer*         bleServer    = nullptr;
 BLECharacteristic* bleChar      = nullptr;
 bool               bleConnected = false;
+int                bleMeasureCount = 0;
 
 int    historyOffset = 0;
 int    historyTotal  = 0;
@@ -87,6 +88,9 @@ int selectedMode = 0;
 
 enum NormalState { IDLE, LASER_ON, MEASURED, HISTORY };
 NormalState normalState = IDLE;
+
+enum BleState { BLE_IDLE, BLE_LASER_ON, BLE_SENT };
+BleState bleState = BLE_IDLE;
 
 void drawHeader(String mode) {
   display.setTextColor(SSD1306_WHITE);
@@ -172,6 +176,42 @@ void showSaved(float mm) {
   display.setTextSize(1);
   display.setCursor(0, 52);
   display.print("Total: "); display.print(recordCount);
+  display.display();
+}
+
+void showBleReady() {
+  display.clearDisplay();
+  drawHeader("BLE");
+  display.setTextSize(1);
+  display.setCursor(0, 14); display.println("App Connected!");
+  display.setCursor(0, 28); display.println("Select wall in app");
+  display.setCursor(0, 40); display.println("Press MEAS to shoot");
+  display.setCursor(0, 52);
+  display.print("Sent: "); display.print(bleMeasureCount);
+  display.display();
+}
+
+void showBleLaserOn() {
+  display.clearDisplay();
+  drawHeader("BLE");
+  display.setTextSize(1);
+  display.setCursor(0, 14); display.println(">> TAKE MEASUREMENT <<");
+  display.setCursor(0, 28); display.println("Laser ON - aim at wall");
+  display.setCursor(0, 42); display.println("Press MEAS to capture");
+  display.display();
+}
+
+void showBleSent(float mm) {
+  display.clearDisplay();
+  drawHeader("BLE");
+  display.setTextSize(1);
+  display.setCursor(0, 14); display.println(">> WALL UPDATED <<");
+  display.setTextSize(2);
+  display.setCursor(0, 28);
+  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);       display.println(" mm"); }
+  display.setTextSize(1);
+  display.setCursor(0, 52); display.println("Select next wall");
   display.display();
 }
 
@@ -275,17 +315,10 @@ void bleSend(float mm, bool capturing) {
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* s) override {
     bleConnected = true;
+    bleMeasureCount = 0;
     beep(2);
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0); display.println("-- Bluetooth --");
-    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
-    display.setCursor(20, 28); display.println("App Connected!");
-    display.display();
     Serial.println("BLE connected");
-    delay(1000);
-    showIdle();
+    showBleReady();
   }
   void onDisconnect(BLEServer* s) override {
     bleConnected = false;
