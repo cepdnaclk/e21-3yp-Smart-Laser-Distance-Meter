@@ -2196,160 +2196,146 @@ class _SketchScreenState extends State<SketchScreen>
                   height: 52,
                   color: const Color(0xFF2D2D2D),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              StatusItem(
-                                label: 'MODE',
-                                value: activeShape.isClosed
-                                    ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
-                                    : _isDraggingLastPoint
-                                        ? 'DRAG'
-                                        : _activePointIndex >= 0
-                                            ? 'EDIT'
-                                            : 'DRAW',
-                              ),
-                              const SizedBox(width: 8),
-                              StatusItem(
-                                  label: 'PTS',
-                                  value: '${activeShape.points.length}'),
-                              if (activeShape.isClosed && activeShape.points.length >= 2) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PERIM',
-                                  value: formatLength(_totalPerimeter()),
-                                ),
-                              ],
-                              if (activeShape.isClosed && activeShape.points.length >= 3) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'AREA',
-                                  value: formatArea(_totalArea()),
-                                ),
-                              ],
-                              if (_activePointIndex >= 0 &&
-                                  _activePointIndex < activeShape.points.length) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PT',
-                                  value: '${_activePointIndex + 1}',
-                                ),
-                              ],
-                            ],
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        StatusItem(
+                          label: 'MODE',
+                          value: activeShape.isClosed
+                              ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
+                              : _isDraggingLastPoint
+                                  ? 'DRAG'
+                                  : _activePointIndex >= 0
+                                      ? 'EDIT'
+                                      : 'DRAW',
+                        ),
+                        const SizedBox(width: 8),
+                        StatusItem(label: 'PTS', value: '${activeShape.points.length}'),
+                        if (activeShape.isClosed && activeShape.points.length >= 2) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PERIM',
+                            value: formatLength(_totalPerimeter()),
                           ),
+                        ],
+                        if (activeShape.isClosed && activeShape.points.length >= 3) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'AREA',
+                            value: formatArea(_totalArea()),
+                          ),
+                        ],
+                        if (_activePointIndex >= 0 &&
+                            _activePointIndex < activeShape.points.length) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PT',
+                            value: '${_activePointIndex + 1}',
+                          ),
+                        ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.undo, size: 18),
+                          onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Undo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.undo, size: 18),
-                        onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Undo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.redo, size: 18),
-                        onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Redo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: activeShape.points.isEmpty ? null : _clear,
-                        color: const Color(0xFFFF4444),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Clear',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      
-                      
-                      IconButton(
-                        icon: const Icon(Icons.picture_as_pdf, size: 18),
-                        onPressed: activeShape.points.length >= 2
-                            ? () => exportSketchPdf(
-                                  context: context,
-                                  shapes: shapes,
-                                  totalPerimeter: _totalPerimeter(),
-                                  totalArea: _totalArea(),
-                                  roomObjects: activeShape.roomObjects,
-                                )
-                            : null,
-                        color: const Color(0xFFFF4488),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Export PDF',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add_box_outlined, size: 18),
-                        onPressed: _addNewRoom,
-                        color: const Color(0xFF00AAFF),
-                        tooltip: 'Add Room',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.save, size: 18),
-                        onPressed: activeShape.points.isNotEmpty ? _saveProject : null,
-                        color: const Color(0xFF00AA44),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Save Project',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.folder_open, size: 18),
-                        onPressed: _loadProject,
-                        color: const Color(0xFF00AAFF),
-                        tooltip: 'Load Project',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.cloud_upload, size: 18),
-                        onPressed: activeShape.points.isNotEmpty ? _backupToCloud : null,
-                        color: const Color(0xFF8844FF),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Backup to Cloud',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.open_with,
-                          size: 18,
-                          color: _isMoveMode
-                              ? const Color(0xFF00FF99)
-                              : const Color(0xFF00AAFF),
+                        IconButton(
+                          icon: const Icon(Icons.redo, size: 18),
+                          onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Redo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                        onPressed: () => setState(() {
-                          _isMoveMode = !_isMoveMode;
-                          _movingShapeIndex = -1;
-                          _moveStartWorld = null;
-                          _activePointIndex = -1;
-                        }),
-                        tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
-                        padding: EdgeInsets.zero,
-                        constraints:
-                            const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          onPressed: activeShape.points.isEmpty ? null : _clear,
+                          color: const Color(0xFFFF4444),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Clear',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                          onPressed: activeShape.points.length >= 2
+                              ? () => exportSketchPdf(
+                                    context: context,
+                                    shapes: shapes,
+                                    totalPerimeter: _totalPerimeter(),
+                                    totalArea: _totalArea(),
+                                    roomObjects: activeShape.roomObjects,
+                                  )
+                              : null,
+                          color: const Color(0xFFFF4488),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Export PDF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_box_outlined, size: 18),
+                          onPressed: _addNewRoom,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Add Room',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.save, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _saveProject : null,
+                          color: const Color(0xFF00AA44),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Save Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          onPressed: _loadProject,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Load Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.cloud_upload, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _backupToCloud : null,
+                          color: const Color(0xFF8844FF),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Backup to Cloud',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.open_with,
+                            size: 18,
+                            color: _isMoveMode
+                                ? const Color(0xFF00FF99)
+                                : const Color(0xFF00AAFF),
+                          ),
+                          onPressed: () => setState(() {
+                            _isMoveMode = !_isMoveMode;
+                            _movingShapeIndex = -1;
+                            _moveStartWorld = null;
+                            _activePointIndex = -1;
+                          }),
+                          tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
