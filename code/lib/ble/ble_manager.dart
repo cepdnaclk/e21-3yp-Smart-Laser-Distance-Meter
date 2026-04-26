@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'ble_packet.dart';
-
-const String serviceUuid        = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-const String characteristicUuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+import '../core/constants.dart';
 
 class BleManager {
   BluetoothDevice? _device;
@@ -54,9 +52,9 @@ class BleManager {
     // Discover services
     List<BluetoothService> services = await device.discoverServices();
     for (BluetoothService s in services) {
-      if (s.uuid.toString().toLowerCase() == serviceUuid.toLowerCase()) {
+      if (s.uuid.toString().toLowerCase() == AppConstants.bleServiceUUID.toLowerCase()) {
         for (BluetoothCharacteristic c in s.characteristics) {
-          if (c.uuid.toString().toLowerCase() == characteristicUuid.toLowerCase()) {
+          if (c.uuid.toString().toLowerCase() == AppConstants.bleCharacteristicUUID.toLowerCase()) {
             _characteristic = c;
             await c.setNotifyValue(true);
             c.onValueReceived.listen((bytes) {
