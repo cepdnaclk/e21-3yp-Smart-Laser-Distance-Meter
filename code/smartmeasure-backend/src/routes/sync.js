@@ -17,13 +17,37 @@ router.post('/upload', async (req, res) => {
     // transaction — either everything saves or nothing saves
     await client.query('BEGIN');
 
-    // 1. Save project row
-    const projectResult = await client.query(
-      `INSERT INTO projects (user_id, name, local_id, updated_at)
-       VALUES ($1, $2, $3, NOW()) RETURNING id`,
-      [req.user.userId, project.name, project.local_id]
+    // 1. Upsert project
+    let cloudProjectId;
+    const existing = await client.query(
+      'SELECT id FROM projects WHERE user_id = $1 AND local_id = $2',
+      [req.user.userId, project.local_id]
     );
-    const cloudProjectId = projectResult.rows[0].id;
+    if (existing.rows.length > 0) {
+      cloudProjectId = existing.rows[0].id;
+      await client.query(
+        'UPDATE projects SET name = $1, updated_at = NOW() WHERE id = $2',
+        [project.name, cloudProjectId]
+      );
+      const oldShapes = await client.query(
+        'SELECT id FROM shapes WHERE project_id = $1', [cloudProjectId]
+      );
+      for (const row of oldShapes.rows) {
+        await client.query('DELETE FROM shape_points  WHERE shape_id = $1', [row.id]);
+        await client.query('DELETE FROM wall_real_mm  WHERE shape_id = $1', [row.id]);
+        await client.query('DELETE FROM wall_angles   WHERE shape_id = $1', [row.id]);
+        await client.query('DELETE FROM wall_lengths  WHERE shape_id = $1', [row.id]);
+      }
+      await client.query('DELETE FROM shapes       WHERE project_id = $1', [cloudProjectId]);
+      await client.query('DELETE FROM room_objects  WHERE project_id = $1', [cloudProjectId]);
+    } else {
+      const projectResult = await client.query(
+        `INSERT INTO projects (user_id, name, local_id, updated_at)
+         VALUES ($1, $2, $3, NOW()) RETURNING id`,
+        [req.user.userId, project.name, project.local_id]
+      );
+      cloudProjectId = projectResult.rows[0].id;
+    }
 
     // 2. Save each shape
     for (const shape of shapes) {
@@ -113,14 +137,24 @@ router.get('/download/:projectId', async (req, res) => {
   try {
     const projectId = req.params.projectId;
 
-    // Verify this project belongs to the logged in user
+    // Verify access: owner or accepted collaborator
     const projectResult = await pool.query(
-      'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
+      `SELECT p.* FROM projects p
+       WHERE p.id = $1
+         AND (
+           p.user_id = $2
+           OR EXISTS (
+             SELECT 1 FROM project_collaborators pc
+             WHERE pc.project_id = p.id
+               AND pc.user_id = $2
+               AND pc.status = 'accepted'
+           )
+         )`,
       [projectId, req.user.userId]
     );
 
     if (projectResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Project not found' });
+      return res.status(404).json({ error: 'Project not found or access denied' });
     }
 
     // Get all shapes for this project
@@ -174,6 +208,72 @@ router.get('/download/:projectId', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Download failed' });
+  }
+});
+
+// GET /sync/updates/:projectId?since=<ISO_timestamp>
+router.get('/updates/:projectId', async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+    const since = req.query.since;
+
+    const accessCheck = await pool.query(
+      `SELECT p.* FROM projects p
+       WHERE p.id = $1
+         AND (
+           p.user_id = $2
+           OR EXISTS (
+             SELECT 1 FROM project_collaborators pc
+             WHERE pc.project_id = p.id
+               AND pc.user_id = $2
+               AND pc.status = 'accepted'
+           )
+         )`,
+      [projectId, req.user.userId]
+    );
+    if (accessCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Access denied' });
+    }
+
+    const project = accessCheck.rows[0];
+    if (since && project.updated_at) {
+      const serverTime = new Date(project.updated_at).getTime();
+      const clientTime = new Date(since).getTime();
+      if (serverTime <= clientTime) {
+        return res.json({ updated: false });
+      }
+    }
+
+    const shapesResult = await pool.query(
+      'SELECT * FROM shapes WHERE project_id = $1 ORDER BY shape_index ASC',
+      [projectId]
+    );
+    const shapesWithData = await Promise.all(
+      shapesResult.rows.map(async (shape) => {
+        const [points, wallMm, wallAngles, wallLengths] = await Promise.all([
+          pool.query('SELECT * FROM shape_points WHERE shape_id = $1 ORDER BY order_index ASC', [shape.id]),
+          pool.query('SELECT * FROM wall_real_mm  WHERE shape_id = $1', [shape.id]),
+          pool.query('SELECT * FROM wall_angles   WHERE shape_id = $1 ORDER BY order_index ASC', [shape.id]),
+          pool.query('SELECT * FROM wall_lengths  WHERE shape_id = $1 ORDER BY order_index ASC', [shape.id]),
+        ]);
+        return { ...shape, points: points.rows, wall_real_mm: wallMm.rows,
+                 wall_angles: wallAngles.rows, wall_lengths: wallLengths.rows };
+      })
+    );
+    const objectsResult = await pool.query(
+      'SELECT * FROM room_objects WHERE project_id = $1', [projectId]
+    );
+
+    res.json({
+      updated: true,
+      project,
+      shapes: shapesWithData,
+      roomObjects: objectsResult.rows,
+    });
+
+  } catch (err) {
+    console.error('Updates error:', err);
+    res.status(500).json({ error: 'Failed to check updates' });
   }
 });
 
