@@ -1,6 +1,7 @@
 // lib/services/api_service.dart
 
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -90,8 +91,10 @@ class ApiService {
         body: jsonEncode(projectData),
       );
       return jsonDecode(response.body);
-    } catch (e) {
-      return {'error': 'Upload failed. Check your connection.'};
+    } catch (e, stackTrace) {
+      debugPrint('UPLOAD EXCEPTION: $e');
+      debugPrint('STACK: $stackTrace');
+      return {'error': 'Upload failed: ${e.toString()}'};
     }
   }
 

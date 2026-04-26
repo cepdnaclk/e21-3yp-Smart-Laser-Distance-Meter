@@ -41,10 +41,12 @@ router.post('/upload', async (req, res) => {
       await client.query('DELETE FROM shapes       WHERE project_id = $1', [cloudProjectId]);
       await client.query('DELETE FROM room_objects  WHERE project_id = $1', [cloudProjectId]);
     } else {
+      const inviteCode = Math.random().toString(36).substring(2, 6).toUpperCase() +
+                         Math.random().toString(36).substring(2, 6).toUpperCase();
       const projectResult = await client.query(
-        `INSERT INTO projects (user_id, name, local_id, updated_at)
-         VALUES ($1, $2, $3, NOW()) RETURNING id`,
-        [req.user.userId, project.name, project.local_id]
+        `INSERT INTO projects (user_id, name, local_id, invite_code, updated_at)
+         VALUES ($1, $2, $3, $4, NOW()) RETURNING id`,
+        [req.user.userId, project.name, project.local_id, inviteCode]
       );
       cloudProjectId = projectResult.rows[0].id;
     }

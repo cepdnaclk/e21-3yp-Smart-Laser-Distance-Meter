@@ -21,7 +21,17 @@ import '../services/api_service.dart';
 
 class SketchScreen extends StatefulWidget {
   final BleManager? bleManager;
-  const SketchScreen({super.key, this.bleManager});
+  final List<SketchShape>? initialShapes;
+  final List<double>? initialWallAngles;
+  final List<double>? initialWallLengths;
+
+  const SketchScreen({
+    super.key,
+    this.bleManager,
+    this.initialShapes,
+    this.initialWallAngles,
+    this.initialWallLengths,
+  });
 
   @override
   State<SketchScreen> createState() => _SketchScreenState();
@@ -128,6 +138,20 @@ class _SketchScreenState extends State<SketchScreen>
   @override
   void initState() {
     super.initState();
+    if (widget.initialShapes != null && widget.initialShapes!.isNotEmpty) {
+      shapes = List<SketchShape>.from(widget.initialShapes!);
+      activeIndex = 0;
+    }
+    if (widget.initialWallAngles != null) {
+      _wallAngles
+        ..clear()
+        ..addAll(widget.initialWallAngles!);
+    }
+    if (widget.initialWallLengths != null) {
+      _wallDrawnLengths
+        ..clear()
+        ..addAll(widget.initialWallLengths!);
+    }
     widget.bleManager?.packetStream.listen((BlePacket packet) {
       // Skip capturing packets (laser-on signal) and zero readings
       if (packet.isCapturing || packet.distanceMm <= 0) return;
@@ -414,7 +438,10 @@ class _SketchScreenState extends State<SketchScreen>
         }).toList(),
       };
 
+      debugPrint('About to upload, localProjectId: $_localProjectId, chosenName: $chosenName');
+      debugPrint('Project data keys: ${projectData.keys.toList()}');
       final result = await ApiService.uploadProject(projectData);
+      debugPrint('UPLOAD RESULT: $result');
 
       // Hide the uploading snackbar
       if (mounted) {
