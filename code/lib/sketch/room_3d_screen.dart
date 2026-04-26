@@ -11,6 +11,7 @@ class Room3DScreen extends StatefulWidget {
   final List<RoomObject> roomObjects;
   final Map<int, double> wallRealMm;
   final BleManager? bleManager;
+  final void Function(int wallIndex, double mm)? onWallMeasured;
 
   const Room3DScreen({
     super.key,
@@ -18,6 +19,7 @@ class Room3DScreen extends StatefulWidget {
     required this.roomObjects,
     required this.wallRealMm,
     this.bleManager,
+    this.onWallMeasured,
   });
 
   @override
@@ -148,16 +150,27 @@ class _Room3DScreenState extends State<Room3DScreen> {
 
   void _triggerBleMeasurement() {
     if (_selectedWallIndex == null || widget.bleManager == null) return;
+    final wallIdx = _selectedWallIndex!;
     setState(() => _waitingForBle = true);
-    widget.bleManager!.packetStream.first.then((packet) {
+
+    widget.bleManager!.packetStream
+      .where((p) => !p.isCapturing && p.distanceMm > 0)
+      .first
+      .then((packet) {
       if (!mounted) return;
+      final mm = packet.distanceMm;
+
       setState(() {
         _waitingForBle = false;
-        // You can store this back to wallRealMm via a callback if needed
+        widget.wallRealMm[wallIdx] = mm;
+        _selectedWallIndex = null;
       });
+
+      widget.onWallMeasured?.call(wallIdx, mm);
+
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
-            'Wall ${_selectedWallIndex! + 1}: ${packet.distanceMm.toStringAsFixed(0)} mm',
+            'Wall ${wallIdx + 1}: ${mm.toStringAsFixed(0)} mm — updated!',
             style: const TextStyle(fontFamily: 'monospace')),
         backgroundColor: const Color(0xFF003311),
       ));
