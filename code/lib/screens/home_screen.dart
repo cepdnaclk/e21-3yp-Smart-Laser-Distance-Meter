@@ -7,7 +7,7 @@ import '../sketch/sketch_screen.dart';
 import '../services/api_service.dart';
 import '../screens/login_screen.dart';
 import '../database/project_list_screen.dart';
-import '../database/cloud_projects_screen.dart';
+import '../database/collaboration_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -153,7 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                      builder: (_) => const CloudProjectsScreen()),
+                      builder: (_) => const CollaborationScreen()),
                 );
               },
             ),
