@@ -1,6 +1,10 @@
 #include <Arduino.h>
-
-<<<<<<< HEAD
+#include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <VL53L0X.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -22,27 +26,24 @@
 #define BUZZER    26
 #define LASER_PIN 4
 
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 VL53L0X sensor;
 
-bool sdReady     = false;
-int  recordCount = 0;
-float lastMm     = 0;
-
-// BLE
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+bool  sdReady     = false;
+int   recordCount = 0;
+float lastMm      = 0;
 
 BLEServer*         bleServer    = nullptr;
 BLECharacteristic* bleChar      = nullptr;
 bool               bleConnected = false;
 
-// ── History scroll data ────────────────────────────────────
-int historyOffset = 0;  // which record to start showing from
-int historyTotal  = 0;  // total records on SD
-String historyLines[100]; // store all records
+int    historyOffset = 0;
+int    historyTotal  = 0;
+String historyLines[100];
 
-// ── Button struct ──────────────────────────────────────────
 struct Button {
   int pin;
   bool lastReading;
@@ -69,7 +70,6 @@ void updateButton(Button &btn) {
   }
 }
 
-// ── Buzzer ─────────────────────────────────────────────────
 void beep(int times, bool longBeep = false) {
   if (longBeep) {
     digitalWrite(BUZZER, HIGH); delay(600);
@@ -81,16 +81,13 @@ void beep(int times, bool longBeep = false) {
   }
 }
 
-// ── Screens ────────────────────────────────────────────────
-enum Screen { OFF, MODE_SELECT, NORMAL, BLE };
+enum Screen { OFF, MODE_SELECT, NORMAL, BLE_MODE };
 Screen currentScreen = OFF;
 int selectedMode = 0;
 
-// ── Normal mode states ─────────────────────────────────────
 enum NormalState { IDLE, LASER_ON, MEASURED, HISTORY };
 NormalState normalState = IDLE;
 
-// ── Display functions ──────────────────────────────────────
 void drawHeader(String mode) {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -121,7 +118,7 @@ void showModeSelect() {
 
 void showIdle() {
   display.clearDisplay();
-  drawHeader("NRM");
+  drawHeader(currentScreen == BLE_MODE ? "BLE" : "NRM");
   display.setTextSize(1);
   display.setCursor(0, 14); display.println("Press MEASURE");
   display.setCursor(0, 24); display.println("to start");
@@ -133,7 +130,7 @@ void showIdle() {
 
 void showLaserOn() {
   display.clearDisplay();
-  drawHeader("NRM");
+  drawHeader(currentScreen == BLE_MODE ? "BLE" : "NRM");
   display.setTextSize(1);
   display.setCursor(0, 14); display.println("** LASER ON **");
   display.setCursor(0, 26); display.println("Aim at target");
@@ -144,7 +141,7 @@ void showLaserOn() {
 
 void showMeasuring() {
   display.clearDisplay();
-  drawHeader("NRM");
+  drawHeader(currentScreen == BLE_MODE ? "BLE" : "NRM");
   display.setTextSize(1);
   display.setCursor(20, 28); display.println("Measuring...");
   display.display();
@@ -152,7 +149,7 @@ void showMeasuring() {
 
 void showResult(float mm) {
   display.clearDisplay();
-  drawHeader("NRM");
+  drawHeader(currentScreen == BLE_MODE ? "BLE" : "NRM");
   display.setTextSize(1);
   display.setCursor(0, 14); display.println("Result:");
   display.setTextSize(2);
@@ -166,7 +163,7 @@ void showResult(float mm) {
 
 void showSaved(float mm) {
   display.clearDisplay();
-  drawHeader("NRM");
+  drawHeader(currentScreen == BLE_MODE ? "BLE" : "NRM");
   display.setCursor(28, 14); display.println(">> SAVED! <<");
   display.setTextSize(2);
   display.setCursor(0, 28);
@@ -176,53 +173,6 @@ void showSaved(float mm) {
   display.setCursor(0, 52);
   display.print("Total: "); display.print(recordCount);
   display.display();
-}
-
-// BLE server callbacks and send function
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* s) override {
-    bleConnected = true;
-    beep(2);
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("-- Bluetooth --");
-    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
-    display.setCursor(20, 28);
-    display.println("App Connected!");
-    display.display();
-    Serial.println("BLE connected");
-    delay(1000);
-    showIdle();
-  }
-
-  void onDisconnect(BLEServer* s) override {
-    bleConnected = false;
-    s->startAdvertising();
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("-- Bluetooth --");
-    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
-    display.setCursor(0, 20); display.println("App disconnected");
-    display.setCursor(0, 32); display.println("Waiting for app...");
-    display.display();
-    Serial.println("BLE disconnected");
-  }
-};
-
-void bleSend(float mm, bool capturing) {
-  if (!bleConnected || bleChar == nullptr) return;
-  uint16_t dist = (uint16_t)constrain(mm, 0, 65535);
-  uint8_t packet[4];
-  packet[0] = (dist >> 8) & 0xFF;
-  packet[1] =  dist       & 0xFF;
-  packet[2] = 80;
-  packet[3] = capturing ? 0x01 : 0x00;
-  bleChar->setValue(packet, 4);
-  bleChar->notify();
 }
 
 void loadHistory() {
@@ -239,16 +189,13 @@ void loadHistory() {
     if (historyTotal >= 100) break;
   }
   f.close();
-  // start from last record
   historyOffset = max(0, historyTotal - 3);
 }
 
 void showHistory() {
   display.clearDisplay();
-  drawHeader("NRM");
+  display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
-
-  // header — no mode indicator, no last measurement
   display.setCursor(0, 0);
   display.println("-- History --");
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
@@ -258,45 +205,36 @@ void showHistory() {
     display.setCursor(0, 54); display.println("PWR=back");
     display.display(); return;
   }
-
   if (historyTotal == 0) {
     display.setCursor(0, 20); display.println("No records yet");
     display.setCursor(0, 54); display.println("PWR=back");
     display.display(); return;
   }
 
-  // show 3 records starting from historyOffset
   for (int i = 0; i < 3; i++) {
     int idx = historyOffset + i;
     if (idx >= historyTotal) break;
-
-    String l  = historyLines[idx];
-    int c1    = l.indexOf(',');
-    int c2    = l.indexOf(',', c1 + 1);
+    String l   = historyLines[idx];
+    int c1     = l.indexOf(',');
+    int c2     = l.indexOf(',', c1 + 1);
     String num = l.substring(0, c1);
     String mm  = l.substring(c1 + 1, c2);
-
     display.setCursor(0, 14 + i * 14);
     display.print("#"); display.print(num);
     display.print("  "); display.print(mm); display.print(" mm");
   }
 
-  // scroll indicator bottom right
   display.setCursor(80, 54);
   display.print(historyOffset + 1);
   display.print("-");
   display.print(min(historyOffset + 3, historyTotal));
   display.print("/");
   display.print(historyTotal);
-
-  // navigation hint
   display.setCursor(0, 54);
-  display.print("PWR=back DWN/SEL=scroll");
-
+  display.print("PWR=back SEL/DWN=scroll");
   display.display();
 }
 
-// ── SD save ────────────────────────────────────────────────
 bool saveToSD(float mm) {
   if (!sdReady) return false;
   File f = SD.open("/readings.csv", FILE_APPEND);
@@ -309,7 +247,6 @@ bool saveToSD(float mm) {
   return true;
 }
 
-// ── Measure ────────────────────────────────────────────────
 float doMeasure() {
   for (int i = 0; i < 3; i++) {
     digitalWrite(LASER_PIN, LOW);  delay(150);
@@ -323,7 +260,48 @@ float doMeasure() {
   return (float)mm;
 }
 
-// ── Setup ──────────────────────────────────────────────────
+void bleSend(float mm, bool capturing) {
+  if (!bleConnected || bleChar == nullptr) return;
+  uint16_t dist = (uint16_t)constrain(mm, 0, 65535);
+  uint8_t packet[4];
+  packet[0] = (dist >> 8) & 0xFF;
+  packet[1] =  dist       & 0xFF;
+  packet[2] = 80;
+  packet[3] = capturing ? 0x01 : 0x00;
+  bleChar->setValue(packet, 4);
+  bleChar->notify();
+}
+
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* s) override {
+    bleConnected = true;
+    beep(2);
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0); display.println("-- Bluetooth --");
+    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+    display.setCursor(20, 28); display.println("App Connected!");
+    display.display();
+    Serial.println("BLE connected");
+    delay(1000);
+    showIdle();
+  }
+  void onDisconnect(BLEServer* s) override {
+    bleConnected = false;
+    s->startAdvertising();
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0); display.println("-- Bluetooth --");
+    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+    display.setCursor(0, 20); display.println("App disconnected");
+    display.setCursor(0, 32); display.println("Waiting for app...");
+    display.display();
+    Serial.println("BLE disconnected");
+  }
+};
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(21, 22);
@@ -337,17 +315,15 @@ void setup() {
   digitalWrite(BUZZER,    LOW);
   digitalWrite(LASER_PIN, LOW);
 
-  // OLED
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS);
+  display.setTextColor(SSD1306_WHITE);
   display.clearDisplay();
   display.display();
 
-  // Sensor
   sensor.setTimeout(500);
   sensor.init();
   sensor.startContinuous();
 
-  // SD
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   delay(200);
   if (SD.begin(SD_CS, SPI, 4000000)) {
@@ -358,7 +334,6 @@ void setup() {
     }
   }
 
-  // BLE init
   BLEDevice::init("SmartMeasure Pro");
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new MyServerCallbacks());
@@ -371,22 +346,14 @@ void setup() {
   svc->start();
 
   Serial.println("Ready - press PWR to start");
-=======
-#define LED_PIN 2  // onboard LED on most ESP32 dev boards
-
-void setup() {
-    Serial.begin(115200);
-    pinMode(LED_PIN, OUTPUT);
-    Serial.println("SmartMeasure ESP32 — board OK");
->>>>>>> ab36644b1ba6b9f186dc5cc6a09281fd729aec27
 }
 
 void loop() {
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println("LED ON");
-    delay(500);
+  updateButton(btnPwr);
+  updateButton(btnSel);
+  updateButton(btnDown);
+  updateButton(btnMeas);
 
-<<<<<<< HEAD
   // ── OFF ─────────────────────────────────────────────────
   if (currentScreen == OFF) {
     if (btnPwr.triggered) {
@@ -410,22 +377,17 @@ void loop() {
         currentScreen = NORMAL;
         normalState   = IDLE;
         showIdle();
-        Serial.println("Normal mode");
       } else {
-        currentScreen = BLE;
+        currentScreen = BLE_MODE;
         normalState   = IDLE;
-
-        // start advertising
         BLEAdvertising* adv = BLEDevice::getAdvertising();
         adv->addServiceUUID(SERVICE_UUID);
         adv->setScanResponse(true);
         BLEDevice::startAdvertising();
-
         display.clearDisplay();
         display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.println("-- Bluetooth --");
+        display.setCursor(0, 0); display.println("-- Bluetooth --");
         display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
         display.setCursor(0, 20); display.println("BLE Mode");
         display.setCursor(0, 32); display.println("Waiting for app...");
@@ -445,18 +407,16 @@ void loop() {
   // ── NORMAL MODE ─────────────────────────────────────────
   else if (currentScreen == NORMAL) {
 
-    // IDLE
     if (normalState == IDLE) {
       if (btnMeas.triggered) {
         digitalWrite(LASER_PIN, HIGH);
         beep(1);
         showLaserOn();
         normalState = LASER_ON;
-        Serial.println("Laser ON");
       }
       if (btnSel.triggered) {
-        loadHistory();       // load all records first
-        historyOffset = max(0, historyTotal - 3);  // start from latest
+        loadHistory();
+        historyOffset = max(0, historyTotal - 3);
         showHistory();
         normalState = HISTORY;
       }
@@ -467,7 +427,6 @@ void loop() {
       }
     }
 
-    // LASER ON
     else if (normalState == LASER_ON) {
       if (btnMeas.triggered) {
         float mm = doMeasure();
@@ -475,7 +434,6 @@ void loop() {
           beep(1, true);
           display.clearDisplay();
           drawHeader("NRM");
-          display.setTextSize(1);
           display.setCursor(0, 20); display.println("Out of range!");
           display.setCursor(0, 32); display.println("Move closer");
           display.setCursor(0, 44); display.println("Press MEAS again");
@@ -488,7 +446,6 @@ void loop() {
           beep(1);
           showResult(lastMm);
           normalState = MEASURED;
-          Serial.print("Measured: "); Serial.print(mm); Serial.println(" mm");
         }
       }
       if (btnPwr.triggered) {
@@ -499,7 +456,6 @@ void loop() {
       }
     }
 
-    // MEASURED
     else if (normalState == MEASURED) {
       if (btnMeas.triggered) {
         bool ok = saveToSD(lastMm);
@@ -507,14 +463,8 @@ void loop() {
           beep(3);
           showSaved(lastMm);
           delay(1500);
-          Serial.print("Saved: "); Serial.print(lastMm); Serial.println(" mm");
         } else {
           beep(1, true);
-          display.clearDisplay();
-          drawHeader("NRM");
-          display.setCursor(0, 28); display.println("Save FAILED!");
-          display.display();
-          delay(1000);
         }
         showIdle();
         normalState = IDLE;
@@ -526,10 +476,7 @@ void loop() {
       }
     }
 
-    // HISTORY
     else if (normalState == HISTORY) {
-
-      // scroll down
       if (btnDown.triggered) {
         if (historyOffset + 3 < historyTotal) {
           historyOffset++;
@@ -537,8 +484,6 @@ void loop() {
           showHistory();
         }
       }
-
-      // scroll up
       if (btnSel.triggered) {
         if (historyOffset > 0) {
           historyOffset--;
@@ -546,8 +491,6 @@ void loop() {
           showHistory();
         }
       }
-
-      // back to idle
       if (btnPwr.triggered) {
         beep(1);
         showIdle();
@@ -557,9 +500,8 @@ void loop() {
   }
 
   // ── BLE MODE ────────────────────────────────────────────
-  else if (currentScreen == BLE) {
+  else if (currentScreen == BLE_MODE) {
 
-    // IDLE
     if (normalState == IDLE) {
       if (btnMeas.triggered) {
         digitalWrite(LASER_PIN, HIGH);
@@ -567,6 +509,12 @@ void loop() {
         beep(1);
         showLaserOn();
         normalState = LASER_ON;
+      }
+      if (btnSel.triggered) {
+        loadHistory();
+        historyOffset = max(0, historyTotal - 3);
+        showHistory();
+        normalState = HISTORY;
       }
       if (btnPwr.triggered) {
         currentScreen = OFF;
@@ -576,17 +524,13 @@ void loop() {
       }
     }
 
-    // LASER ON
     else if (normalState == LASER_ON) {
       if (btnMeas.triggered) {
         float mm = doMeasure();
         if (mm < 0) {
           beep(1, true);
           display.clearDisplay();
-          display.setTextColor(SSD1306_WHITE);
-          display.setTextSize(1);
-          display.setCursor(0, 0); display.println("-- Bluetooth --");
-          display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+          drawHeader("BLE");
           display.setCursor(0, 20); display.println("Out of range!");
           display.setCursor(0, 32); display.println("Move closer");
           display.display();
@@ -596,7 +540,7 @@ void loop() {
         } else {
           lastMm = mm;
           beep(1);
-          bleSend(lastMm, false);  // send to app
+          bleSend(lastMm, false);
           showResult(lastMm);
           normalState = MEASURED;
           Serial.print("BLE sent: "); Serial.print(mm); Serial.println(" mm");
@@ -610,19 +554,35 @@ void loop() {
       }
     }
 
-    // MEASURED
     else if (normalState == MEASURED) {
       if (btnMeas.triggered) {
         bool ok = saveToSD(lastMm);
-        if (ok) {
-          beep(3);
-          showSaved(lastMm);
-          delay(1500);
-        } else {
-          beep(1, true);
-        }
+        if (ok) { beep(3); showSaved(lastMm); delay(1500); }
+        else    { beep(1, true); }
         showIdle();
         normalState = IDLE;
+      }
+      if (btnPwr.triggered) {
+        beep(1);
+        showIdle();
+        normalState = IDLE;
+      }
+    }
+
+    else if (normalState == HISTORY) {
+      if (btnDown.triggered) {
+        if (historyOffset + 3 < historyTotal) {
+          historyOffset++;
+          beep(1);
+          showHistory();
+        }
+      }
+      if (btnSel.triggered) {
+        if (historyOffset > 0) {
+          historyOffset--;
+          beep(1);
+          showHistory();
+        }
       }
       if (btnPwr.triggered) {
         beep(1);
@@ -634,9 +594,3 @@ void loop() {
 
   delay(10);
 }
-=======
-    digitalWrite(LED_PIN, LOW);
-    Serial.println("LED OFF");
-    delay(500);
-}
->>>>>>> ab36644b1ba6b9f186dc5cc6a09281fd729aec27
