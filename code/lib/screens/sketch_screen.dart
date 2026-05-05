@@ -6,6 +6,9 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../ble/ble_manager.dart';
 import '../ble/ble_packet.dart';
+import '../database/database_helper.dart';
+import '../database/project_list_screen.dart';
+import '../sketch/sketch_model.dart'; // already imported most likely
 
 // ─────────────────────────────────────────────
 // Scale: 1 grid unit (20px) = 100mm = 0.1m
@@ -191,6 +194,77 @@ class _SketchScreenState extends State<SketchScreen> {
     }
     _isAngleSnapped = false;
     return toWorld;
+  }
+
+  Future<void> _loadProject() async {
+    // Open project list, wait for user to pick one
+    final projectId = await Navigator.push<int>(
+      context,
+      MaterialPageRoute(builder: (_) => const ProjectListScreen()),
+    );
+
+    if (projectId == null) return; // user cancelled
+
+    final data = await DatabaseHelper.instance.loadProject(projectId);
+    if (data == null) return;
+
+    final shapesData = data['shapes'] as List<Map<String, dynamic>>;
+    final objectsData = data['room_objects'] as List<Map<String, dynamic>>;
+
+    setState(() {
+      // Rebuild shapes list
+      shapes.clear();
+      for (final s in shapesData) {
+        final shape = SketchShape.empty();
+        shape.isClosed = (s['is_closed'] as int) == 1;
+
+        // Rebuild points
+        final pointRows = s['points'] as List<Map<String, dynamic>>;
+        shape.points = pointRows
+            .map((r) => Offset(r['x'] as double, r['y'] as double))
+            .toList();
+
+        // Rebuild wallRealMm
+        final mmRows = s['wall_real_mm'] as List<Map<String, dynamic>>;
+        shape.wallRealMm.clear();
+        for (final r in mmRows) {
+          shape.wallRealMm[r['wall_index'] as int] = r['real_mm'] as double;
+        }
+
+        shapes.add(shape);
+      }
+
+      // Rebuild wall angles
+      if (shapes.isNotEmpty) {
+        final angleRows = shapesData.first['wall_angles']
+            as List<Map<String, dynamic>>;
+        _wallAngles.clear();
+        _wallAngles.addAll(angleRows.map((r) => r['angle'] as double));
+
+        final lengthRows = shapesData.first['wall_lengths']
+            as List<Map<String, dynamic>>;
+        _wallDrawnLengths.clear();
+        _wallDrawnLengths.addAll(lengthRows.map((r) => r['length'] as double));
+      }
+
+      // Rebuild room objects
+      _roomObjects.clear();
+      for (final r in objectsData) {
+        _roomObjects.add(RoomObject(
+          id: r['object_id'] as String,
+          type: r['type'] == 'door'
+              ? RoomObjectType.door
+              : RoomObjectType.window,
+          wallIndex: r['wall_index'] as int,
+          positionAlong: r['position_along'] as double,
+          widthMm: r['width_mm'] as double,
+          heightMm: r['height_mm'] as double,
+          elevationMm: r['elevation_mm'] as double,
+        ));
+      }
+
+      activeIndex = 0;
+    });
   }
 
   Offset? _rayIntersection(
@@ -1178,6 +1252,73 @@ class _SketchScreenState extends State<SketchScreen> {
     );
   }
 
+  Future<void> _saveProject() async {
+    // Show a dialog asking for a project name
+    final nameController = TextEditingController(text: 'Room Project');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Save Project',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Save',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty) return;
+
+    try {
+      await DatabaseHelper.instance.saveProject(
+        name: name,
+        shapes: shapes,
+        roomObjects: _roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project saved successfully'),
+            backgroundColor: Color(0xFF00AA44),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Save failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+   
   // ── PDF Export — paste inside _SketchScreenState ───────────────────────────────────
 
   Future<void> _exportPdf() async {
@@ -1662,6 +1803,7 @@ class _SketchScreenState extends State<SketchScreen> {
                           color: Color(0xFFAAAAAA), size: 18),
                       onPressed: () => Navigator.pop(context),
                     ),
+
                   ],
                 ),
               ),
@@ -1999,6 +2141,25 @@ class _SketchScreenState extends State<SketchScreen> {
                         constraints: const BoxConstraints(
                             minWidth: 36, minHeight: 36),
                       ),
+                      IconButton(
+                        icon: const Icon(Icons.save, size: 18),
+                        onPressed: activeShape.points.isNotEmpty ? _saveProject : null,
+                        color: const Color(0xFF00AA44),
+                        disabledColor: const Color(0xFF555555),
+                        tooltip: 'Save Project',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.folder_open, size: 18),
+                        onPressed: _loadProject,
+                        color: const Color(0xFF00AAFF),
+                        tooltip: 'Load Project',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+
+
                       const SizedBox(width: 4),
                       IconButton(
                         icon: const Icon(Icons.delete_outline, size: 18),

@@ -14,11 +14,24 @@ import 'sketch_widgets.dart';
 import 'room_object.dart';
 import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
+import '../database/database_helper.dart';
+import '../database/project_list_screen.dart';
+import '../services/api_service.dart';
 
 
 class SketchScreen extends StatefulWidget {
   final BleManager? bleManager;
-  const SketchScreen({super.key, this.bleManager});
+  final List<SketchShape>? initialShapes;
+  final List<double>? initialWallAngles;
+  final List<double>? initialWallLengths;
+
+  const SketchScreen({
+    super.key,
+    this.bleManager,
+    this.initialShapes,
+    this.initialWallAngles,
+    this.initialWallLengths,
+  });
 
   @override
   State<SketchScreen> createState() => _SketchScreenState();
@@ -28,6 +41,7 @@ class _SketchScreenState extends State<SketchScreen>
     with SketchDialogsMixin<SketchScreen> {
 
   // ── State fields ─────────────────────────────────────────────────────────
+  int? _localProjectId;
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
@@ -124,13 +138,33 @@ class _SketchScreenState extends State<SketchScreen>
   @override
   void initState() {
     super.initState();
+    if (widget.initialShapes != null && widget.initialShapes!.isNotEmpty) {
+      shapes = List<SketchShape>.from(widget.initialShapes!);
+      activeIndex = 0;
+    }
+    if (widget.initialWallAngles != null) {
+      _wallAngles
+        ..clear()
+        ..addAll(widget.initialWallAngles!);
+    }
+    if (widget.initialWallLengths != null) {
+      _wallDrawnLengths
+        ..clear()
+        ..addAll(widget.initialWallLengths!);
+    }
     widget.bleManager?.packetStream.listen((BlePacket packet) {
-      if (_waitingForBle && _selectedWallIndex >= 0) {
+      // Skip capturing packets (laser-on signal) and zero readings
+      if (packet.isCapturing || packet.distanceMm <= 0) return;
+
+      if (_waitingForBle && _selectedWallIndex >= 0 &&
+          _selectedWallIndex < _wallAngles.length) {
+        final wallIdx = _selectedWallIndex;
         setState(() {
           _waitingForBle = false;
           _pendingBleMm = packet.distanceMm;
+          _selectedWallIndex = -1;
         });
-        _applyRealMeasurement(_selectedWallIndex, packet.distanceMm);
+        _applyRealMeasurement(wallIdx, packet.distanceMm);
       }
     });
   }
@@ -219,6 +253,300 @@ class _SketchScreenState extends State<SketchScreen>
       activeIndex = shapes.length - 1;
     });
   }
+
+  Future<void> _saveProject() async {
+    final nameController = TextEditingController(text: 'Room Project');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Save Project',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Save',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty) return;
+
+    try {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: name,
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project saved successfully'),
+            backgroundColor: Color(0xFF00AA44),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Save failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _backupToCloud() async {
+    // Check if logged in first
+    final isLoggedIn = await ApiService.isLoggedIn();
+    if (!isLoggedIn) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login first to backup to cloud'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Ask for backup name
+    final nameController = TextEditingController(text: 'Room Project');
+    final chosenName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Cloud Backup Name',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Upload',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+    if (chosenName == null || chosenName.isEmpty) return;
+
+    // Ensure we have a local SQLite id
+    if (_localProjectId == null) {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: chosenName,
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+    }
+
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Uploading to cloud...'),
+          backgroundColor: Color(0xFF1A2A3A),
+          duration: Duration(seconds: 60),
+        ),
+      );
+    }
+
+    try {
+      // Build the data structure to send to backend
+      // matching exactly what sync.js expects
+      final projectData = {
+        'project': {
+          'name': chosenName,
+          'local_id': _localProjectId!,
+        },
+        'shapes': shapes.asMap().entries.map((entry) {
+          final index = entry.key;
+          final shape = entry.value;
+          return {
+            'shape_index': index,
+            'is_closed': shape.isClosed,
+            'points': shape.points.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'x': e.value.dx,
+              'y': e.value.dy,
+            }).toList(),
+            'wall_real_mm': shape.wallRealMm.entries.map((e) => {
+              'wall_index': e.key,
+              'real_mm': e.value,
+            }).toList(),
+            'wall_angles': _wallAngles.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'angle': e.value,
+            }).toList(),
+            'wall_lengths': _wallDrawnLengths.asMap().entries.map((e) => {
+              'order_index': e.key,
+              'length': e.value,
+            }).toList(),
+          };
+        }).toList(),
+        'roomObjects': shapes
+            .expand((shape) => shape.roomObjects)
+            .map((obj) => {
+              'object_id': obj.id,
+              'type': obj.type.name,
+              'wall_index': obj.wallIndex,
+              'position_along': obj.positionAlong,
+              'width_mm': obj.widthMm,
+              'height_mm': obj.heightMm,
+              'elevation_mm': obj.elevationMm,
+        }).toList(),
+      };
+
+      debugPrint('About to upload, localProjectId: $_localProjectId, chosenName: $chosenName');
+      debugPrint('Project data keys: ${projectData.keys.toList()}');
+      final result = await ApiService.uploadProject(projectData);
+      debugPrint('UPLOAD RESULT: $result');
+
+      // Hide the uploading snackbar
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
+
+      if (result['error'] != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Backup failed: ${result['error']}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Backed up to cloud successfully'),
+              backgroundColor: Color(0xFF00AA44),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Backup failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadProject() async {
+    final projectId = await Navigator.push<int>(
+      context,
+      MaterialPageRoute(builder: (_) => const ProjectListScreen()),
+    );
+
+    if (projectId == null) return;
+
+    final data = await DatabaseHelper.instance.loadProject(projectId);
+    if (data == null) return;
+
+    final shapesData = data['shapes'] as List<Map<String, dynamic>>;
+    final objectsData = data['room_objects'] as List<Map<String, dynamic>>;
+
+    setState(() {
+      shapes.clear();
+      for (final s in shapesData) {
+        final shape = SketchShape.empty();
+        shape.isClosed = (s['is_closed'] as int) == 1;
+
+        final pointRows = s['points'] as List<Map<String, dynamic>>;
+        shape.points = pointRows
+            .map((r) => Offset(r['x'] as double, r['y'] as double))
+            .toList();
+
+        final mmRows = s['wall_real_mm'] as List<Map<String, dynamic>>;
+        shape.wallRealMm.clear();
+        for (final r in mmRows) {
+          shape.wallRealMm[r['wall_index'] as int] = r['real_mm'] as double;
+        }
+
+        shapes.add(shape);
+      }
+
+      if (shapes.isNotEmpty) {
+        final angleRows =
+            shapesData.first['wall_angles'] as List<Map<String, dynamic>>;
+        _wallAngles.clear();
+        _wallAngles.addAll(angleRows.map((r) => r['angle'] as double));
+
+        final lengthRows =
+            shapesData.first['wall_lengths'] as List<Map<String, dynamic>>;
+        _wallDrawnLengths.clear();
+        _wallDrawnLengths.addAll(lengthRows.map((r) => r['length'] as double));
+      }
+
+      activeShape.roomObjects.clear();
+      for (final r in objectsData) {
+        activeShape.roomObjects.add(RoomObject(
+          id: r['object_id'] as String,
+          type: r['type'] == 'door'
+              ? RoomObjectType.door
+              : RoomObjectType.window,
+          wallIndex: r['wall_index'] as int,
+          positionAlong: r['position_along'] as double,
+          widthMm: r['width_mm'] as double,
+          heightMm: r['height_mm'] as double,
+          elevationMm: r['elevation_mm'] as double,
+        ));
+      }
+
+      activeIndex = 0;
+    });
+  }
+
+
+
   // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
     _undoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
@@ -1635,6 +1963,9 @@ class _SketchScreenState extends State<SketchScreen>
                         roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
+                        onWallMeasured: (wallIndex, mm) {
+                          _applyRealMeasurement(wallIndex, mm);
+                        },
                       ),
                     ),
                   );
@@ -1941,132 +2272,146 @@ class _SketchScreenState extends State<SketchScreen>
                   height: 52,
                   color: const Color(0xFF2D2D2D),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              StatusItem(
-                                label: 'MODE',
-                                value: activeShape.isClosed
-                                    ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
-                                    : _isDraggingLastPoint
-                                        ? 'DRAG'
-                                        : _activePointIndex >= 0
-                                            ? 'EDIT'
-                                            : 'DRAW',
-                              ),
-                              const SizedBox(width: 8),
-                              StatusItem(
-                                  label: 'PTS',
-                                  value: '${activeShape.points.length}'),
-                              if (activeShape.isClosed && activeShape.points.length >= 2) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PERIM',
-                                  value: formatLength(_totalPerimeter()),
-                                ),
-                              ],
-                              if (activeShape.isClosed && activeShape.points.length >= 3) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'AREA',
-                                  value: formatArea(_totalArea()),
-                                ),
-                              ],
-                              if (_activePointIndex >= 0 &&
-                                  _activePointIndex < activeShape.points.length) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PT',
-                                  value: '${_activePointIndex + 1}',
-                                ),
-                              ],
-                            ],
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        StatusItem(
+                          label: 'MODE',
+                          value: activeShape.isClosed
+                              ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
+                              : _isDraggingLastPoint
+                                  ? 'DRAG'
+                                  : _activePointIndex >= 0
+                                      ? 'EDIT'
+                                      : 'DRAW',
+                        ),
+                        const SizedBox(width: 8),
+                        StatusItem(label: 'PTS', value: '${activeShape.points.length}'),
+                        if (activeShape.isClosed && activeShape.points.length >= 2) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PERIM',
+                            value: formatLength(_totalPerimeter()),
                           ),
+                        ],
+                        if (activeShape.isClosed && activeShape.points.length >= 3) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'AREA',
+                            value: formatArea(_totalArea()),
+                          ),
+                        ],
+                        if (_activePointIndex >= 0 &&
+                            _activePointIndex < activeShape.points.length) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PT',
+                            value: '${_activePointIndex + 1}',
+                          ),
+                        ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.undo, size: 18),
+                          onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Undo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.undo, size: 18),
-                        onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Undo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.redo, size: 18),
-                        onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Redo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: activeShape.points.isEmpty ? null : _clear,
-                        color: const Color(0xFFFF4444),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Clear',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.picture_as_pdf, size: 18),
-                        onPressed: activeShape.points.length >= 2
-                            ? () => exportSketchPdf(
-                                  context: context,
-                                  shapes: shapes,
-                                  totalPerimeter: _totalPerimeter(),
-                                  totalArea: _totalArea(),
-                                  roomObjects: activeShape.roomObjects,
-                                )
-                            : null,
-                        color: const Color(0xFFFF4488),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Export PDF',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add_box_outlined, size: 18),
-                        onPressed: _addNewRoom,
-                        color: const Color(0xFF00AAFF),
-                        tooltip: 'Add Room',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.open_with,
-                          size: 18,
-                          color: _isMoveMode
-                              ? const Color(0xFF00FF99)
-                              : const Color(0xFF00AAFF),
+                        IconButton(
+                          icon: const Icon(Icons.redo, size: 18),
+                          onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Redo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                        onPressed: () => setState(() {
-                          _isMoveMode = !_isMoveMode;
-                          _movingShapeIndex = -1;
-                          _moveStartWorld = null;
-                          _activePointIndex = -1;
-                        }),
-                        tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
-                        padding: EdgeInsets.zero,
-                        constraints:
-                            const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          onPressed: activeShape.points.isEmpty ? null : _clear,
+                          color: const Color(0xFFFF4444),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Clear',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                          onPressed: activeShape.points.length >= 2
+                              ? () => exportSketchPdf(
+                                    context: context,
+                                    shapes: shapes,
+                                    totalPerimeter: _totalPerimeter(),
+                                    totalArea: _totalArea(),
+                                    roomObjects: activeShape.roomObjects,
+                                  )
+                              : null,
+                          color: const Color(0xFFFF4488),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Export PDF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_box_outlined, size: 18),
+                          onPressed: _addNewRoom,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Add Room',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.save, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _saveProject : null,
+                          color: const Color(0xFF00AA44),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Save Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          onPressed: _loadProject,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Load Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.cloud_upload, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _backupToCloud : null,
+                          color: const Color(0xFF8844FF),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Backup to Cloud',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.open_with,
+                            size: 18,
+                            color: _isMoveMode
+                                ? const Color(0xFF00FF99)
+                                : const Color(0xFF00AAFF),
+                          ),
+                          onPressed: () => setState(() {
+                            _isMoveMode = !_isMoveMode;
+                            _movingShapeIndex = -1;
+                            _moveStartWorld = null;
+                            _activePointIndex = -1;
+                          }),
+                          tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

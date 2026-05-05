@@ -19,18 +19,27 @@ class BleManager {
   // ── Scan and connect ──────────────────────────────────
   Future<void> connectToDevice() async {
     try {
-      // Start scanning
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+      // Stop any previous scan first
+      await FlutterBluePlus.stopScan();
+      await Future.delayed(const Duration(milliseconds: 200));
 
-      FlutterBluePlus.scanResults.listen((results) async {
+      StreamSubscription? scanSubscription;
+
+      scanSubscription = FlutterBluePlus.scanResults.listen((results) async {
         for (ScanResult r in results) {
           if (r.device.platformName == "SmartMeasure Pro") {
+            await scanSubscription?.cancel();
             await FlutterBluePlus.stopScan();
             await _connect(r.device);
             break;
           }
         }
       });
+
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 10),
+      );
+
     } catch (e) {
       print("Scan error: $e");
     }
@@ -45,9 +54,9 @@ class BleManager {
     // Discover services
     List<BluetoothService> services = await device.discoverServices();
     for (BluetoothService s in services) {
-      if (s.uuid.toString() == serviceUuid) {
+      if (s.uuid.toString().toLowerCase() == serviceUuid.toLowerCase()) {
         for (BluetoothCharacteristic c in s.characteristics) {
-          if (c.uuid.toString() == characteristicUuid) {
+          if (c.uuid.toString().toLowerCase() == characteristicUuid.toLowerCase()) {
             _characteristic = c;
             await c.setNotifyValue(true);
             c.onValueReceived.listen((bytes) {
