@@ -39,6 +39,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
 
   int? _selectedWallIndex;
   bool _waitingForBle = false;
+  final List<List<Offset>> _wallPolygons = [];
 
   static const double _wallHeightMm = 2400;
   static const double _mmScale = 0.18; // mm → logical pixels for 3D view
@@ -83,6 +84,15 @@ class _Room3DScreenState extends State<Room3DScreen> {
       ),
       body: Stack(children: [
         GestureDetector(
+          onTapUp: (details) {
+            for (int i = 0; i < _wallPolygons.length; i++) {
+              if (_pointInPolygon(details.localPosition, _wallPolygons[i])) {
+                setState(() =>
+                  _selectedWallIndex = _selectedWallIndex == i ? null : i);
+                break;
+              }
+            }
+          },
           onScaleStart: (d) {
             _lastRotX = _rotX;
             _lastRotY = _rotY;
@@ -115,8 +125,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
               selectedWallIndex: _selectedWallIndex,
               wallHeightMm: _wallHeightMm,
               mmScale: _mmScale,
-              onWallTap: (i) => setState(() =>
-                  _selectedWallIndex = _selectedWallIndex == i ? null : i),
+              wallPolygons: _wallPolygons,
             ),
             child: const SizedBox.expand(),
           ),
@@ -146,6 +155,22 @@ class _Room3DScreenState extends State<Room3DScreen> {
         ),
       ]),
     );
+  }
+
+  bool _pointInPolygon(Offset p, List<Offset> poly) {
+    bool inside = false;
+    int j = poly.length - 1;
+    for (int i = 0; i < poly.length; i++) {
+      if (((poly[i].dy > p.dy) != (poly[j].dy > p.dy)) &&
+          (p.dx < (poly[j].dx - poly[i].dx) *
+                  (p.dy - poly[i].dy) /
+                  (poly[j].dy - poly[i].dy) +
+              poly[i].dx)) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    return inside;
   }
 
   void _triggerBleMeasurement() {
@@ -190,10 +215,7 @@ class _Room3DPainter extends CustomPainter {
   final int? selectedWallIndex;
   final double wallHeightMm;
   final double mmScale;
-  final void Function(int) onWallTap;
-
-  // Store wall polygons for hit-testing
-  final List<List<Offset>> _wallPolygons = [];
+  final List<List<Offset>> wallPolygons;
 
   _Room3DPainter({
     required this.points,
@@ -206,7 +228,7 @@ class _Room3DPainter extends CustomPainter {
     required this.selectedWallIndex,
     required this.wallHeightMm,
     required this.mmScale,
-    required this.onWallTap,
+    required this.wallPolygons,
   });
 
   // Project a 3D point [x, y, z] to 2D screen offset
@@ -233,7 +255,7 @@ class _Room3DPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _wallPolygons.clear();
+    wallPolygons.clear();
 
     // Centre the room model
     double cx = 0, cy = 0;
@@ -284,7 +306,7 @@ class _Room3DPainter extends CustomPainter {
           -wallHeightMm * mmScale,
           (a.dy * mmPerUnit - cy) * mmScale, size);
 
-      _wallPolygons.add([s0, s1, s2, s3]);
+      wallPolygons.add([s0, s1, s2, s3]);
 
       final wallPath = Path()
         ..moveTo(s0.dx, s0.dy)
@@ -339,33 +361,7 @@ class _Room3DPainter extends CustomPainter {
     }
   }
 
-  @override
-  bool hitTest(Offset position) {
-    // Check if any wall was tapped
-    for (int i = 0; i < _wallPolygons.length; i++) {
-      if (_pointInPolygon(position, _wallPolygons[i])) {
-        onWallTap(i);
-        return true;
-      }
-    }
-    return false;
-  }
 
-  bool _pointInPolygon(Offset p, List<Offset> poly) {
-    bool inside = false;
-    int j = poly.length - 1;
-    for (int i = 0; i < poly.length; i++) {
-      if (((poly[i].dy > p.dy) != (poly[j].dy > p.dy)) &&
-          (p.dx < (poly[j].dx - poly[i].dx) *
-                  (p.dy - poly[i].dy) /
-                  (poly[j].dy - poly[i].dy) +
-              poly[i].dx)) {
-        inside = !inside;
-      }
-      j = i;
-    }
-    return inside;
-  }
 
   @override
   bool shouldRepaint(_Room3DPainter old) => true;
