@@ -12,7 +12,7 @@ router.use(authMiddleware);
 router.post('/upload', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { project, shapes, roomObjects } = req.body;
+    const { project, shapes, roomObjects, last_modified_at } = req.body;
 
     // transaction — either everything saves or nothing saves
     await client.query('BEGIN');
@@ -25,6 +25,20 @@ router.post('/upload', async (req, res) => {
     );
     if (existing.rows.length > 0) {
       cloudProjectId = existing.rows[0].id;
+
+      // Conflict detection
+      if (last_modified_at) {
+        const serverUpdatedAt = existing.rows[0].updated_at;
+        if (serverUpdatedAt && new Date(serverUpdatedAt) > new Date(last_modified_at)) {
+          await client.query('ROLLBACK');
+          client.release();
+          return res.status(409).json({
+            conflict: true,
+            server_updated_at: serverUpdatedAt.toISOString(),
+          });
+        }
+      }
+
       await client.query(
         'UPDATE projects SET name = $1, updated_at = NOW() WHERE id = $2',
         [project.name, cloudProjectId]
@@ -119,9 +133,14 @@ router.post('/upload', async (req, res) => {
 
     await client.query('COMMIT'); // save everything
 
+    const uploaded = await client.query(
+      'SELECT updated_at FROM projects WHERE id = $1',
+      [cloudProjectId]
+    );
     res.json({
       message: 'Project uploaded successfully',
       cloud_project_id: cloudProjectId,
+      updated_at: uploaded.rows[0].updated_at.toISOString(),
     });
 
   } catch (err) {

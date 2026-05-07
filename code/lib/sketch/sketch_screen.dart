@@ -83,6 +83,7 @@ class _SketchScreenState extends State<SketchScreen>
   final List<({Rect rect, int wallIndex, int shapeIndex})> _labelHitRects = [];
   double? _pendingBleMm;
   bool _waitingForBle = false;
+  String? _lastCloudUpdatedAt;
   SketchShape get activeShape => shapes[activeIndex];
   // ── From Venuka — object placement ──────────────────────────
   RoomObjectType? _draggingObjectType;  
@@ -440,7 +441,10 @@ class _SketchScreenState extends State<SketchScreen>
 
       debugPrint('About to upload, localProjectId: $_localProjectId, chosenName: $chosenName');
       debugPrint('Project data keys: ${projectData.keys.toList()}');
-      final result = await ApiService.uploadProject(projectData);
+      final result = await ApiService.uploadProject(
+        projectData,
+        lastModifiedAt: _lastCloudUpdatedAt,
+      );
       debugPrint('UPLOAD RESULT: $result');
 
       // Hide the uploading snackbar
@@ -448,7 +452,20 @@ class _SketchScreenState extends State<SketchScreen>
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
       }
 
-      if (result['error'] != null) {
+      if (result['conflict'] == true) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Server has newer changes — pull the latest version before uploading.',
+                style: TextStyle(fontFamily: 'monospace', fontSize: 13),
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      } else if (result['error'] != null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -458,6 +475,9 @@ class _SketchScreenState extends State<SketchScreen>
           );
         }
       } else {
+        if (result['updated_at'] != null) {
+          setState(() => _lastCloudUpdatedAt = result['updated_at'] as String);
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

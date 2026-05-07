@@ -82,14 +82,25 @@ class ApiService {
   // ── Sync ──────────────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> uploadProject(
-      Map<String, dynamic> projectData) async {
+      Map<String, dynamic> projectData, {String? lastModifiedAt}) async {
     try {
       final headers = await _authHeaders();
+      final body = {
+        ...projectData,
+        if (lastModifiedAt != null) 'last_modified_at': lastModifiedAt,
+      };
       final response = await http.post(
         Uri.parse('$baseUrl/sync/upload'),
         headers: headers,
-        body: jsonEncode(projectData),
+        body: jsonEncode(body),
       );
+      if (response.statusCode == 409) {
+        final data = jsonDecode(response.body);
+        return {
+          'conflict': true,
+          'server_updated_at': data['server_updated_at'],
+        };
+      }
       return jsonDecode(response.body);
     } catch (e, stackTrace) {
       debugPrint('UPLOAD EXCEPTION: $e');
