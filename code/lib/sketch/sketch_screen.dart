@@ -7,6 +7,7 @@ import '../ble/ble_manager.dart';
 import '../ble/ble_packet.dart';
 import 'sketch_constants.dart';
 import 'sketch_model.dart';
+import 'furniture_item.dart';
 import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
@@ -91,6 +92,16 @@ class _SketchScreenState extends State<SketchScreen>
   Offset? _dragObjectScreenPos;         
   WallHitResult? _dragWallHit;          
   int _objectCounter = 0;  
+  // ── Furniture state ──────────────────────────────────────────────────────
+  FurnitureType? _furniturePlacingType;
+  String? _selectedFurnitureId;
+  bool _isDraggingFurniture = false;
+  Offset? _furnitureDragStartWorld;
+  bool _furnitureDragOccurred = false;
+  int _furnitureCounter = 0;
+
+  final List<List<List<FurnitureItem>>> _undoAllFurnitureStack = [];
+  final List<List<List<FurnitureItem>>> _redoAllFurnitureStack = [];
   // ── From Venuka — wall vector chain ─────────────────────────
   final List<double> _wallAngles = [];
   final List<double> _wallDrawnLengths = [];
@@ -578,6 +589,8 @@ class _SketchScreenState extends State<SketchScreen>
     _undoActiveIndexStack.add(activeIndex);
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
 
     _redoAllPointsStack.clear();
     _redoAllClosedStack.clear();
@@ -586,6 +599,9 @@ class _SketchScreenState extends State<SketchScreen>
     _redoActiveIndexStack.clear();
     _redoWallAnglesStack.clear();
     _redoWallLengthsStack.clear();
+    _undoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
+    _redoAllFurnitureStack.clear();
   }
 
   void _undo() {
@@ -601,6 +617,8 @@ class _SketchScreenState extends State<SketchScreen>
     _redoActiveIndexStack.add(activeIndex);
     _redoWallAnglesStack.add(List<double>.of(_wallAngles));
     _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _redoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
 
     // restore snapshot
     final pts = _undoAllPointsStack.removeLast();
@@ -608,6 +626,9 @@ class _SketchScreenState extends State<SketchScreen>
     final objs = _undoAllObjectsStack.removeLast();
     final mm = _undoAllRealMmStack.removeLast();
     final idx = _undoActiveIndexStack.removeLast();
+    final furn = _undoAllFurnitureStack.isNotEmpty
+      ? _undoAllFurnitureStack.removeLast()
+      : null;
 
     setState(() {
       // rebuild the shapes list from the snapshot
@@ -617,6 +638,9 @@ class _SketchScreenState extends State<SketchScreen>
         s.isClosed = closed[i];
         s.roomObjects..clear()..addAll(objs[i]);
         s.wallRealMm..clear()..addAll(mm[i]);
+        if (furn != null && i < furn.length) {
+          s.furnitureItems..clear()..addAll(furn[i]);
+        }
         return s;
       });
       activeIndex = idx;
@@ -654,6 +678,9 @@ class _SketchScreenState extends State<SketchScreen>
     final objs = _redoAllObjectsStack.removeLast();
     final mm = _redoAllRealMmStack.removeLast();
     final idx = _redoActiveIndexStack.removeLast();
+    final furn = _redoAllFurnitureStack.isNotEmpty
+      ? _redoAllFurnitureStack.removeLast()
+      : null;
 
     setState(() {
       shapes = List.generate(pts.length, (i) {
@@ -662,6 +689,9 @@ class _SketchScreenState extends State<SketchScreen>
         s.isClosed = closed[i];
         s.roomObjects..clear()..addAll(objs[i]);
         s.wallRealMm..clear()..addAll(mm[i]);
+        if (furn != null && i < furn.length) {
+          s.furnitureItems..clear()..addAll(furn[i]);
+        }
         return s;
       });
       activeIndex = idx;
@@ -890,6 +920,19 @@ class _SketchScreenState extends State<SketchScreen>
       j = i;
     }
     return inside;
+  }
+
+  bool _isInsideFurnitureItem(FurnitureItem item, Offset screenPos) {
+    final center = worldToScreen(item.position);
+    final local = screenPos - center;
+    final rad = -item.rotationDeg * math.pi / 180;
+    final rotated = Offset(
+      local.dx * math.cos(rad) - local.dy * math.sin(rad),
+      local.dx * math.sin(rad) + local.dy * math.cos(rad),
+    );
+    final w = item.widthMm / mmPerUnit * _scale;
+    final d = item.depthMm / mmPerUnit * _scale;
+    return rotated.dx.abs() <= w / 2 + 10 && rotated.dy.abs() <= d / 2 + 10;
   }
 
   double _pointToSegmentDist(Offset p, Offset a, Offset b) {
@@ -1144,6 +1187,23 @@ class _SketchScreenState extends State<SketchScreen>
     // ── end move mode ──────────────────────────────────────────
 
     if (activeShape.isClosed) {
+      // ── Furniture drag start (only if already selected) ──────────
+      if (_selectedFurnitureId != null) {
+        final fidx = activeShape.furnitureItems
+            .indexWhere((f) => f.id == _selectedFurnitureId);
+        if (fidx >= 0 &&
+            _isInsideFurnitureItem(activeShape.furnitureItems[fidx], event.localPosition)) {
+          setState(() {
+            _isDraggingFurniture = true;
+            _furnitureDragStartWorld = screenToWorld(event.localPosition);
+            _furnitureDragOccurred = false;
+            _activePointIndex = -1;
+          });
+          _panStartPosition = null;
+          _panConfirmed = false;
+          return;
+        }
+      }
       // ── Check if touching a placed door/window first ──────────
       for (final obj in activeShape.roomObjects) {
         if (obj.wallIndex >= activeShape.points.length) continue;
@@ -1210,6 +1270,23 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── FURNITURE DRAG ─────────────────────────────────────────────
+    if (_isDraggingFurniture && _furnitureDragStartWorld != null) {
+      final currentWorld = screenToWorld(event.localPosition);
+      final delta = currentWorld - _furnitureDragStartWorld!;
+      final idx = activeShape.furnitureItems
+          .indexWhere((f) => f.id == _selectedFurnitureId);
+      if (idx >= 0) {
+        setState(() {
+          _furnitureDragOccurred = true;
+          activeShape.furnitureItems[idx] = activeShape.furnitureItems[idx].copyWith(
+            position: activeShape.furnitureItems[idx].position + delta,
+          );
+          _furnitureDragStartWorld = currentWorld;
+        });
+      }
+      return;
+    }
     // ── OBJECT DRAG ────────────────────────────────────────────
     if (_isDraggingObject && _selectedObjectId != null) {
       final selIdx = activeShape.roomObjects
@@ -1361,6 +1438,16 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── FURNITURE DRAG END ─────────────────────────────────────────
+    if (_isDraggingFurniture) {
+      if (_furnitureDragOccurred) _saveUndo();
+      setState(() {
+        _isDraggingFurniture = false;
+        _furnitureDragOccurred = false;
+        _furnitureDragStartWorld = null;
+      });
+      return;
+    }
     // ── OBJECT DRAG END ────────────────────────────────────────
     if (_isDraggingObject) {
       if (_objectDragOccurred) _saveUndo();
@@ -1609,6 +1696,30 @@ class _SketchScreenState extends State<SketchScreen>
     if (_dragOccurred) { _dragOccurred = false; return; }
     if (_objectDragOccurred) { _objectDragOccurred = false; return; }
 
+    // ── FURNITURE DRAG guard ──────────────────────────────────────
+    if (_isDraggingFurniture) return;
+
+    // ── FURNITURE PLACEMENT MODE ───────────────────────────────────
+    if (_furniturePlacingType != null) {
+      if (activeShape.isClosed &&
+          _pointInsidePolygon(details.localPosition, activeShape.points)) {
+        final worldPos = screenToWorld(details.localPosition);
+        _saveUndo();
+        setState(() {
+          _furnitureCounter++;
+          activeShape.furnitureItems.add(FurnitureItem(
+            id: 'fur_$_furnitureCounter',
+            type: _furniturePlacingType!,
+            position: worldPos,
+          ));
+          _furniturePlacingType = null;
+        });
+      } else {
+        setState(() => _furniturePlacingType = null);
+      }
+      return;
+    }
+
     // Check if tap is inside a different closed shape -> switch active
     for (int s = 0; s < shapes.length; s++) {
       if (s == activeIndex) continue;
@@ -1625,6 +1736,17 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     if (activeShape.isClosed) {
+      // ── Furniture tap selection ────────────────────────────────────
+      for (final item in activeShape.furnitureItems) {
+        if (_isInsideFurnitureItem(item, details.localPosition)) {
+          setState(() {
+            _selectedFurnitureId = item.id;
+            _selectedWallIndex = -1;
+            _activePointIndex = -1;
+          });
+          return;
+        }
+      }
       for (final obj in activeShape.roomObjects) {
         if (obj.wallIndex >= activeShape.points.length) continue;
         final center = objectCentreWorld(
@@ -1673,6 +1795,7 @@ class _SketchScreenState extends State<SketchScreen>
         _activePointIndex = _findNearPoint(details.localPosition,
             radius: pointSelectRadiusScreen);
         _selectedWallIndex = -1;
+        _selectedFurnitureId = null;
       });
       return;
     }
@@ -1789,6 +1912,73 @@ class _SketchScreenState extends State<SketchScreen>
             _selectedObjectId = null;
           });
         },
+      ),
+    );
+  }
+
+  void _showFurnitureLibrary() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF2D2D2D),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Add Furniture',
+                style: TextStyle(
+                    color: Color(0xFFCCCCCC),
+                    fontFamily: 'monospace',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text('Tap a type, then tap inside the room to place it',
+                style: TextStyle(
+                    color: Color(0xFF888888),
+                    fontFamily: 'monospace',
+                    fontSize: 11)),
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 4,
+              shrinkWrap: true,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.85,
+              physics: const NeverScrollableScrollPhysics(),
+              children: FurnitureType.values.map((ft) {
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    setState(() => _furniturePlacingType = ft);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A3A3A),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: ft.color.withOpacity(0.5)),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(ft.icon, color: ft.color, size: 26),
+                        const SizedBox(height: 4),
+                        Text(ft.displayName,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: ft.color.withOpacity(0.9),
+                                fontSize: 9,
+                                fontFamily: 'monospace')),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1926,6 +2116,7 @@ class _SketchScreenState extends State<SketchScreen>
                   shapes: shapes,
                   activeIndex: activeIndex,
                   selectedObjectId: _selectedObjectId,
+                  selectedFurnitureId: _selectedFurnitureId,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -1954,7 +2145,112 @@ class _SketchScreenState extends State<SketchScreen>
                         _draggingObjectType = RoomObjectType.window),
                     onDragEnd: (details) => _onObjectDropped(details.offset),
                   ),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: activeShape.isClosed ? _showFurnitureLibrary : null,
+                    child: Container(
+                      width: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A2A1A),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF4A7A4A)),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.chair_alt,
+                              color: Color(0xFF4CAF50), size: 22),
+                          SizedBox(height: 2),
+                          Text('Furn.',
+                              style: TextStyle(
+                                  color: Color(0xFF88AA88),
+                                  fontFamily: 'monospace',
+                                  fontSize: 9)),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
+              ),
+            ),
+
+          // ── Furniture action bar ──────────────────────────────────
+          if (_selectedFurnitureId != null)
+            Positioned(
+              bottom: 52,
+              left: 0,
+              right: 0,
+              child: Container(
+                color: const Color(0xFF2D2D2D),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.rotate_left,
+                          color: Color(0xFF00AAFF)),
+                      onPressed: () {
+                        final idx = activeShape.furnitureItems
+                            .indexWhere((f) => f.id == _selectedFurnitureId);
+                        if (idx >= 0) {
+                          _saveUndo();
+                          setState(() {
+                            activeShape.furnitureItems[idx] =
+                                activeShape.furnitureItems[idx].copyWith(
+                              rotationDeg:
+                                  (activeShape.furnitureItems[idx].rotationDeg -
+                                          45) %
+                                      360,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.rotate_right,
+                          color: Color(0xFF00AAFF)),
+                      onPressed: () {
+                        final idx = activeShape.furnitureItems
+                            .indexWhere((f) => f.id == _selectedFurnitureId);
+                        if (idx >= 0) {
+                          _saveUndo();
+                          setState(() {
+                            activeShape.furnitureItems[idx] =
+                                activeShape.furnitureItems[idx].copyWith(
+                              rotationDeg:
+                                  (activeShape.furnitureItems[idx].rotationDeg +
+                                          45) %
+                                      360,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: Color(0xFFFF4444)),
+                      onPressed: () {
+                        _saveUndo();
+                        setState(() {
+                          activeShape.furnitureItems.removeWhere(
+                              (f) => f.id == _selectedFurnitureId);
+                          _selectedFurnitureId = null;
+                        });
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _selectedFurnitureId = null),
+                      child: const Text('Done',
+                          style: TextStyle(
+                              color: Color(0xFF00CC44),
+                              fontFamily: 'monospace')),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -2010,23 +2306,27 @@ class _SketchScreenState extends State<SketchScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        activeShape.isClosed
-                            ? _selectedWallIndex >= 0
+                        _furniturePlacingType != null
+                          ? 'Tap inside room to place ${_furniturePlacingType!.displayName}'
+                          : _selectedFurnitureId != null
+                            ? 'Drag to move · Rotate or delete below'
+                            : activeShape.isClosed
+                              ? _selectedWallIndex >= 0
                                 ? 'Wall ${_selectedWallIndex + 1} selected — enter real measurement'
                                 : _activePointIndex >= 0
-                                    ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                    : _waitingForBle
-                                        ? 'Point device at wall → press BOOT button'
-                                        : 'Tap a wall to edit its length'
-                            : activeShape.points.isEmpty
+                                  ? 'Drag point ${_activePointIndex + 1} to reposition'
+                                  : _waitingForBle
+                                    ? 'Point device at wall → press BOOT button'
+                                    : 'Tap a wall to edit its length'
+                              : activeShape.points.isEmpty
                                 ? 'Tap to place first corner'
                                 : _isDraggingLastPoint
-                                    ? 'Drag | ${_angleLabel()}'
-                                    : _activePointIndex >= 0
-                                        ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                        : _isAngleSnapped
-                                            ? 'Snapped: ${_angleLabel()}'
-                                            : 'Tap next corner | Drag orange to adjust',
+                                  ? 'Drag | ${_angleLabel()}'
+                                  : _activePointIndex >= 0
+                                    ? 'Drag point ${_activePointIndex + 1} to reposition'
+                                    : _isAngleSnapped
+                                      ? 'Snapped: ${_angleLabel()}'
+                                      : 'Tap next corner | Drag orange to adjust',
                         style: TextStyle(
                           color: _activePointIndex >= 0
                               ? const Color(0xFFFFAA00)
