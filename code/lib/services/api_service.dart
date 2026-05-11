@@ -228,4 +228,31 @@ class ApiService {
       return false;
     }
   }
+
+  // ── Presence ──────────────────────────────────────────────────────────
+
+  static Future<void> sendHeartbeat(int cloudProjectId) async {
+    try {
+      final headers = await _authHeaders();
+      await http.post(
+        Uri.parse('$baseUrl/sync/heartbeat'),
+        headers: headers,
+        body: jsonEncode({'project_id': cloudProjectId}),
+      );
+    } catch (_) {}
+  }
+
+  static Future<List<dynamic>> getActiveCollaborators(int cloudProjectId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/sync/active-collaborators/$cloudProjectId'),
+        headers: headers,
+      );
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
 }

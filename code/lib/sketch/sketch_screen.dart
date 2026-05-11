@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import '../ble/ble_manager.dart';
 import '../ble/ble_packet.dart';
@@ -86,6 +87,9 @@ class _SketchScreenState extends State<SketchScreen>
   double? _pendingBleMm;
   bool _waitingForBle = false;
   String? _lastCloudUpdatedAt;
+  int? _cloudProjectId;
+  Timer? _heartbeatTimer;
+  List<Map<String, dynamic>> _activeCollaborators = [];
   SketchShape get activeShape => shapes[activeIndex];
   // ── From Venuka — object placement ──────────────────────────
   RoomObjectType? _draggingObjectType;  
@@ -184,10 +188,22 @@ class _SketchScreenState extends State<SketchScreen>
     SyncService.instance.statusStream.listen((status) {
       if (mounted) setState(() {});
     });
+
+    SyncService.instance.uploadSuccessStream.listen((event) {
+      if (!mounted) return;
+      final cloudId = event['cloud_project_id'];
+      final updatedAt = event['updated_at'] as String?;
+      setState(() {
+        if (cloudId != null) _cloudProjectId = cloudId as int;
+        if (updatedAt != null) _lastCloudUpdatedAt = updatedAt;
+      });
+      _startHeartbeat();
+    });
   }
 
   @override
   void dispose() {
+    _heartbeatTimer?.cancel();
     widget.bleManager?.disconnect();
     super.dispose();
   }
@@ -2368,6 +2384,8 @@ class _SketchScreenState extends State<SketchScreen>
                             fontSize: 12,
                             fontFamily: 'monospace')),
                     const SizedBox(width: 4),
+                    _buildPresenceAvatars(),
+                    const SizedBox(width: 4),
                     _buildSyncIcon(),
                     const SizedBox(width: 4),
                     IconButton(
@@ -2749,6 +2767,69 @@ class _SketchScreenState extends State<SketchScreen>
         ],
       ),
     );
+  }
+
+  void _startHeartbeat() {
+    if (_heartbeatTimer != null) return; // already running
+    _sendHeartbeat(); // send immediately on first connect
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _sendHeartbeat();
+    });
+  }
+
+  Future<void> _sendHeartbeat() async {
+    final id = _cloudProjectId;
+    if (id == null) return;
+    await ApiService.sendHeartbeat(id);
+    final collaborators = await ApiService.getActiveCollaborators(id);
+    if (mounted) {
+      setState(() {
+        _activeCollaborators = collaborators
+            .cast<Map<String, dynamic>>();
+      });
+    }
+  }
+
+  Widget _buildPresenceAvatars() {
+    if (_activeCollaborators.isEmpty) return const SizedBox.shrink();
+    final shown = _activeCollaborators.take(4).toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: shown.map((c) {
+        final email = (c['email'] as String?) ?? '?';
+        final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+        final color = _avatarColor(email);
+        return Padding(
+          padding: const EdgeInsets.only(left: 3),
+          child: Tooltip(
+            message: email,
+            child: CircleAvatar(
+              radius: 10,
+              backgroundColor: color,
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Color _avatarColor(String email) {
+    const colors = [
+      Color(0xFF00AAFF),
+      Color(0xFFFF6644),
+      Color(0xFF44BB66),
+      Color(0xFFAA44FF),
+      Color(0xFFFFAA00),
+    ];
+    return colors[email.hashCode.abs() % colors.length];
   }
 
   Widget _buildSyncIcon() {

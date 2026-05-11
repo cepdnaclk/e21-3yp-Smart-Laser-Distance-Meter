@@ -298,4 +298,89 @@ router.get('/updates/:projectId', async (req, res) => {
   }
 });
 
+// POST /sync/heartbeat
+// Flutter calls this every 30 s while the sketch screen is open
+router.post('/heartbeat', async (req, res) => {
+  try {
+    const { project_id } = req.body;
+    if (!project_id) return res.status(400).json({ error: 'project_id required' });
+
+    // Verify the caller has access (owner or accepted collaborator)
+    const access = await pool.query(
+      `SELECT 1 FROM projects p
+       WHERE p.id = $1
+         AND (
+           p.user_id = $2
+           OR EXISTS (
+             SELECT 1 FROM project_collaborators pc
+             WHERE pc.project_id = p.id
+               AND pc.user_id = $2
+               AND pc.status = 'accepted'
+           )
+         )`,
+      [project_id, req.user.userId]
+    );
+    if (access.rows.length === 0) {
+      return res.status(404).json({ error: 'Access denied' });
+    }
+
+    // Upsert presence — create or refresh the timestamp
+    await pool.query(
+      `INSERT INTO project_presence (project_id, user_id, last_seen_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (project_id, user_id)
+       DO UPDATE SET last_seen_at = NOW()`,
+      [project_id, req.user.userId]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Heartbeat error:', err);
+    res.status(500).json({ error: 'Heartbeat failed' });
+  }
+});
+
+// GET /sync/active-collaborators/:projectId
+// Returns other users seen on this project in the last 2 minutes
+router.get('/active-collaborators/:projectId', async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+
+    // Verify access
+    const access = await pool.query(
+      `SELECT 1 FROM projects p
+       WHERE p.id = $1
+         AND (
+           p.user_id = $2
+           OR EXISTS (
+             SELECT 1 FROM project_collaborators pc
+             WHERE pc.project_id = p.id
+               AND pc.user_id = $2
+               AND pc.status = 'accepted'
+           )
+         )`,
+      [projectId, req.user.userId]
+    );
+    if (access.rows.length === 0) {
+      return res.status(404).json({ error: 'Access denied' });
+    }
+
+    const result = await pool.query(
+      `SELECT u.email, pp.last_seen_at
+       FROM project_presence pp
+       JOIN users u ON u.id = pp.user_id
+       WHERE pp.project_id = $1
+         AND pp.user_id != $2
+         AND pp.last_seen_at > NOW() - INTERVAL '2 minutes'
+       ORDER BY pp.last_seen_at DESC`,
+      [projectId, req.user.userId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Active collaborators error:', err);
+    res.status(500).json({ error: 'Failed to get active collaborators' });
+  }
+});
+
 module.exports = router;

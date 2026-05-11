@@ -18,6 +18,12 @@ class SyncService {
   final _statusController = StreamController<SyncStatus>.broadcast();
   Stream<SyncStatus> get statusStream => _statusController.stream;
 
+  // Emits {local_project_id, cloud_project_id, updated_at} on each successful upload
+  final _uploadSuccessController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get uploadSuccessStream =>
+      _uploadSuccessController.stream;
+
   StreamSubscription? _connectivitySub;
   Timer? _retryTimer;
   bool _isProcessing = false;
@@ -44,6 +50,7 @@ class SyncService {
     _connectivitySub?.cancel();
     _retryTimer?.cancel();
     _statusController.close();
+    _uploadSuccessController.close();
   }
 
   // Add to queue — call this instead of uploadProject() directly
@@ -91,8 +98,13 @@ class SyncService {
             _setStatus(SyncStatus.offline);
             break; // network error — stop, retry later
           } else {
-            // Success
+            // Success — notify listeners so sketch screen can track cloud ID
             await DatabaseHelper.instance.deletePendingUpload(id);
+            _uploadSuccessController.add({
+              'local_project_id': item['project_id'],
+              'cloud_project_id': result['cloud_project_id'],
+              'updated_at': result['updated_at'],
+            });
             _setStatus(SyncStatus.idle);
           }
         } catch (e) {
