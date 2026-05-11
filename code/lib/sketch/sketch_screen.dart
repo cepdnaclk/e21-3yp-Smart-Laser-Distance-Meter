@@ -336,6 +336,79 @@ class _SketchScreenState extends State<SketchScreen>
     }
   }
 
+  Map<String, dynamic> _buildProjectPayload(String name) {
+    return {
+      'project': {
+        'name': name,
+        'local_id': _localProjectId!,
+      },
+      'shapes': shapes.asMap().entries.map((entry) {
+        final shape = entry.value;
+        return {
+          'shape_index': entry.key,
+          'is_closed': shape.isClosed,
+          'points': shape.points.asMap().entries.map((e) => {
+            'order_index': e.key,
+            'x': e.value.dx,
+            'y': e.value.dy,
+          }).toList(),
+          'wall_real_mm': shape.wallRealMm.entries.map((e) => {
+            'wall_index': e.key,
+            'real_mm': e.value,
+          }).toList(),
+          'wall_angles': _wallAngles.asMap().entries.map((e) => {
+            'order_index': e.key,
+            'angle': e.value,
+          }).toList(),
+          'wall_lengths': _wallDrawnLengths.asMap().entries.map((e) => {
+            'order_index': e.key,
+            'length': e.value,
+          }).toList(),
+        };
+      }).toList(),
+      'roomObjects': shapes
+          .expand((shape) => shape.roomObjects)
+          .map((obj) => {
+            'object_id': obj.id,
+            'type': obj.type.name,
+            'wall_index': obj.wallIndex,
+            'position_along': obj.positionAlong,
+            'width_mm': obj.widthMm,
+            'height_mm': obj.heightMm,
+            'elevation_mm': obj.elevationMm,
+          }).toList(),
+    };
+  }
+
+  Future<void> _queueAutoSync() async {
+    // Only sync if logged in and project has data worth syncing
+    final isLoggedIn = await ApiService.isLoggedIn();
+    if (!isLoggedIn) return;
+    if (activeShape.points.isEmpty) return;
+
+    // Ensure project has a local SQLite ID first
+    if (_localProjectId == null) {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: 'Auto Save',
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+    }
+
+    final payload = _buildProjectPayload(
+      activeShape.label.isNotEmpty ? activeShape.label : 'Room Project',
+    );
+
+    await SyncService.instance.queueUpload(
+      projectId: _localProjectId!,
+      projectData: payload,
+      lastModifiedAt: _lastCloudUpdatedAt,
+    );
+  }
+
   Future<void> _backupToCloud() async {
     // Check if logged in first
     final isLoggedIn = await ApiService.isLoggedIn();
@@ -410,50 +483,7 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     try {
-      // Build the data structure to send to backend
-      // matching exactly what sync.js expects
-      final projectData = {
-        'project': {
-          'name': chosenName,
-          'local_id': _localProjectId!,
-        },
-        'shapes': shapes.asMap().entries.map((entry) {
-          final index = entry.key;
-          final shape = entry.value;
-          return {
-            'shape_index': index,
-            'is_closed': shape.isClosed,
-            'points': shape.points.asMap().entries.map((e) => {
-              'order_index': e.key,
-              'x': e.value.dx,
-              'y': e.value.dy,
-            }).toList(),
-            'wall_real_mm': shape.wallRealMm.entries.map((e) => {
-              'wall_index': e.key,
-              'real_mm': e.value,
-            }).toList(),
-            'wall_angles': _wallAngles.asMap().entries.map((e) => {
-              'order_index': e.key,
-              'angle': e.value,
-            }).toList(),
-            'wall_lengths': _wallDrawnLengths.asMap().entries.map((e) => {
-              'order_index': e.key,
-              'length': e.value,
-            }).toList(),
-          };
-        }).toList(),
-        'roomObjects': shapes
-            .expand((shape) => shape.roomObjects)
-            .map((obj) => {
-              'object_id': obj.id,
-              'type': obj.type.name,
-              'wall_index': obj.wallIndex,
-              'position_along': obj.positionAlong,
-              'width_mm': obj.widthMm,
-              'height_mm': obj.heightMm,
-              'elevation_mm': obj.elevationMm,
-        }).toList(),
-      };
+      final projectData = _buildProjectPayload(chosenName);
 
       await SyncService.instance.queueUpload(
         projectId: _localProjectId!,
@@ -1090,6 +1120,7 @@ class _SketchScreenState extends State<SketchScreen>
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
+    _queueAutoSync();
   }
 
   
@@ -1537,6 +1568,7 @@ class _SketchScreenState extends State<SketchScreen>
       });
       _syncWallDefinitions();
       _showRoomNameDialog();
+      _queueAutoSync();
     } else {
       if (_isDraggingActivePoint && _dragOccurred) {
         if (_activePointIndex > 0) activeShape.wallRealMm.remove(_activePointIndex - 1);
@@ -1790,6 +1822,7 @@ class _SketchScreenState extends State<SketchScreen>
         });
         _syncWallDefinitions();
         _showRoomNameDialog();
+        _queueAutoSync();
         return;
       }
     }
@@ -2008,6 +2041,7 @@ class _SketchScreenState extends State<SketchScreen>
         _dragObjectScreenPos = null;
         _dragWallHit = null;
       });
+      _queueAutoSync();
     }
 
     final topPadding = MediaQuery.of(context).padding.top;
