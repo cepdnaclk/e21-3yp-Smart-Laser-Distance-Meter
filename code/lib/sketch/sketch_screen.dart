@@ -27,6 +27,7 @@ class SketchScreen extends StatefulWidget {
   final List<SketchShape>? initialShapes;
   final List<double>? initialWallAngles;
   final List<double>? initialWallLengths;
+  final int? cloudProjectId;
 
   const SketchScreen({
     super.key,
@@ -34,6 +35,7 @@ class SketchScreen extends StatefulWidget {
     this.initialShapes,
     this.initialWallAngles,
     this.initialWallLengths,
+    this.cloudProjectId,
   });
 
   @override
@@ -159,6 +161,11 @@ class _SketchScreenState extends State<SketchScreen>
       shapes = List<SketchShape>.from(widget.initialShapes!);
       activeIndex = 0;
     }
+    // If opened from a cloud project (e.g. "Open Live"), start heartbeat immediately
+    if (widget.cloudProjectId != null) {
+      _cloudProjectId = widget.cloudProjectId;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startHeartbeat());
+    }
     if (widget.initialWallAngles != null) {
       _wallAngles
         ..clear()
@@ -193,6 +200,7 @@ class _SketchScreenState extends State<SketchScreen>
       if (!mounted) return;
       final cloudId = event['cloud_project_id'];
       final updatedAt = event['updated_at'] as String?;
+      debugPrint('[Presence] Upload success — cloudId=$cloudId updatedAt=$updatedAt');
       setState(() {
         if (cloudId != null) _cloudProjectId = cloudId as int;
         if (updatedAt != null) _lastCloudUpdatedAt = updatedAt;
@@ -2385,6 +2393,13 @@ class _SketchScreenState extends State<SketchScreen>
                             fontFamily: 'monospace')),
                     const SizedBox(width: 4),
                     _buildPresenceAvatars(),
+                    if (_cloudProjectId != null)
+                      IconButton(
+                        icon: const Icon(Icons.share,
+                            color: Color(0xFF00AA44), size: 18),
+                        tooltip: 'Share invite code',
+                        onPressed: _showInviteCodeDialog,
+                      ),
                     const SizedBox(width: 4),
                     _buildSyncIcon(),
                     const SizedBox(width: 4),
@@ -2769,8 +2784,68 @@ class _SketchScreenState extends State<SketchScreen>
     );
   }
 
+  Future<void> _showInviteCodeDialog() async {
+    final id = _cloudProjectId;
+    if (id == null) return;
+    final code = await ApiService.getInviteCode(id);
+    if (!mounted) return;
+    if (code == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not fetch invite code'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Share Project',
+            style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Send this code to your collaborator.\nThey tap Join in the Collaboration screen.',
+              style: TextStyle(color: Color(0xFF778899), fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D1A27),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF334466)),
+              ),
+              child: Text(
+                code,
+                style: const TextStyle(
+                  color: Color(0xFF00AAFF),
+                  fontFamily: 'monospace',
+                  fontSize: 28,
+                  letterSpacing: 6,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _startHeartbeat() {
     if (_heartbeatTimer != null) return; // already running
+    debugPrint('[Presence] Heartbeat started for cloud project $_cloudProjectId');
     _sendHeartbeat(); // send immediately on first connect
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _sendHeartbeat();
@@ -2779,9 +2854,14 @@ class _SketchScreenState extends State<SketchScreen>
 
   Future<void> _sendHeartbeat() async {
     final id = _cloudProjectId;
-    if (id == null) return;
+    if (id == null) {
+      debugPrint('[Presence] _sendHeartbeat skipped — no cloudProjectId');
+      return;
+    }
+    debugPrint('[Presence] Sending heartbeat for project $id');
     await ApiService.sendHeartbeat(id);
     final collaborators = await ApiService.getActiveCollaborators(id);
+    debugPrint('[Presence] Active collaborators: $collaborators');
     if (mounted) {
       setState(() {
         _activeCollaborators = collaborators

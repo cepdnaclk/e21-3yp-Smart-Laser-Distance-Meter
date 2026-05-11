@@ -769,6 +769,10 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
         SketchScreen(
           key: _sketchKey,
           bleManager: null,
+          initialShapes: _shapes,
+          initialWallAngles: _wallAngles,
+          initialWallLengths: _wallLengths,
+          cloudProjectId: widget.cloudProjectId,
         ),
         Positioned(
           top: 56,
