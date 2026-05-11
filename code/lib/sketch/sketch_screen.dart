@@ -18,6 +18,7 @@ import 'room_3d_screen.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
 
 
 class SketchScreen extends StatefulWidget {
@@ -178,6 +179,10 @@ class _SketchScreenState extends State<SketchScreen>
         });
         _applyRealMeasurement(wallIdx, packet.distanceMm);
       }
+    });
+
+    SyncService.instance.statusStream.listen((status) {
+      if (mounted) setState(() {});
     });
   }
 
@@ -450,53 +455,21 @@ class _SketchScreenState extends State<SketchScreen>
         }).toList(),
       };
 
-      debugPrint('About to upload, localProjectId: $_localProjectId, chosenName: $chosenName');
-      debugPrint('Project data keys: ${projectData.keys.toList()}');
-      final result = await ApiService.uploadProject(
-        projectData,
+      await SyncService.instance.queueUpload(
+        projectId: _localProjectId!,
+        projectData: projectData,
         lastModifiedAt: _lastCloudUpdatedAt,
       );
-      debugPrint('UPLOAD RESULT: $result');
 
-      // Hide the uploading snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      }
-
-      if (result['conflict'] == true) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Server has newer changes — pull the latest version before uploading.',
-                style: TextStyle(fontFamily: 'monospace', fontSize: 13),
-              ),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
-      } else if (result['error'] != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Backup failed: ${result['error']}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      } else {
-        if (result['updated_at'] != null) {
-          setState(() => _lastCloudUpdatedAt = result['updated_at'] as String);
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Backed up to cloud successfully'),
-              backgroundColor: Color(0xFF00AA44),
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Queued for sync — will upload automatically'),
+            backgroundColor: Color(0xFF00AA44),
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -2361,6 +2334,8 @@ class _SketchScreenState extends State<SketchScreen>
                             fontSize: 12,
                             fontFamily: 'monospace')),
                     const SizedBox(width: 4),
+                    _buildSyncIcon(),
+                    const SizedBox(width: 4),
                     IconButton(
                       icon: const Icon(Icons.arrow_back,
                           color: Color(0xFFAAAAAA), size: 18),
@@ -2740,6 +2715,29 @@ class _SketchScreenState extends State<SketchScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildSyncIcon() {
+    final status = SyncService.instance.status;
+    switch (status) {
+      case SyncStatus.syncing:
+        return const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: Color(0xFF00AAFF),
+          ),
+        );
+      case SyncStatus.offline:
+        return const Icon(Icons.cloud_off,
+            color: Color(0xFFFF8800), size: 16);
+      case SyncStatus.conflict:
+        return const Icon(Icons.warning_amber, color: Colors.red, size: 16);
+      case SyncStatus.idle:
+        return const Icon(Icons.cloud_done,
+            color: Color(0xFF00CC44), size: 16);
+    }
   }
 }
 

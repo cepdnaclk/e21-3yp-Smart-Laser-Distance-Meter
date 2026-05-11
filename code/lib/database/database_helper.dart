@@ -24,8 +24,9 @@ class DatabaseHelper {
     final path = join(dbPath, fileName);
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createTables,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -114,6 +115,34 @@ class DatabaseHelper {
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE pending_uploads (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id    INTEGER NOT NULL,
+        payload       TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        attempts      INTEGER NOT NULL DEFAULT 0,
+        last_attempt  TEXT,
+        status        TEXT NOT NULL DEFAULT 'pending'
+      )
+    ''');
+  }
+
+  Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS pending_uploads (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id    INTEGER NOT NULL,
+          payload       TEXT NOT NULL,
+          created_at    TEXT NOT NULL,
+          attempts      INTEGER NOT NULL DEFAULT 0,
+          last_attempt  TEXT,
+          status        TEXT NOT NULL DEFAULT 'pending'
+        )
+      ''');
+    }
   }
 
   // ── CREATE ────────────────────────────────────────────────────────────────
@@ -300,5 +329,69 @@ class DatabaseHelper {
     );
     // CASCADE in the table definition automatically deletes
     // all shapes, points, objects linked to this project
+  }
+
+  // Add an item to the upload queue
+  Future<void> queueUpload({
+    required int projectId,
+    required String payloadJson,
+  }) async {
+    final db = await database;
+    await db.insert('pending_uploads', {
+      'project_id': projectId,
+      'payload': payloadJson,
+      'created_at': DateTime.now().toIso8601String(),
+      'status': 'pending',
+    });
+  }
+
+  // Get the oldest pending item
+  Future<Map<String, dynamic>?> getNextPendingUpload() async {
+    final db = await database;
+    final rows = await db.query(
+      'pending_uploads',
+      where: 'status = ?',
+      whereArgs: ['pending'],
+      orderBy: 'created_at ASC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  // Remove a successfully uploaded item
+  Future<void> deletePendingUpload(int id) async {
+    final db = await database;
+    await db.delete('pending_uploads', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // Mark an item as conflicted (do not retry automatically)
+  Future<void> markUploadConflict(int id) async {
+    final db = await database;
+    await db.update(
+      'pending_uploads',
+      {'status': 'conflict', 'last_attempt': DateTime.now().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // Increment attempt count on network failure
+  Future<void> markUploadAttempted(int id) async {
+    final db = await database;
+    await db.rawUpdate('''
+      UPDATE pending_uploads
+      SET attempts = attempts + 1,
+          last_attempt = ?
+      WHERE id = ?
+    ''', [DateTime.now().toIso8601String(), id]);
+  }
+
+  // Count how many items are waiting
+  Future<int> pendingUploadCount() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      "SELECT COUNT(*) as c FROM pending_uploads WHERE status = 'pending'"
+    );
+    return result.first['c'] as int;
   }
 }

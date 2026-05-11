@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api_service.dart';
+import 'services/sync_service.dart';
 import 'core/constants.dart';
 
 
@@ -42,6 +43,7 @@ class _AppStartupState extends State<AppStartup> {
   @override
   void initState() {
     super.initState();
+    SyncService.instance.init();
     _checkLogin();
   }
 
