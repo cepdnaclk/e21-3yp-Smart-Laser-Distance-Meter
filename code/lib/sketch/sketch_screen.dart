@@ -365,6 +365,7 @@ class _SketchScreenState extends State<SketchScreen>
       'project': {
         'name': name,
         'local_id': _localProjectId!,
+        if (_cloudProjectId != null) 'cloud_project_id': _cloudProjectId,
       },
       'shapes': shapes.asMap().entries.map((entry) {
         final shape = entry.value;
@@ -405,12 +406,16 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   Future<void> _queueAutoSync() async {
-    // Only sync if logged in and project has data worth syncing
     final isLoggedIn = await ApiService.isLoggedIn();
-    if (!isLoggedIn) return;
-    if (activeShape.points.isEmpty) return;
+    if (!isLoggedIn) {
+      debugPrint('[AutoSync] Skipped — not logged in');
+      return;
+    }
+    if (activeShape.points.isEmpty) {
+      debugPrint('[AutoSync] Skipped — no points');
+      return;
+    }
 
-    // Ensure project has a local SQLite ID first
     if (_localProjectId == null) {
       final savedId = await DatabaseHelper.instance.saveProject(
         name: 'Auto Save',
@@ -420,7 +425,10 @@ class _SketchScreenState extends State<SketchScreen>
         wallDrawnLengths: _wallDrawnLengths,
       );
       setState(() => _localProjectId = savedId);
+      debugPrint('[AutoSync] Created local project id=$savedId');
     }
+
+    debugPrint('[AutoSync] Queuing upload — localId=$_localProjectId cloudId=$_cloudProjectId shapes=${shapes.length}');
 
     final payload = _buildProjectPayload(
       activeShape.label.isNotEmpty ? activeShape.label : 'Room Project',

@@ -716,6 +716,8 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
     if (_syncing) return;
     _syncing = true;
 
+    debugPrint('[Poll] Checking project ${widget.cloudProjectId} since $_lastUpdatedAt');
+
     final data = await ApiService.pollForUpdates(
         widget.cloudProjectId, _lastUpdatedAt);
 
@@ -724,40 +726,59 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
       return;
     }
 
-    if (data != null) {
-      _lastUpdatedAt =
-          data['project']['updated_at'] as String? ?? _lastUpdatedAt;
+    if (data == null) {
+      debugPrint('[Poll] No update detected');
+      _syncing = false;
+      return;
+    }
 
-      final newShapes =
-          (data['shapes'] as List<dynamic>).map<SketchShape>((s) {
-        final shape = SketchShape.empty();
-        shape.isClosed = s['is_closed'] as bool;
-        shape.points = (s['points'] as List<dynamic>)
-            .map((r) => Offset(
-                  (r['x'] as num).toDouble(),
-                  (r['y'] as num).toDouble(),
-                ))
-            .toList();
-        for (final r in s['wall_real_mm'] as List<dynamic>) {
-          shape.wallRealMm[r['wall_index'] as int] =
-              (r['real_mm'] as num).toDouble();
-        }
-        return shape;
-      }).toList();
+    debugPrint('[Poll] Update detected! shapes=${(data['shapes'] as List).length}');
+    _lastUpdatedAt =
+        data['project']['updated_at'] as String? ?? _lastUpdatedAt;
 
-      setState(() {
-        _shapes = newShapes;
-        _lastSyncTime = DateTime.now();
-        _sketchKey = UniqueKey();
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Project updated by owner'),
-          backgroundColor: Color(0xFF004488),
-          duration: Duration(seconds: 2),
-        ));
+    final shapesData = data['shapes'] as List<dynamic>;
+    final newShapes = shapesData.map<SketchShape>((s) {
+      final shape = SketchShape.empty();
+      shape.isClosed = s['is_closed'] as bool;
+      shape.points = (s['points'] as List<dynamic>)
+          .map((r) => Offset(
+                (r['x'] as num).toDouble(),
+                (r['y'] as num).toDouble(),
+              ))
+          .toList();
+      for (final r in s['wall_real_mm'] as List<dynamic>) {
+        shape.wallRealMm[r['wall_index'] as int] =
+            (r['real_mm'] as num).toDouble();
       }
+      return shape;
+    }).toList();
+
+    // Also update wall angles and lengths from the first shape
+    final newAngles = shapesData.isEmpty
+        ? <double>[]
+        : (shapesData.first['wall_angles'] as List<dynamic>)
+            .map((r) => (r['angle'] as num).toDouble())
+            .toList();
+    final newLengths = shapesData.isEmpty
+        ? <double>[]
+        : (shapesData.first['wall_lengths'] as List<dynamic>)
+            .map((r) => (r['length'] as num).toDouble())
+            .toList();
+
+    setState(() {
+      _shapes = newShapes;
+      _wallAngles = newAngles;
+      _wallLengths = newLengths;
+      _lastSyncTime = DateTime.now();
+      _sketchKey = UniqueKey();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Project updated'),
+        backgroundColor: Color(0xFF004488),
+        duration: Duration(seconds: 2),
+      ));
     }
     _syncing = false;
   }

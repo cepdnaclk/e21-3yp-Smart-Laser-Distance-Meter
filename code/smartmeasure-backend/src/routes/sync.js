@@ -19,10 +19,25 @@ router.post('/upload', async (req, res) => {
 
     // 1. Upsert project
     let cloudProjectId;
-    const existing = await client.query(
-      'SELECT id FROM projects WHERE user_id = $1 AND local_id = $2',
-      [req.user.userId, project.local_id]
-    );
+
+    // If Flutter already knows the cloud project id, use it directly
+    if (project.cloud_project_id) {
+      const byId = await client.query(
+        'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
+        [project.cloud_project_id, req.user.userId]
+      );
+      if (byId.rows.length > 0) {
+        cloudProjectId = byId.rows[0].id;
+      }
+    }
+
+    // Otherwise fall back to local_id lookup
+    const existing = cloudProjectId ? { rows: [{ id: cloudProjectId }] } :
+      await client.query(
+        'SELECT id FROM projects WHERE user_id = $1 AND local_id = $2',
+        [req.user.userId, project.local_id]
+      );
+
     if (existing.rows.length > 0) {
       cloudProjectId = existing.rows[0].id;
 
