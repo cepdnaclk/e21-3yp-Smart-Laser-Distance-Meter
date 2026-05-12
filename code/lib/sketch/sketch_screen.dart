@@ -439,7 +439,9 @@ class _SketchScreenState extends State<SketchScreen>
   Future<void> _queueAutoSync() async {
     final isLoggedIn = await ApiService.isLoggedIn();
     if (!isLoggedIn) return;
-    if (activeShape.points.isEmpty) return;
+    // Allow sync even if active shape is empty (e.g. after deleting a room).
+    // Only skip if the project has never been saved AND nothing is drawn at all.
+    if (_localProjectId == null && shapes.every((s) => s.points.isEmpty)) return;
 
     if (_localProjectId == null) {
       final savedId = await DatabaseHelper.instance.saveProject(
@@ -798,6 +800,7 @@ class _SketchScreenState extends State<SketchScreen>
       _prevWallAngle = null;
       _nextWallAngle = null;
     });
+    _queueAutoSync();
   }
 
   // ── Angle math ───────────────────────────────────────────────────────────
@@ -1675,6 +1678,7 @@ class _SketchScreenState extends State<SketchScreen>
         if (_activePointIndex < _wallAngles.length) activeShape.wallRealMm.remove(_activePointIndex);
         _saveUndo();
         _syncWallDefinitions();
+        _queueAutoSync();
       }
       _syncWallDefinitions();
       setState(() {
@@ -2021,6 +2025,7 @@ class _SketchScreenState extends State<SketchScreen>
             activeShape.roomObjects.removeWhere((o) => o.id == id);
             _selectedObjectId = null;
           });
+          _queueAutoSync();
         },
       ),
     );
@@ -2349,6 +2354,7 @@ class _SketchScreenState extends State<SketchScreen>
                               (f) => f.id == _selectedFurnitureId);
                           _selectedFurnitureId = null;
                         });
+                        _queueAutoSync();
                       },
                     ),
                     const SizedBox(width: 16),
