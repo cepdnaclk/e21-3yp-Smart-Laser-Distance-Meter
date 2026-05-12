@@ -2,11 +2,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import '../ble/ble_manager.dart';
 import '../ble/ble_packet.dart';
 import 'sketch_constants.dart';
 import 'sketch_model.dart';
+import 'furniture_item.dart';
 import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
@@ -14,11 +16,27 @@ import 'sketch_widgets.dart';
 import 'room_object.dart';
 import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
+import '../database/database_helper.dart';
+import '../database/project_list_screen.dart';
+import '../services/api_service.dart';
+import '../services/sync_service.dart';
 
 
 class SketchScreen extends StatefulWidget {
   final BleManager? bleManager;
-  const SketchScreen({super.key, this.bleManager});
+  final List<SketchShape>? initialShapes;
+  final List<double>? initialWallAngles;
+  final List<double>? initialWallLengths;
+  final int? cloudProjectId;
+
+  const SketchScreen({
+    super.key,
+    this.bleManager,
+    this.initialShapes,
+    this.initialWallAngles,
+    this.initialWallLengths,
+    this.cloudProjectId,
+  });
 
   @override
   State<SketchScreen> createState() => _SketchScreenState();
@@ -28,6 +46,7 @@ class _SketchScreenState extends State<SketchScreen>
     with SketchDialogsMixin<SketchScreen> {
 
   // ── State fields ─────────────────────────────────────────────────────────
+  int? _localProjectId;
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
@@ -69,6 +88,10 @@ class _SketchScreenState extends State<SketchScreen>
   final List<({Rect rect, int wallIndex, int shapeIndex})> _labelHitRects = [];
   double? _pendingBleMm;
   bool _waitingForBle = false;
+  String? _lastCloudUpdatedAt;
+  int? _cloudProjectId;
+  Timer? _heartbeatTimer;
+  List<Map<String, dynamic>> _activeCollaborators = [];
   SketchShape get activeShape => shapes[activeIndex];
   // ── From Venuka — object placement ──────────────────────────
   RoomObjectType? _draggingObjectType;  
@@ -76,6 +99,16 @@ class _SketchScreenState extends State<SketchScreen>
   Offset? _dragObjectScreenPos;         
   WallHitResult? _dragWallHit;          
   int _objectCounter = 0;  
+  // ── Furniture state ──────────────────────────────────────────────────────
+  FurnitureType? _furniturePlacingType;
+  String? _selectedFurnitureId;
+  bool _isDraggingFurniture = false;
+  Offset? _furnitureDragStartWorld;
+  bool _furnitureDragOccurred = false;
+  int _furnitureCounter = 0;
+
+  final List<List<List<FurnitureItem>>> _undoAllFurnitureStack = [];
+  final List<List<List<FurnitureItem>>> _redoAllFurnitureStack = [];
   // ── From Venuka — wall vector chain ─────────────────────────
   final List<double> _wallAngles = [];
   final List<double> _wallDrawnLengths = [];
@@ -124,19 +157,62 @@ class _SketchScreenState extends State<SketchScreen>
   @override
   void initState() {
     super.initState();
+    if (widget.initialShapes != null && widget.initialShapes!.isNotEmpty) {
+      shapes = List<SketchShape>.from(widget.initialShapes!);
+      activeIndex = 0;
+      // Fit the loaded shapes into the viewport once the canvas size is known
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fitShapesToView());
+    }
+    // If opened from a cloud project (e.g. "Open Live"), start heartbeat immediately
+    if (widget.cloudProjectId != null) {
+      _cloudProjectId = widget.cloudProjectId;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startHeartbeat());
+    }
+    if (widget.initialWallAngles != null) {
+      _wallAngles
+        ..clear()
+        ..addAll(widget.initialWallAngles!);
+    }
+    if (widget.initialWallLengths != null) {
+      _wallDrawnLengths
+        ..clear()
+        ..addAll(widget.initialWallLengths!);
+    }
     widget.bleManager?.packetStream.listen((BlePacket packet) {
-      if (_waitingForBle && _selectedWallIndex >= 0) {
+      // Skip capturing packets (laser-on signal) and zero readings
+      if (packet.isCapturing || packet.distanceMm <= 0) return;
+
+      if (_waitingForBle && _selectedWallIndex >= 0 &&
+          _selectedWallIndex < _wallAngles.length) {
+        final wallIdx = _selectedWallIndex;
         setState(() {
           _waitingForBle = false;
           _pendingBleMm = packet.distanceMm;
+          _selectedWallIndex = -1;
         });
-        _applyRealMeasurement(_selectedWallIndex, packet.distanceMm);
+        _applyRealMeasurement(wallIdx, packet.distanceMm);
       }
+    });
+
+    SyncService.instance.statusStream.listen((status) {
+      if (mounted) setState(() {});
+    });
+
+    SyncService.instance.uploadSuccessStream.listen((event) {
+      if (!mounted) return;
+      final cloudId = event['cloud_project_id'];
+      final updatedAt = event['updated_at'] as String?;
+      setState(() {
+        if (cloudId != null) _cloudProjectId = cloudId as int;
+        if (updatedAt != null) _lastCloudUpdatedAt = updatedAt;
+      });
+      _startHeartbeat();
     });
   }
 
   @override
   void dispose() {
+    _heartbeatTimer?.cancel();
     widget.bleManager?.disconnect();
     super.dispose();
   }
@@ -219,6 +295,349 @@ class _SketchScreenState extends State<SketchScreen>
       activeIndex = shapes.length - 1;
     });
   }
+
+  Future<void> _saveProject() async {
+    final nameController = TextEditingController(text: 'Room Project');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Save Project',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Save',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty) return;
+
+    try {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: name,
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project saved successfully'),
+            backgroundColor: Color(0xFF00AA44),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Save failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Map<String, dynamic> _buildProjectPayload(String name) {
+    return {
+      'project': {
+        'name': name,
+        'local_id': _localProjectId!,
+        if (_cloudProjectId != null) 'cloud_project_id': _cloudProjectId,
+      },
+      'shapes': shapes.asMap().entries.map((entry) {
+        final shape = entry.value;
+        return {
+          'shape_index': entry.key,
+          'is_closed': shape.isClosed,
+          'points': shape.points.asMap().entries.map((e) => {
+            'order_index': e.key,
+            'x': e.value.dx,
+            'y': e.value.dy,
+          }).toList(),
+          'wall_real_mm': shape.wallRealMm.entries.map((e) => {
+            'wall_index': e.key,
+            'real_mm': e.value,
+          }).toList(),
+          'wall_angles': () {
+            final pts = shape.points;
+            return [
+              for (int i = 0; i < pts.length - 1; i++)
+                {
+                  'order_index': i,
+                  'angle': math.atan2(
+                      pts[i + 1].dy - pts[i].dy, pts[i + 1].dx - pts[i].dx),
+                }
+            ];
+          }(),
+          'wall_lengths': () {
+            final pts = shape.points;
+            return [
+              for (int i = 0; i < pts.length - 1; i++)
+                {
+                  'order_index': i,
+                  'length': (pts[i + 1] - pts[i]).distance,
+                }
+            ];
+          }(),
+        };
+      }).toList(),
+      'roomObjects': [
+        for (int si = 0; si < shapes.length; si++)
+          for (final obj in shapes[si].roomObjects)
+            {
+              'object_id': obj.id,
+              'shape_index': si,
+              'type': obj.type.name,
+              'wall_index': obj.wallIndex,
+              'position_along': obj.positionAlong,
+              'width_mm': obj.widthMm,
+              'height_mm': obj.heightMm,
+              'elevation_mm': obj.elevationMm,
+            }
+      ],
+      'furnitureItems': [
+        for (int si = 0; si < shapes.length; si++)
+          for (final f in shapes[si].furnitureItems)
+            {
+              'furniture_id': f.id,
+              'shape_index': si,
+              'type': f.type.name,
+              'position_x': f.position.dx,
+              'position_y': f.position.dy,
+              'rotation_deg': f.rotationDeg,
+              'width_mm': f.widthMm,
+              'depth_mm': f.depthMm,
+            }
+      ],
+    };
+  }
+
+  Future<void> _queueAutoSync() async {
+    final isLoggedIn = await ApiService.isLoggedIn();
+    if (!isLoggedIn) return;
+    // Allow sync even if active shape is empty (e.g. after deleting a room).
+    // Only skip if the project has never been saved AND nothing is drawn at all.
+    if (_localProjectId == null && shapes.every((s) => s.points.isEmpty)) return;
+
+    if (_localProjectId == null) {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: 'Auto Save',
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+    }
+
+    final payload = _buildProjectPayload(
+      activeShape.label.isNotEmpty ? activeShape.label : 'Room Project',
+    );
+
+    await SyncService.instance.queueUpload(
+      projectId: _localProjectId!,
+      projectData: payload,
+      lastModifiedAt: _lastCloudUpdatedAt,
+    );
+  }
+
+  Future<void> _backupToCloud() async {
+    // Check if logged in first
+    final isLoggedIn = await ApiService.isLoggedIn();
+    if (!isLoggedIn) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login first to backup to cloud'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Ask for backup name
+    final nameController = TextEditingController(text: 'Room Project');
+    final chosenName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Cloud Backup Name',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Enter project name',
+            hintStyle: TextStyle(color: Color(0xFF556677)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF334466)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: const Text('Upload',
+                style: TextStyle(color: Color(0xFF00AAFF))),
+          ),
+        ],
+      ),
+    );
+    if (chosenName == null || chosenName.isEmpty) return;
+
+    // Ensure we have a local SQLite id
+    if (_localProjectId == null) {
+      final savedId = await DatabaseHelper.instance.saveProject(
+        name: chosenName,
+        shapes: shapes,
+        roomObjects: activeShape.roomObjects,
+        wallAngles: _wallAngles,
+        wallDrawnLengths: _wallDrawnLengths,
+      );
+      setState(() => _localProjectId = savedId);
+    }
+
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Uploading to cloud...'),
+          backgroundColor: Color(0xFF1A2A3A),
+          duration: Duration(seconds: 60),
+        ),
+      );
+    }
+
+    try {
+      final projectData = _buildProjectPayload(chosenName);
+
+      await SyncService.instance.queueUpload(
+        projectId: _localProjectId!,
+        projectData: projectData,
+        lastModifiedAt: _lastCloudUpdatedAt,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Queued for sync — will upload automatically'),
+            backgroundColor: Color(0xFF00AA44),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Backup failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadProject() async {
+    final projectId = await Navigator.push<int>(
+      context,
+      MaterialPageRoute(builder: (_) => const ProjectListScreen()),
+    );
+
+    if (projectId == null) return;
+
+    final data = await DatabaseHelper.instance.loadProject(projectId);
+    if (data == null) return;
+
+    final shapesData = data['shapes'] as List<Map<String, dynamic>>;
+    final objectsData = data['room_objects'] as List<Map<String, dynamic>>;
+
+    setState(() {
+      shapes.clear();
+      for (final s in shapesData) {
+        final shape = SketchShape.empty();
+        shape.isClosed = (s['is_closed'] as int) == 1;
+
+        final pointRows = s['points'] as List<Map<String, dynamic>>;
+        shape.points = pointRows
+            .map((r) => Offset(r['x'] as double, r['y'] as double))
+            .toList();
+
+        final mmRows = s['wall_real_mm'] as List<Map<String, dynamic>>;
+        shape.wallRealMm.clear();
+        for (final r in mmRows) {
+          shape.wallRealMm[r['wall_index'] as int] = r['real_mm'] as double;
+        }
+
+        shapes.add(shape);
+      }
+
+      if (shapes.isNotEmpty) {
+        final angleRows =
+            shapesData.first['wall_angles'] as List<Map<String, dynamic>>;
+        _wallAngles.clear();
+        _wallAngles.addAll(angleRows.map((r) => r['angle'] as double));
+
+        final lengthRows =
+            shapesData.first['wall_lengths'] as List<Map<String, dynamic>>;
+        _wallDrawnLengths.clear();
+        _wallDrawnLengths.addAll(lengthRows.map((r) => r['length'] as double));
+      }
+
+      activeShape.roomObjects.clear();
+      for (final r in objectsData) {
+        activeShape.roomObjects.add(RoomObject(
+          id: r['object_id'] as String,
+          type: r['type'] == 'door'
+              ? RoomObjectType.door
+              : RoomObjectType.window,
+          wallIndex: r['wall_index'] as int,
+          positionAlong: r['position_along'] as double,
+          widthMm: r['width_mm'] as double,
+          heightMm: r['height_mm'] as double,
+          elevationMm: r['elevation_mm'] as double,
+        ));
+      }
+
+      activeIndex = 0;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _fitShapesToView());
+  }
+
+
+
   // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
     _undoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
@@ -230,6 +649,8 @@ class _SketchScreenState extends State<SketchScreen>
     _undoActiveIndexStack.add(activeIndex);
     _undoWallAnglesStack.add(List<double>.of(_wallAngles));
     _undoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _undoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
 
     _redoAllPointsStack.clear();
     _redoAllClosedStack.clear();
@@ -238,6 +659,9 @@ class _SketchScreenState extends State<SketchScreen>
     _redoActiveIndexStack.clear();
     _redoWallAnglesStack.clear();
     _redoWallLengthsStack.clear();
+    _undoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
+    _redoAllFurnitureStack.clear();
   }
 
   void _undo() {
@@ -253,6 +677,8 @@ class _SketchScreenState extends State<SketchScreen>
     _redoActiveIndexStack.add(activeIndex);
     _redoWallAnglesStack.add(List<double>.of(_wallAngles));
     _redoWallLengthsStack.add(List<double>.of(_wallDrawnLengths));
+    _redoAllFurnitureStack.add(
+      shapes.map((s) => s.furnitureItems.map((f) => f.copyWith()).toList()).toList());
 
     // restore snapshot
     final pts = _undoAllPointsStack.removeLast();
@@ -260,6 +686,9 @@ class _SketchScreenState extends State<SketchScreen>
     final objs = _undoAllObjectsStack.removeLast();
     final mm = _undoAllRealMmStack.removeLast();
     final idx = _undoActiveIndexStack.removeLast();
+    final furn = _undoAllFurnitureStack.isNotEmpty
+      ? _undoAllFurnitureStack.removeLast()
+      : null;
 
     setState(() {
       // rebuild the shapes list from the snapshot
@@ -269,6 +698,9 @@ class _SketchScreenState extends State<SketchScreen>
         s.isClosed = closed[i];
         s.roomObjects..clear()..addAll(objs[i]);
         s.wallRealMm..clear()..addAll(mm[i]);
+        if (furn != null && i < furn.length) {
+          s.furnitureItems..clear()..addAll(furn[i]);
+        }
         return s;
       });
       activeIndex = idx;
@@ -286,6 +718,7 @@ class _SketchScreenState extends State<SketchScreen>
       _snappedAngle = null;
       _isAngleSnapped = false;
     });
+    _queueAutoSync();
   }
 
   void _redo() {
@@ -306,6 +739,9 @@ class _SketchScreenState extends State<SketchScreen>
     final objs = _redoAllObjectsStack.removeLast();
     final mm = _redoAllRealMmStack.removeLast();
     final idx = _redoActiveIndexStack.removeLast();
+    final furn = _redoAllFurnitureStack.isNotEmpty
+      ? _redoAllFurnitureStack.removeLast()
+      : null;
 
     setState(() {
       shapes = List.generate(pts.length, (i) {
@@ -314,6 +750,9 @@ class _SketchScreenState extends State<SketchScreen>
         s.isClosed = closed[i];
         s.roomObjects..clear()..addAll(objs[i]);
         s.wallRealMm..clear()..addAll(mm[i]);
+        if (furn != null && i < furn.length) {
+          s.furnitureItems..clear()..addAll(furn[i]);
+        }
         return s;
       });
       activeIndex = idx;
@@ -331,6 +770,7 @@ class _SketchScreenState extends State<SketchScreen>
       _snappedAngle = null;
       _isAngleSnapped = false;
     });
+    _queueAutoSync();
   }
 
   void _clear() {
@@ -360,6 +800,7 @@ class _SketchScreenState extends State<SketchScreen>
       _prevWallAngle = null;
       _nextWallAngle = null;
     });
+    _queueAutoSync();
   }
 
   // ── Angle math ───────────────────────────────────────────────────────────
@@ -544,6 +985,19 @@ class _SketchScreenState extends State<SketchScreen>
     return inside;
   }
 
+  bool _isInsideFurnitureItem(FurnitureItem item, Offset screenPos) {
+    final center = worldToScreen(item.position);
+    final local = screenPos - center;
+    final rad = -item.rotationDeg * math.pi / 180;
+    final rotated = Offset(
+      local.dx * math.cos(rad) - local.dy * math.sin(rad),
+      local.dx * math.sin(rad) + local.dy * math.cos(rad),
+    );
+    final w = item.widthMm / mmPerUnit * _scale;
+    final d = item.depthMm / mmPerUnit * _scale;
+    return rotated.dx.abs() <= w / 2 + 10 && rotated.dy.abs() <= d / 2 + 10;
+  }
+
   double _pointToSegmentDist(Offset p, Offset a, Offset b) {
     final dx = b.dx - a.dx, dy = b.dy - a.dy;
     final lenSq = dx * dx + dy * dy;
@@ -723,12 +1177,51 @@ class _SketchScreenState extends State<SketchScreen>
     setState(() {
       activeShape.wallRealMm[wallIndex] = realMm;
       _rebuildPointsFromChain();
+      _syncWallDefinitions(); // keep angles/lengths in sync with rebuilt points
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
+    _queueAutoSync();
   }
 
   
+  // ── Fit loaded shapes into the visible canvas ────────────────────────────
+  void _fitShapesToView() {
+    final allPoints = shapes.expand((s) => s.points).toList();
+    if (allPoints.isEmpty) return;
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final canvasSize = renderBox.size;
+
+    double minX = allPoints.first.dx, maxX = allPoints.first.dx;
+    double minY = allPoints.first.dy, maxY = allPoints.first.dy;
+    for (final p in allPoints) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+
+    final shapeW = maxX - minX;
+    final shapeH = maxY - minY;
+    if (shapeW < 1 && shapeH < 1) return;
+
+    const padding = 60.0;
+    final scaleX = (canvasSize.width - padding * 2) / (shapeW < 1 ? 1 : shapeW);
+    final scaleY = (canvasSize.height - padding * 2) / (shapeH < 1 ? 1 : shapeH);
+    final newScale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.2, 4.0);
+
+    final centerX = (minX + maxX) / 2;
+    final centerY = (minY + maxY) / 2;
+    final newPanX = canvasSize.width / 2 - centerX * newScale;
+    final newPanY = canvasSize.height / 2 - centerY * newScale;
+
+    setState(() {
+      _scale = newScale;
+      _panOffset = Offset(newPanX, newPanY);
+    });
+  }
+
   // ── Geometry calculations ────────────────────────────────────────────────
   double _totalPerimeter() {
     if (activeShape.points.length < 2) return 0;
@@ -796,6 +1289,23 @@ class _SketchScreenState extends State<SketchScreen>
     // ── end move mode ──────────────────────────────────────────
 
     if (activeShape.isClosed) {
+      // ── Furniture drag start (only if already selected) ──────────
+      if (_selectedFurnitureId != null) {
+        final fidx = activeShape.furnitureItems
+            .indexWhere((f) => f.id == _selectedFurnitureId);
+        if (fidx >= 0 &&
+            _isInsideFurnitureItem(activeShape.furnitureItems[fidx], event.localPosition)) {
+          setState(() {
+            _isDraggingFurniture = true;
+            _furnitureDragStartWorld = screenToWorld(event.localPosition);
+            _furnitureDragOccurred = false;
+            _activePointIndex = -1;
+          });
+          _panStartPosition = null;
+          _panConfirmed = false;
+          return;
+        }
+      }
       // ── Check if touching a placed door/window first ──────────
       for (final obj in activeShape.roomObjects) {
         if (obj.wallIndex >= activeShape.points.length) continue;
@@ -862,6 +1372,23 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── FURNITURE DRAG ─────────────────────────────────────────────
+    if (_isDraggingFurniture && _furnitureDragStartWorld != null) {
+      final currentWorld = screenToWorld(event.localPosition);
+      final delta = currentWorld - _furnitureDragStartWorld!;
+      final idx = activeShape.furnitureItems
+          .indexWhere((f) => f.id == _selectedFurnitureId);
+      if (idx >= 0) {
+        setState(() {
+          _furnitureDragOccurred = true;
+          activeShape.furnitureItems[idx] = activeShape.furnitureItems[idx].copyWith(
+            position: activeShape.furnitureItems[idx].position + delta,
+          );
+          _furnitureDragStartWorld = currentWorld;
+        });
+      }
+      return;
+    }
     // ── OBJECT DRAG ────────────────────────────────────────────
     if (_isDraggingObject && _selectedObjectId != null) {
       final selIdx = activeShape.roomObjects
@@ -1013,13 +1540,27 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── FURNITURE DRAG END ─────────────────────────────────────────
+    if (_isDraggingFurniture) {
+      final moved = _furnitureDragOccurred;
+      if (moved) _saveUndo();
+      setState(() {
+        _isDraggingFurniture = false;
+        _furnitureDragOccurred = false;
+        _furnitureDragStartWorld = null;
+      });
+      if (moved) _queueAutoSync();
+      return;
+    }
     // ── OBJECT DRAG END ────────────────────────────────────────
     if (_isDraggingObject) {
-      if (_objectDragOccurred) _saveUndo();
+      final moved = _objectDragOccurred;
+      if (moved) _saveUndo();
       setState(() {
         _isDraggingObject = false;
         _objectDragOccurred = false;
       });
+      if (moved) _queueAutoSync();
       return;
     }
     // ── end object drag ────────────────────────────────────────
@@ -1107,6 +1648,7 @@ class _SketchScreenState extends State<SketchScreen>
       _isDraggingActivePoint = false;
       _panStartPosition = null;
       _panConfirmed = false;
+      _queueAutoSync();
       return;
     }
     // ── end move mode ──────────────────────────────────────────
@@ -1129,12 +1671,14 @@ class _SketchScreenState extends State<SketchScreen>
       });
       _syncWallDefinitions();
       _showRoomNameDialog();
+      _queueAutoSync();
     } else {
       if (_isDraggingActivePoint && _dragOccurred) {
         if (_activePointIndex > 0) activeShape.wallRealMm.remove(_activePointIndex - 1);
         if (_activePointIndex < _wallAngles.length) activeShape.wallRealMm.remove(_activePointIndex);
         _saveUndo();
         _syncWallDefinitions();
+        _queueAutoSync();
       }
       _syncWallDefinitions();
       setState(() {
@@ -1233,6 +1777,7 @@ class _SketchScreenState extends State<SketchScreen>
       _saveUndo();
       _objectPinchStartWidthMm = 0.0;
       _objectPinchStartScale = 1.0;
+      _queueAutoSync();
     }
     _panConfirmed = false;
     Future.delayed(const Duration(milliseconds: 150), () {
@@ -1261,6 +1806,31 @@ class _SketchScreenState extends State<SketchScreen>
     if (_dragOccurred) { _dragOccurred = false; return; }
     if (_objectDragOccurred) { _objectDragOccurred = false; return; }
 
+    // ── FURNITURE DRAG guard ──────────────────────────────────────
+    if (_isDraggingFurniture) return;
+
+    // ── FURNITURE PLACEMENT MODE ───────────────────────────────────
+    if (_furniturePlacingType != null) {
+      if (activeShape.isClosed &&
+          _pointInsidePolygon(details.localPosition, activeShape.points)) {
+        final worldPos = screenToWorld(details.localPosition);
+        _saveUndo();
+        setState(() {
+          _furnitureCounter++;
+          activeShape.furnitureItems.add(FurnitureItem(
+            id: 'fur_$_furnitureCounter',
+            type: _furniturePlacingType!,
+            position: worldPos,
+          ));
+          _furniturePlacingType = null;
+        });
+        _queueAutoSync();
+      } else {
+        setState(() => _furniturePlacingType = null);
+      }
+      return;
+    }
+
     // Check if tap is inside a different closed shape -> switch active
     for (int s = 0; s < shapes.length; s++) {
       if (s == activeIndex) continue;
@@ -1277,6 +1847,17 @@ class _SketchScreenState extends State<SketchScreen>
     }
 
     if (activeShape.isClosed) {
+      // ── Furniture tap selection ────────────────────────────────────
+      for (final item in activeShape.furnitureItems) {
+        if (_isInsideFurnitureItem(item, details.localPosition)) {
+          setState(() {
+            _selectedFurnitureId = item.id;
+            _selectedWallIndex = -1;
+            _activePointIndex = -1;
+          });
+          return;
+        }
+      }
       for (final obj in activeShape.roomObjects) {
         if (obj.wallIndex >= activeShape.points.length) continue;
         final center = objectCentreWorld(
@@ -1325,6 +1906,7 @@ class _SketchScreenState extends State<SketchScreen>
         _activePointIndex = _findNearPoint(details.localPosition,
             radius: pointSelectRadiusScreen);
         _selectedWallIndex = -1;
+        _selectedFurnitureId = null;
       });
       return;
     }
@@ -1346,6 +1928,7 @@ class _SketchScreenState extends State<SketchScreen>
         });
         _syncWallDefinitions();
         _showRoomNameDialog();
+        _queueAutoSync();
         return;
       }
     }
@@ -1427,12 +2010,14 @@ class _SketchScreenState extends State<SketchScreen>
                     swingFlipped: !activeShape.roomObjects[idx].swingFlipped,
                   );
                 });
+                _queueAutoSync();
               }
             : null,
         onSave: (updatedObj) {
           setState(() {
             activeShape.roomObjects[idx] = updatedObj;
           });
+          _queueAutoSync();
         },
         onDelete: () {
           _saveUndo();
@@ -1440,7 +2025,75 @@ class _SketchScreenState extends State<SketchScreen>
             activeShape.roomObjects.removeWhere((o) => o.id == id);
             _selectedObjectId = null;
           });
+          _queueAutoSync();
         },
+      ),
+    );
+  }
+
+  void _showFurnitureLibrary() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF2D2D2D),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Add Furniture',
+                style: TextStyle(
+                    color: Color(0xFFCCCCCC),
+                    fontFamily: 'monospace',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text('Tap a type, then tap inside the room to place it',
+                style: TextStyle(
+                    color: Color(0xFF888888),
+                    fontFamily: 'monospace',
+                    fontSize: 11)),
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 4,
+              shrinkWrap: true,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.85,
+              physics: const NeverScrollableScrollPhysics(),
+              children: FurnitureType.values.map((ft) {
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    setState(() => _furniturePlacingType = ft);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A3A3A),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: ft.color.withOpacity(0.5)),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(ft.icon, color: ft.color, size: 26),
+                        const SizedBox(height: 4),
+                        Text(ft.displayName,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: ft.color.withOpacity(0.9),
+                                fontSize: 9,
+                                fontFamily: 'monospace')),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1497,6 +2150,7 @@ class _SketchScreenState extends State<SketchScreen>
         _dragObjectScreenPos = null;
         _dragWallHit = null;
       });
+      _queueAutoSync();
     }
 
     final topPadding = MediaQuery.of(context).padding.top;
@@ -1578,6 +2232,7 @@ class _SketchScreenState extends State<SketchScreen>
                   shapes: shapes,
                   activeIndex: activeIndex,
                   selectedObjectId: _selectedObjectId,
+                  selectedFurnitureId: _selectedFurnitureId,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -1606,7 +2261,113 @@ class _SketchScreenState extends State<SketchScreen>
                         _draggingObjectType = RoomObjectType.window),
                     onDragEnd: (details) => _onObjectDropped(details.offset),
                   ),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: activeShape.isClosed ? _showFurnitureLibrary : null,
+                    child: Container(
+                      width: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A2A1A),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF4A7A4A)),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.chair_alt,
+                              color: Color(0xFF4CAF50), size: 22),
+                          SizedBox(height: 2),
+                          Text('Furn.',
+                              style: TextStyle(
+                                  color: Color(0xFF88AA88),
+                                  fontFamily: 'monospace',
+                                  fontSize: 9)),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
+              ),
+            ),
+
+          // ── Furniture action bar ──────────────────────────────────
+          if (_selectedFurnitureId != null)
+            Positioned(
+              bottom: 52,
+              left: 0,
+              right: 0,
+              child: Container(
+                color: const Color(0xFF2D2D2D),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.rotate_left,
+                          color: Color(0xFF00AAFF)),
+                      onPressed: () {
+                        final idx = activeShape.furnitureItems
+                            .indexWhere((f) => f.id == _selectedFurnitureId);
+                        if (idx >= 0) {
+                          _saveUndo();
+                          setState(() {
+                            activeShape.furnitureItems[idx] =
+                                activeShape.furnitureItems[idx].copyWith(
+                              rotationDeg:
+                                  (activeShape.furnitureItems[idx].rotationDeg -
+                                          45) %
+                                      360,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.rotate_right,
+                          color: Color(0xFF00AAFF)),
+                      onPressed: () {
+                        final idx = activeShape.furnitureItems
+                            .indexWhere((f) => f.id == _selectedFurnitureId);
+                        if (idx >= 0) {
+                          _saveUndo();
+                          setState(() {
+                            activeShape.furnitureItems[idx] =
+                                activeShape.furnitureItems[idx].copyWith(
+                              rotationDeg:
+                                  (activeShape.furnitureItems[idx].rotationDeg +
+                                          45) %
+                                      360,
+                            );
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: Color(0xFFFF4444)),
+                      onPressed: () {
+                        _saveUndo();
+                        setState(() {
+                          activeShape.furnitureItems.removeWhere(
+                              (f) => f.id == _selectedFurnitureId);
+                          _selectedFurnitureId = null;
+                        });
+                        _queueAutoSync();
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _selectedFurnitureId = null),
+                      child: const Text('Done',
+                          style: TextStyle(
+                              color: Color(0xFF00CC44),
+                              fontFamily: 'monospace')),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -1635,6 +2396,9 @@ class _SketchScreenState extends State<SketchScreen>
                         roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
+                        onWallMeasured: (wallIndex, mm) {
+                          _applyRealMeasurement(wallIndex, mm);
+                        },
                       ),
                     ),
                   );
@@ -1659,23 +2423,27 @@ class _SketchScreenState extends State<SketchScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        activeShape.isClosed
-                            ? _selectedWallIndex >= 0
+                        _furniturePlacingType != null
+                          ? 'Tap inside room to place ${_furniturePlacingType!.displayName}'
+                          : _selectedFurnitureId != null
+                            ? 'Drag to move · Rotate or delete below'
+                            : activeShape.isClosed
+                              ? _selectedWallIndex >= 0
                                 ? 'Wall ${_selectedWallIndex + 1} selected — enter real measurement'
                                 : _activePointIndex >= 0
-                                    ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                    : _waitingForBle
-                                        ? 'Point device at wall → press BOOT button'
-                                        : 'Tap a wall to edit its length'
-                            : activeShape.points.isEmpty
+                                  ? 'Drag point ${_activePointIndex + 1} to reposition'
+                                  : _waitingForBle
+                                    ? 'Point device at wall → press BOOT button'
+                                    : 'Tap a wall to edit its length'
+                              : activeShape.points.isEmpty
                                 ? 'Tap to place first corner'
                                 : _isDraggingLastPoint
-                                    ? 'Drag | ${_angleLabel()}'
-                                    : _activePointIndex >= 0
-                                        ? 'Drag point ${_activePointIndex + 1} to reposition'
-                                        : _isAngleSnapped
-                                            ? 'Snapped: ${_angleLabel()}'
-                                            : 'Tap next corner | Drag orange to adjust',
+                                  ? 'Drag | ${_angleLabel()}'
+                                  : _activePointIndex >= 0
+                                    ? 'Drag point ${_activePointIndex + 1} to reposition'
+                                    : _isAngleSnapped
+                                      ? 'Snapped: ${_angleLabel()}'
+                                      : 'Tap next corner | Drag orange to adjust',
                         style: TextStyle(
                           color: _activePointIndex >= 0
                               ? const Color(0xFFFFAA00)
@@ -1709,6 +2477,17 @@ class _SketchScreenState extends State<SketchScreen>
                             color: Color(0xFF888888),
                             fontSize: 12,
                             fontFamily: 'monospace')),
+                    const SizedBox(width: 4),
+                    _buildPresenceAvatars(),
+                    if (_cloudProjectId != null)
+                      IconButton(
+                        icon: const Icon(Icons.share,
+                            color: Color(0xFF00AA44), size: 18),
+                        tooltip: 'Share invite code',
+                        onPressed: _showInviteCodeDialog,
+                      ),
+                    const SizedBox(width: 4),
+                    _buildSyncIcon(),
                     const SizedBox(width: 4),
                     IconButton(
                       icon: const Icon(Icons.arrow_back,
@@ -1941,132 +2720,146 @@ class _SketchScreenState extends State<SketchScreen>
                   height: 52,
                   color: const Color(0xFF2D2D2D),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              StatusItem(
-                                label: 'MODE',
-                                value: activeShape.isClosed
-                                    ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
-                                    : _isDraggingLastPoint
-                                        ? 'DRAG'
-                                        : _activePointIndex >= 0
-                                            ? 'EDIT'
-                                            : 'DRAW',
-                              ),
-                              const SizedBox(width: 8),
-                              StatusItem(
-                                  label: 'PTS',
-                                  value: '${activeShape.points.length}'),
-                              if (activeShape.isClosed && activeShape.points.length >= 2) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PERIM',
-                                  value: formatLength(_totalPerimeter()),
-                                ),
-                              ],
-                              if (activeShape.isClosed && activeShape.points.length >= 3) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'AREA',
-                                  value: formatArea(_totalArea()),
-                                ),
-                              ],
-                              if (_activePointIndex >= 0 &&
-                                  _activePointIndex < activeShape.points.length) ...[
-                                const SizedBox(width: 8),
-                                StatusItem(
-                                  label: 'PT',
-                                  value: '${_activePointIndex + 1}',
-                                ),
-                              ],
-                            ],
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        StatusItem(
+                          label: 'MODE',
+                          value: activeShape.isClosed
+                              ? _activePointIndex >= 0 ? 'EDIT' : 'DONE'
+                              : _isDraggingLastPoint
+                                  ? 'DRAG'
+                                  : _activePointIndex >= 0
+                                      ? 'EDIT'
+                                      : 'DRAW',
+                        ),
+                        const SizedBox(width: 8),
+                        StatusItem(label: 'PTS', value: '${activeShape.points.length}'),
+                        if (activeShape.isClosed && activeShape.points.length >= 2) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PERIM',
+                            value: formatLength(_totalPerimeter()),
                           ),
+                        ],
+                        if (activeShape.isClosed && activeShape.points.length >= 3) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'AREA',
+                            value: formatArea(_totalArea()),
+                          ),
+                        ],
+                        if (_activePointIndex >= 0 &&
+                            _activePointIndex < activeShape.points.length) ...[
+                          const SizedBox(width: 8),
+                          StatusItem(
+                            label: 'PT',
+                            value: '${_activePointIndex + 1}',
+                          ),
+                        ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.undo, size: 18),
+                          onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Undo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.undo, size: 18),
-                        onPressed: _undoAllPointsStack.isEmpty ? null : _undo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Undo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.redo, size: 18),
-                        onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
-                        color: const Color(0xFFFFAA00),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Redo',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        onPressed: activeShape.points.isEmpty ? null : _clear,
-                        color: const Color(0xFFFF4444),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Clear',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        icon: const Icon(Icons.picture_as_pdf, size: 18),
-                        onPressed: activeShape.points.length >= 2
-                            ? () => exportSketchPdf(
-                                  context: context,
-                                  shapes: shapes,
-                                  totalPerimeter: _totalPerimeter(),
-                                  totalArea: _totalArea(),
-                                  roomObjects: activeShape.roomObjects,
-                                )
-                            : null,
-                        color: const Color(0xFFFF4488),
-                        disabledColor: const Color(0xFF555555),
-                        tooltip: 'Export PDF',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add_box_outlined, size: 18),
-                        onPressed: _addNewRoom,
-                        color: const Color(0xFF00AAFF),
-                        tooltip: 'Add Room',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.open_with,
-                          size: 18,
-                          color: _isMoveMode
-                              ? const Color(0xFF00FF99)
-                              : const Color(0xFF00AAFF),
+                        IconButton(
+                          icon: const Icon(Icons.redo, size: 18),
+                          onPressed: _redoAllPointsStack.isEmpty ? null : _redo,
+                          color: const Color(0xFFFFAA00),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Redo',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
-                        onPressed: () => setState(() {
-                          _isMoveMode = !_isMoveMode;
-                          _movingShapeIndex = -1;
-                          _moveStartWorld = null;
-                          _activePointIndex = -1;
-                        }),
-                        tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
-                        padding: EdgeInsets.zero,
-                        constraints:
-                            const BoxConstraints(minWidth: 36, minHeight: 36),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          onPressed: activeShape.points.isEmpty ? null : _clear,
+                          color: const Color(0xFFFF4444),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Clear',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                          onPressed: activeShape.points.length >= 2
+                              ? () => exportSketchPdf(
+                                    context: context,
+                                    shapes: shapes,
+                                    totalPerimeter: _totalPerimeter(),
+                                    totalArea: _totalArea(),
+                                    roomObjects: activeShape.roomObjects,
+                                  )
+                              : null,
+                          color: const Color(0xFFFF4488),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Export PDF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_box_outlined, size: 18),
+                          onPressed: _addNewRoom,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Add Room',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.save, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _saveProject : null,
+                          color: const Color(0xFF00AA44),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Save Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          onPressed: _loadProject,
+                          color: const Color(0xFF00AAFF),
+                          tooltip: 'Load Project',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.cloud_upload, size: 18),
+                          onPressed: activeShape.points.isNotEmpty ? _backupToCloud : null,
+                          color: const Color(0xFF8844FF),
+                          disabledColor: const Color(0xFF555555),
+                          tooltip: 'Backup to Cloud',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.open_with,
+                            size: 18,
+                            color: _isMoveMode
+                                ? const Color(0xFF00FF99)
+                                : const Color(0xFF00AAFF),
+                          ),
+                          onPressed: () => setState(() {
+                            _isMoveMode = !_isMoveMode;
+                            _movingShapeIndex = -1;
+                            _moveStartWorld = null;
+                            _activePointIndex = -1;
+                          }),
+                          tooltip: _isMoveMode ? 'Move Mode ON' : 'Move Mode OFF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -2075,6 +2868,151 @@ class _SketchScreenState extends State<SketchScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _showInviteCodeDialog() async {
+    final id = _cloudProjectId;
+    if (id == null) return;
+    final code = await ApiService.getInviteCode(id);
+    if (!mounted) return;
+    if (code == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not fetch invite code'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Share Project',
+            style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Send this code to your collaborator.\nThey tap Join in the Collaboration screen.',
+              style: TextStyle(color: Color(0xFF778899), fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D1A27),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF334466)),
+              ),
+              child: Text(
+                code,
+                style: const TextStyle(
+                  color: Color(0xFF00AAFF),
+                  fontFamily: 'monospace',
+                  fontSize: 28,
+                  letterSpacing: 6,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close',
+                style: TextStyle(color: Color(0xFF556677))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _startHeartbeat() {
+    if (_heartbeatTimer != null) return; // already running
+    _sendHeartbeat(); // send immediately on first connect
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _sendHeartbeat();
+    });
+  }
+
+  Future<void> _sendHeartbeat() async {
+    final id = _cloudProjectId;
+    if (id == null) return;
+    await ApiService.sendHeartbeat(id);
+    final collaborators = await ApiService.getActiveCollaborators(id);
+    if (mounted) {
+      setState(() {
+        _activeCollaborators = collaborators
+            .cast<Map<String, dynamic>>();
+      });
+    }
+  }
+
+  Widget _buildPresenceAvatars() {
+    if (_activeCollaborators.isEmpty) return const SizedBox.shrink();
+    final shown = _activeCollaborators.take(4).toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: shown.map((c) {
+        final email = (c['email'] as String?) ?? '?';
+        final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+        final color = _avatarColor(email);
+        return Padding(
+          padding: const EdgeInsets.only(left: 3),
+          child: Tooltip(
+            message: email,
+            child: CircleAvatar(
+              radius: 10,
+              backgroundColor: color,
+              child: Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Color _avatarColor(String email) {
+    const colors = [
+      Color(0xFF00AAFF),
+      Color(0xFFFF6644),
+      Color(0xFF44BB66),
+      Color(0xFFAA44FF),
+      Color(0xFFFFAA00),
+    ];
+    return colors[email.hashCode.abs() % colors.length];
+  }
+
+  Widget _buildSyncIcon() {
+    final status = SyncService.instance.status;
+    switch (status) {
+      case SyncStatus.syncing:
+        return const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: Color(0xFF00AAFF),
+          ),
+        );
+      case SyncStatus.offline:
+        return const Icon(Icons.cloud_off,
+            color: Color(0xFFFF8800), size: 16);
+      case SyncStatus.conflict:
+        return const Icon(Icons.warning_amber, color: Colors.red, size: 16);
+      case SyncStatus.idle:
+        return const Icon(Icons.cloud_done,
+            color: Color(0xFF00CC44), size: 16);
+    }
   }
 }
 

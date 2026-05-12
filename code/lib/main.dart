@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'services/api_service.dart';
+import 'services/sync_service.dart';
 import 'core/constants.dart';
+
 
 void main() {
   runApp(
@@ -23,7 +27,47 @@ class SmartMeasureApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: HomeScreen(),
+      home: const AppStartup(),
+    );
+  }
+}
+
+class AppStartup extends StatefulWidget {
+  const AppStartup({super.key});
+
+  @override
+  State<AppStartup> createState() => _AppStartupState();
+}
+
+class _AppStartupState extends State<AppStartup> {
+  @override
+  void initState() {
+    super.initState();
+    SyncService.instance.init();
+    _checkLogin();
+  }
+
+  Future<void> _checkLogin() async {
+    final loggedIn = await ApiService.isLoggedIn();
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => loggedIn
+            ? const HomeScreen()
+            : const LoginScreen(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show loading spinner while checking login
+    return const Scaffold(
+      backgroundColor: Color(0xFF0D1A27),
+      body: Center(
+        child: CircularProgressIndicator(color: Color(0xFF00AAFF)),
+      ),
     );
   }
 }

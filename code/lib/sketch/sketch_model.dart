@@ -1,6 +1,7 @@
 // lib/sketch/sketch_model.dart
 
 import 'package:flutter/material.dart';
+import 'furniture_item.dart';
 import 'room_object.dart';
 
 class SharedWall {
@@ -26,6 +27,7 @@ class SketchShape {
   Map<int, double> wallRealMm;
   List<RoomObject> roomObjects;
   List<SharedWall> sharedWalls;
+  List<FurnitureItem> furnitureItems;
 
   SketchShape({
     List<Offset>? points,
@@ -34,11 +36,12 @@ class SketchShape {
     Map<int, double>? wallRealMm,
     List<RoomObject>? roomObjects,
     List<SharedWall>? sharedWalls,
-    
+    List<FurnitureItem>? furnitureItems,
   })  : points = points ?? [],
         wallRealMm = wallRealMm ?? {},
-      roomObjects = roomObjects ?? [],
-      sharedWalls = sharedWalls ?? [];
+        roomObjects = roomObjects ?? [],
+        sharedWalls = sharedWalls ?? [],
+        furnitureItems = furnitureItems ?? [];
 
   // Creates a fresh empty room
   factory SketchShape.empty() => SketchShape();

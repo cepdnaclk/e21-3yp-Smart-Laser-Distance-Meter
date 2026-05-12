@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import 'furniture_painter.dart';
 import 'sketch_constants.dart';
 import 'sketch_model.dart';
 import 'room_object.dart';
@@ -39,6 +40,7 @@ class SketchPainter extends CustomPainter {
   final int snapCandidateWall;
   final List<({Rect rect, int wallIndex, int shapeIndex})> labelHitRects;
   final String? selectedObjectId;
+  final String? selectedFurnitureId;
 
   const SketchPainter({
     required this.panOffset,
@@ -71,6 +73,7 @@ class SketchPainter extends CustomPainter {
     required this.snapCandidateWall,
     required this.labelHitRects,
     required this.selectedObjectId,
+    required this.selectedFurnitureId,
     
   });
 
@@ -111,6 +114,16 @@ class SketchPainter extends CustomPainter {
         _drawRoom(canvas, shape, isActive, s);
         if (shape.isClosed) {
           _drawRoomObjects(canvas, shape);
+          // Draw furniture items
+          for (final item in shape.furnitureItems) {
+            drawFurnitureItem(
+              canvas: canvas,
+              item: item,
+              worldToScreen: worldToScreen,
+              scale: scale,
+              isSelected: item.id == selectedFurnitureId,
+            );
+          }
           _drawRoomLabel(canvas, shape);
         }
         _drawPoints(canvas, shape, isActive);
