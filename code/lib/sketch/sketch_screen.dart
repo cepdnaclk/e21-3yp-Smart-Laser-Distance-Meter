@@ -702,6 +702,7 @@ class _SketchScreenState extends State<SketchScreen>
       _snappedAngle = null;
       _isAngleSnapped = false;
     });
+    _queueAutoSync();
   }
 
   void _redo() {
@@ -753,6 +754,7 @@ class _SketchScreenState extends State<SketchScreen>
       _snappedAngle = null;
       _isAngleSnapped = false;
     });
+    _queueAutoSync();
   }
 
   void _clear() {
@@ -1523,21 +1525,25 @@ class _SketchScreenState extends State<SketchScreen>
   void _onPointerUp(PointerUpEvent event) {
     // ── FURNITURE DRAG END ─────────────────────────────────────────
     if (_isDraggingFurniture) {
-      if (_furnitureDragOccurred) _saveUndo();
+      final moved = _furnitureDragOccurred;
+      if (moved) _saveUndo();
       setState(() {
         _isDraggingFurniture = false;
         _furnitureDragOccurred = false;
         _furnitureDragStartWorld = null;
       });
+      if (moved) _queueAutoSync();
       return;
     }
     // ── OBJECT DRAG END ────────────────────────────────────────
     if (_isDraggingObject) {
-      if (_objectDragOccurred) _saveUndo();
+      final moved = _objectDragOccurred;
+      if (moved) _saveUndo();
       setState(() {
         _isDraggingObject = false;
         _objectDragOccurred = false;
       });
+      if (moved) _queueAutoSync();
       return;
     }
     // ── end object drag ────────────────────────────────────────
@@ -1625,6 +1631,7 @@ class _SketchScreenState extends State<SketchScreen>
       _isDraggingActivePoint = false;
       _panStartPosition = null;
       _panConfirmed = false;
+      _queueAutoSync();
       return;
     }
     // ── end move mode ──────────────────────────────────────────
@@ -1798,6 +1805,7 @@ class _SketchScreenState extends State<SketchScreen>
           ));
           _furniturePlacingType = null;
         });
+        _queueAutoSync();
       } else {
         setState(() => _furniturePlacingType = null);
       }
