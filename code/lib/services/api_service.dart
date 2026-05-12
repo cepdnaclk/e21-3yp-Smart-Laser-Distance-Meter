@@ -216,6 +216,21 @@ class ApiService {
     }
   }
 
+  static Future<bool> setEditAccess(
+      int cloudProjectId, String email, bool canEdit) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http.patch(
+        Uri.parse('$baseUrl/projects/$cloudProjectId/edit-access'),
+        headers: headers,
+        body: jsonEncode({'email': email, 'can_edit': canEdit}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
   static Future<bool> leaveProject(int cloudProjectId) async {
     try {
       final headers = await _authHeaders();

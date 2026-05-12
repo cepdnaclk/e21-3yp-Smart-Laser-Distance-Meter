@@ -50,7 +50,7 @@ router.post('/', async (req, res) => {
 router.get('/shared', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT p.*, pc.role, u.email AS owner_email
+      `SELECT p.*, pc.role, pc.can_edit, u.email AS owner_email
        FROM project_collaborators pc
        JOIN projects p ON p.id = pc.project_id
        JOIN users u ON u.id = p.user_id
@@ -142,7 +142,7 @@ router.get('/:id/collaborators', async (req, res) => {
     );
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Access denied' });
     const result = await pool.query(
-      `SELECT u.email, pc.role, pc.status, pc.joined_at
+      `SELECT u.email, pc.role, pc.status, pc.joined_at, pc.can_edit
        FROM project_collaborators pc JOIN users u ON u.id = pc.user_id
        WHERE pc.project_id = $1 ORDER BY pc.joined_at ASC`,
       [req.params.id]
@@ -162,6 +162,40 @@ router.delete('/:id/leave', async (req, res) => {
     );
     res.json({ message: 'Left project' });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /projects/:id/edit-access  — owner grants or revokes edit access for a collaborator
+router.patch('/:id/edit-access', async (req, res) => {
+  try {
+    const { email, can_edit } = req.body;
+    if (email === undefined || can_edit === undefined) {
+      return res.status(400).json({ error: 'email and can_edit required' });
+    }
+    // Only the project owner can change edit access
+    const ownerCheck = await pool.query(
+      'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.userId]
+    );
+    if (ownerCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    // Find collaborator by email
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE email = $1', [email]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    await pool.query(
+      `UPDATE project_collaborators SET can_edit = $1
+       WHERE project_id = $2 AND user_id = $3`,
+      [can_edit, req.params.id, userResult.rows[0].id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
