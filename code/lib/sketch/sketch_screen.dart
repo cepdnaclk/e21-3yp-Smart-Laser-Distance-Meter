@@ -160,6 +160,8 @@ class _SketchScreenState extends State<SketchScreen>
     if (widget.initialShapes != null && widget.initialShapes!.isNotEmpty) {
       shapes = List<SketchShape>.from(widget.initialShapes!);
       activeIndex = 0;
+      // Fit the loaded shapes into the viewport once the canvas size is known
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fitShapesToView());
     }
     // If opened from a cloud project (e.g. "Open Live"), start heartbeat immediately
     if (widget.cloudProjectId != null) {
@@ -200,7 +202,6 @@ class _SketchScreenState extends State<SketchScreen>
       if (!mounted) return;
       final cloudId = event['cloud_project_id'];
       final updatedAt = event['updated_at'] as String?;
-      debugPrint('[Presence] Upload success — cloudId=$cloudId updatedAt=$updatedAt');
       setState(() {
         if (cloudId != null) _cloudProjectId = cloudId as int;
         if (updatedAt != null) _lastCloudUpdatedAt = updatedAt;
@@ -381,14 +382,27 @@ class _SketchScreenState extends State<SketchScreen>
             'wall_index': e.key,
             'real_mm': e.value,
           }).toList(),
-          'wall_angles': _wallAngles.asMap().entries.map((e) => {
-            'order_index': e.key,
-            'angle': e.value,
-          }).toList(),
-          'wall_lengths': _wallDrawnLengths.asMap().entries.map((e) => {
-            'order_index': e.key,
-            'length': e.value,
-          }).toList(),
+          'wall_angles': () {
+            final pts = shape.points;
+            return [
+              for (int i = 0; i < pts.length - 1; i++)
+                {
+                  'order_index': i,
+                  'angle': math.atan2(
+                      pts[i + 1].dy - pts[i].dy, pts[i + 1].dx - pts[i].dx),
+                }
+            ];
+          }(),
+          'wall_lengths': () {
+            final pts = shape.points;
+            return [
+              for (int i = 0; i < pts.length - 1; i++)
+                {
+                  'order_index': i,
+                  'length': (pts[i + 1] - pts[i]).distance,
+                }
+            ];
+          }(),
         };
       }).toList(),
       'roomObjects': shapes
@@ -407,14 +421,8 @@ class _SketchScreenState extends State<SketchScreen>
 
   Future<void> _queueAutoSync() async {
     final isLoggedIn = await ApiService.isLoggedIn();
-    if (!isLoggedIn) {
-      debugPrint('[AutoSync] Skipped — not logged in');
-      return;
-    }
-    if (activeShape.points.isEmpty) {
-      debugPrint('[AutoSync] Skipped — no points');
-      return;
-    }
+    if (!isLoggedIn) return;
+    if (activeShape.points.isEmpty) return;
 
     if (_localProjectId == null) {
       final savedId = await DatabaseHelper.instance.saveProject(
@@ -425,10 +433,7 @@ class _SketchScreenState extends State<SketchScreen>
         wallDrawnLengths: _wallDrawnLengths,
       );
       setState(() => _localProjectId = savedId);
-      debugPrint('[AutoSync] Created local project id=$savedId');
     }
-
-    debugPrint('[AutoSync] Queuing upload — localId=$_localProjectId cloudId=$_cloudProjectId shapes=${shapes.length}');
 
     final payload = _buildProjectPayload(
       activeShape.label.isNotEmpty ? activeShape.label : 'Room Project',
@@ -609,6 +614,7 @@ class _SketchScreenState extends State<SketchScreen>
 
       activeIndex = 0;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _fitShapesToView());
   }
 
 
@@ -1149,6 +1155,7 @@ class _SketchScreenState extends State<SketchScreen>
     setState(() {
       activeShape.wallRealMm[wallIndex] = realMm;
       _rebuildPointsFromChain();
+      _syncWallDefinitions(); // keep angles/lengths in sync with rebuilt points
       _selectedWallIndex = -1;
       _activePointIndex = -1;
     });
@@ -1156,6 +1163,43 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   
+  // ── Fit loaded shapes into the visible canvas ────────────────────────────
+  void _fitShapesToView() {
+    final allPoints = shapes.expand((s) => s.points).toList();
+    if (allPoints.isEmpty) return;
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final canvasSize = renderBox.size;
+
+    double minX = allPoints.first.dx, maxX = allPoints.first.dx;
+    double minY = allPoints.first.dy, maxY = allPoints.first.dy;
+    for (final p in allPoints) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+
+    final shapeW = maxX - minX;
+    final shapeH = maxY - minY;
+    if (shapeW < 1 && shapeH < 1) return;
+
+    const padding = 60.0;
+    final scaleX = (canvasSize.width - padding * 2) / (shapeW < 1 ? 1 : shapeW);
+    final scaleY = (canvasSize.height - padding * 2) / (shapeH < 1 ? 1 : shapeH);
+    final newScale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.2, 4.0);
+
+    final centerX = (minX + maxX) / 2;
+    final centerY = (minY + maxY) / 2;
+    final newPanX = canvasSize.width / 2 - centerX * newScale;
+    final newPanY = canvasSize.height / 2 - centerY * newScale;
+
+    setState(() {
+      _scale = newScale;
+      _panOffset = Offset(newPanX, newPanY);
+    });
+  }
+
   // ── Geometry calculations ────────────────────────────────────────────────
   double _totalPerimeter() {
     if (activeShape.points.length < 2) return 0;
@@ -2853,7 +2897,6 @@ class _SketchScreenState extends State<SketchScreen>
 
   void _startHeartbeat() {
     if (_heartbeatTimer != null) return; // already running
-    debugPrint('[Presence] Heartbeat started for cloud project $_cloudProjectId');
     _sendHeartbeat(); // send immediately on first connect
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _sendHeartbeat();
@@ -2862,14 +2905,9 @@ class _SketchScreenState extends State<SketchScreen>
 
   Future<void> _sendHeartbeat() async {
     final id = _cloudProjectId;
-    if (id == null) {
-      debugPrint('[Presence] _sendHeartbeat skipped — no cloudProjectId');
-      return;
-    }
-    debugPrint('[Presence] Sending heartbeat for project $id');
+    if (id == null) return;
     await ApiService.sendHeartbeat(id);
     final collaborators = await ApiService.getActiveCollaborators(id);
-    debugPrint('[Presence] Active collaborators: $collaborators');
     if (mounted) {
       setState(() {
         _activeCollaborators = collaborators

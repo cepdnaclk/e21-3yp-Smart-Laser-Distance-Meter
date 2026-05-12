@@ -390,6 +390,11 @@ class _CollaborationScreenState extends State<CollaborationScreen>
       );
     }).toList();
 
+    // Also attach them into the first shape so SketchScreen renders them
+    if (shapes.isNotEmpty) {
+      shapes[0].roomObjects = List<RoomObject>.from(roomObjects);
+    }
+
     return (shapes, roomObjects, wallAngles, wallLengths);
   }
 
@@ -716,8 +721,6 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
     if (_syncing) return;
     _syncing = true;
 
-    debugPrint('[Poll] Checking project ${widget.cloudProjectId} since $_lastUpdatedAt');
-
     final data = await ApiService.pollForUpdates(
         widget.cloudProjectId, _lastUpdatedAt);
 
@@ -727,16 +730,14 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
     }
 
     if (data == null) {
-      debugPrint('[Poll] No update detected');
       _syncing = false;
       return;
     }
-
-    debugPrint('[Poll] Update detected! shapes=${(data['shapes'] as List).length}');
     _lastUpdatedAt =
         data['project']['updated_at'] as String? ?? _lastUpdatedAt;
 
     final shapesData = data['shapes'] as List<dynamic>;
+    final objectsData = data['roomObjects'] as List<dynamic>;
     final newShapes = shapesData.map<SketchShape>((s) {
       final shape = SketchShape.empty();
       shape.isClosed = s['is_closed'] as bool;
@@ -752,6 +753,23 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
       }
       return shape;
     }).toList();
+
+    // Attach room objects (doors/windows) to the first shape
+    if (newShapes.isNotEmpty) {
+      newShapes[0].roomObjects = objectsData.map<RoomObject>((r) {
+        return RoomObject(
+          id: r['object_id'] as String,
+          type: r['type'] == 'door'
+              ? RoomObjectType.door
+              : RoomObjectType.window,
+          wallIndex: r['wall_index'] as int,
+          positionAlong: (r['position_along'] as num).toDouble(),
+          widthMm: (r['width_mm'] as num).toDouble(),
+          heightMm: (r['height_mm'] as num).toDouble(),
+          elevationMm: (r['elevation_mm'] as num).toDouble(),
+        );
+      }).toList();
+    }
 
     // Also update wall angles and lengths from the first shape
     final newAngles = shapesData.isEmpty
