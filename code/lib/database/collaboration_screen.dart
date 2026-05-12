@@ -376,23 +376,21 @@ class _CollaborationScreenState extends State<CollaborationScreen>
             .map((r) => (r['length'] as num).toDouble())
             .toList();
 
-    final roomObjects = objectsData.map<RoomObject>((r) {
-      return RoomObject(
+    // Distribute room objects to their correct shape
+    final roomObjects = <RoomObject>[];
+    for (final r in objectsData) {
+      final obj = RoomObject(
         id: r['object_id'] as String,
-        type: r['type'] == 'door'
-            ? RoomObjectType.door
-            : RoomObjectType.window,
+        type: r['type'] == 'door' ? RoomObjectType.door : RoomObjectType.window,
         wallIndex: r['wall_index'] as int,
         positionAlong: (r['position_along'] as num).toDouble(),
         widthMm: (r['width_mm'] as num).toDouble(),
         heightMm: (r['height_mm'] as num).toDouble(),
         elevationMm: (r['elevation_mm'] as num).toDouble(),
       );
-    }).toList();
-
-    // Also attach them into the first shape so SketchScreen renders them
-    if (shapes.isNotEmpty) {
-      shapes[0].roomObjects = List<RoomObject>.from(roomObjects);
+      roomObjects.add(obj);
+      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
+      if (si < shapes.length) shapes[si].roomObjects.add(obj);
     }
 
     return (shapes, roomObjects, wallAngles, wallLengths);
@@ -754,21 +752,19 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
       return shape;
     }).toList();
 
-    // Attach room objects (doors/windows) to the first shape
-    if (newShapes.isNotEmpty) {
-      newShapes[0].roomObjects = objectsData.map<RoomObject>((r) {
-        return RoomObject(
-          id: r['object_id'] as String,
-          type: r['type'] == 'door'
-              ? RoomObjectType.door
-              : RoomObjectType.window,
-          wallIndex: r['wall_index'] as int,
-          positionAlong: (r['position_along'] as num).toDouble(),
-          widthMm: (r['width_mm'] as num).toDouble(),
-          heightMm: (r['height_mm'] as num).toDouble(),
-          elevationMm: (r['elevation_mm'] as num).toDouble(),
-        );
-      }).toList();
+    // Distribute room objects to their correct shape
+    for (final r in objectsData) {
+      final obj = RoomObject(
+        id: r['object_id'] as String,
+        type: r['type'] == 'door' ? RoomObjectType.door : RoomObjectType.window,
+        wallIndex: r['wall_index'] as int,
+        positionAlong: (r['position_along'] as num).toDouble(),
+        widthMm: (r['width_mm'] as num).toDouble(),
+        heightMm: (r['height_mm'] as num).toDouble(),
+        elevationMm: (r['elevation_mm'] as num).toDouble(),
+      );
+      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
+      if (si < newShapes.length) newShapes[si].roomObjects.add(obj);
     }
 
     // Also update wall angles and lengths from the first shape

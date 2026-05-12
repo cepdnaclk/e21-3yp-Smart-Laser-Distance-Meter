@@ -131,8 +131,8 @@ router.post('/upload', async (req, res) => {
       await client.query(
         `INSERT INTO room_objects
          (project_id, object_id, type, wall_index, position_along,
-          width_mm, height_mm, elevation_mm)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          width_mm, height_mm, elevation_mm, shape_index)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           cloudProjectId,
           obj.object_id,
@@ -142,6 +142,7 @@ router.post('/upload', async (req, res) => {
           obj.width_mm,
           obj.height_mm,
           obj.elevation_mm,
+          obj.shape_index ?? 0,
         ]
       );
     }

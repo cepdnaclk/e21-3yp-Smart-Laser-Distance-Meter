@@ -405,17 +405,20 @@ class _SketchScreenState extends State<SketchScreen>
           }(),
         };
       }).toList(),
-      'roomObjects': shapes
-          .expand((shape) => shape.roomObjects)
-          .map((obj) => {
-            'object_id': obj.id,
-            'type': obj.type.name,
-            'wall_index': obj.wallIndex,
-            'position_along': obj.positionAlong,
-            'width_mm': obj.widthMm,
-            'height_mm': obj.heightMm,
-            'elevation_mm': obj.elevationMm,
-          }).toList(),
+      'roomObjects': [
+        for (int si = 0; si < shapes.length; si++)
+          for (final obj in shapes[si].roomObjects)
+            {
+              'object_id': obj.id,
+              'shape_index': si,
+              'type': obj.type.name,
+              'wall_index': obj.wallIndex,
+              'position_along': obj.positionAlong,
+              'width_mm': obj.widthMm,
+              'height_mm': obj.heightMm,
+              'elevation_mm': obj.elevationMm,
+            }
+      ],
     };
   }
 
