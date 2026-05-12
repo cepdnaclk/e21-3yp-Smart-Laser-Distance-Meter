@@ -8,6 +8,7 @@ import '../database/database_helper.dart';
 import '../sketch/sketch_screen.dart';
 import '../sketch/sketch_model.dart';
 import '../sketch/room_object.dart';
+import '../sketch/furniture_item.dart';
 
 class CollaborationScreen extends StatefulWidget {
   const CollaborationScreen({super.key});
@@ -393,6 +394,28 @@ class _CollaborationScreenState extends State<CollaborationScreen>
       if (si < shapes.length) shapes[si].roomObjects.add(obj);
     }
 
+    // Distribute furniture items to their correct shape
+    final furnitureData = data['furnitureItems'] as List<dynamic>? ?? [];
+    for (final f in furnitureData) {
+      final si = (f['shape_index'] as num?)?.toInt() ?? 0;
+      if (si < shapes.length) {
+        shapes[si].furnitureItems.add(FurnitureItem(
+          id: f['furniture_id'] as String,
+          type: FurnitureType.values.firstWhere(
+            (t) => t.name == f['type'],
+            orElse: () => FurnitureType.sofa,
+          ),
+          position: Offset(
+            (f['position_x'] as num).toDouble(),
+            (f['position_y'] as num).toDouble(),
+          ),
+          rotationDeg: (f['rotation_deg'] as num).toDouble(),
+          widthMm: (f['width_mm'] as num).toDouble(),
+          depthMm: (f['depth_mm'] as num).toDouble(),
+        ));
+      }
+    }
+
     return (shapes, roomObjects, wallAngles, wallLengths);
   }
 
@@ -765,6 +788,28 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
       );
       final si = (r['shape_index'] as num?)?.toInt() ?? 0;
       if (si < newShapes.length) newShapes[si].roomObjects.add(obj);
+    }
+
+    // Distribute furniture items to their correct shape
+    final furnitureData = data['furnitureItems'] as List<dynamic>? ?? [];
+    for (final f in furnitureData) {
+      final si = (f['shape_index'] as num?)?.toInt() ?? 0;
+      if (si < newShapes.length) {
+        newShapes[si].furnitureItems.add(FurnitureItem(
+          id: f['furniture_id'] as String,
+          type: FurnitureType.values.firstWhere(
+            (t) => t.name == f['type'],
+            orElse: () => FurnitureType.sofa,
+          ),
+          position: Offset(
+            (f['position_x'] as num).toDouble(),
+            (f['position_y'] as num).toDouble(),
+          ),
+          rotationDeg: (f['rotation_deg'] as num).toDouble(),
+          widthMm: (f['width_mm'] as num).toDouble(),
+          depthMm: (f['depth_mm'] as num).toDouble(),
+        ));
+      }
     }
 
     // Also update wall angles and lengths from the first shape

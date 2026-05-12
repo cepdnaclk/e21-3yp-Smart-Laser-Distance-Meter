@@ -12,7 +12,7 @@ router.use(authMiddleware);
 router.post('/upload', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { project, shapes, roomObjects, last_modified_at } = req.body;
+    const { project, shapes, roomObjects, furnitureItems, last_modified_at } = req.body;
 
     // transaction — either everything saves or nothing saves
     await client.query('BEGIN');
@@ -67,8 +67,9 @@ router.post('/upload', async (req, res) => {
         await client.query('DELETE FROM wall_angles   WHERE shape_id = $1', [row.id]);
         await client.query('DELETE FROM wall_lengths  WHERE shape_id = $1', [row.id]);
       }
-      await client.query('DELETE FROM shapes       WHERE project_id = $1', [cloudProjectId]);
-      await client.query('DELETE FROM room_objects  WHERE project_id = $1', [cloudProjectId]);
+      await client.query('DELETE FROM shapes          WHERE project_id = $1', [cloudProjectId]);
+      await client.query('DELETE FROM room_objects    WHERE project_id = $1', [cloudProjectId]);
+      await client.query('DELETE FROM furniture_items WHERE project_id = $1', [cloudProjectId]);
     } else {
       const inviteCode = Math.random().toString(36).substring(2, 6).toUpperCase() +
                          Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -143,6 +144,27 @@ router.post('/upload', async (req, res) => {
           obj.height_mm,
           obj.elevation_mm,
           obj.shape_index ?? 0,
+        ]
+      );
+    }
+
+    // 4. Save furniture items
+    for (const f of (furnitureItems || [])) {
+      await client.query(
+        `INSERT INTO furniture_items
+         (project_id, shape_index, furniture_id, type,
+          position_x, position_y, rotation_deg, width_mm, depth_mm)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          cloudProjectId,
+          f.shape_index ?? 0,
+          f.furniture_id,
+          f.type,
+          f.position_x,
+          f.position_y,
+          f.rotation_deg ?? 0,
+          f.width_mm,
+          f.depth_mm,
         ]
       );
     }
@@ -236,10 +258,17 @@ router.get('/download/:projectId', async (req, res) => {
       [projectId]
     );
 
+    // Get furniture items for this project
+    const furnitureResult = await pool.query(
+      'SELECT * FROM furniture_items WHERE project_id = $1',
+      [projectId]
+    );
+
     res.json({
       project: projectResult.rows[0],
       shapes: shapesWithData,
       roomObjects: objectsResult.rows,
+      furnitureItems: furnitureResult.rows,
     });
 
   } catch (err) {
@@ -300,12 +329,16 @@ router.get('/updates/:projectId', async (req, res) => {
     const objectsResult = await pool.query(
       'SELECT * FROM room_objects WHERE project_id = $1', [projectId]
     );
+    const furnitureResult = await pool.query(
+      'SELECT * FROM furniture_items WHERE project_id = $1', [projectId]
+    );
 
     res.json({
       updated: true,
       project,
       shapes: shapesWithData,
       roomObjects: objectsResult.rows,
+      furnitureItems: furnitureResult.rows,
     });
 
   } catch (err) {

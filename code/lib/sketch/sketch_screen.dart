@@ -419,6 +419,20 @@ class _SketchScreenState extends State<SketchScreen>
               'elevation_mm': obj.elevationMm,
             }
       ],
+      'furnitureItems': [
+        for (int si = 0; si < shapes.length; si++)
+          for (final f in shapes[si].furnitureItems)
+            {
+              'furniture_id': f.id,
+              'shape_index': si,
+              'type': f.type.name,
+              'position_x': f.position.dx,
+              'position_y': f.position.dy,
+              'rotation_deg': f.rotationDeg,
+              'width_mm': f.widthMm,
+              'depth_mm': f.depthMm,
+            }
+      ],
     };
   }
 
@@ -1759,6 +1773,7 @@ class _SketchScreenState extends State<SketchScreen>
       _saveUndo();
       _objectPinchStartWidthMm = 0.0;
       _objectPinchStartScale = 1.0;
+      _queueAutoSync();
     }
     _panConfirmed = false;
     Future.delayed(const Duration(milliseconds: 150), () {
@@ -1991,12 +2006,14 @@ class _SketchScreenState extends State<SketchScreen>
                     swingFlipped: !activeShape.roomObjects[idx].swingFlipped,
                   );
                 });
+                _queueAutoSync();
               }
             : null,
         onSave: (updatedObj) {
           setState(() {
             activeShape.roomObjects[idx] = updatedObj;
           });
+          _queueAutoSync();
         },
         onDelete: () {
           _saveUndo();
