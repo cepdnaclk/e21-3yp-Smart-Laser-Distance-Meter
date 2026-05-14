@@ -27,7 +27,9 @@ class SketchShape {
   Map<int, double> wallRealMm;
   List<RoomObject> roomObjects;
   List<SharedWall> sharedWalls;
+
   List<FurnitureItem> furnitureItems;
+  double heightMm;
 
   SketchShape({
     List<Offset>? points,
@@ -37,6 +39,7 @@ class SketchShape {
     List<RoomObject>? roomObjects,
     List<SharedWall>? sharedWalls,
     List<FurnitureItem>? furnitureItems,
+    this.heightMm = 2400,
   })  : points = points ?? [],
         wallRealMm = wallRealMm ?? {},
         roomObjects = roomObjects ?? [],

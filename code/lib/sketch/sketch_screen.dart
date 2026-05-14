@@ -2396,8 +2396,13 @@ class _SketchScreenState extends State<SketchScreen>
                         roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
                         bleManager: widget.bleManager,
+                        initialHeightMm: activeShape.heightMm,
                         onWallMeasured: (wallIndex, mm) {
                           _applyRealMeasurement(wallIndex, mm);
+                        },
+                        onHeightChanged: (mm) {
+                          setState(() => activeShape.heightMm = mm);
+                          _saveUndo();
                         },
                       ),
                     ),
