@@ -127,12 +127,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 backgroundColor: const Color(0xFF1A2A3A),
                 foregroundColor: Colors.white,
               ),
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                final projectId = await Navigator.push<int>(
                   context,
                   MaterialPageRoute(
                       builder: (_) => const ProjectListScreen()),
                 );
+                if (projectId != null && mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SketchScreen(
+                          initialLocalProjectId: projectId),
+                    ),
+                  );
+                }
               },
             ),
 

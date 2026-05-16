@@ -29,6 +29,7 @@ class SketchScreen extends StatefulWidget {
   final List<double>? initialWallAngles;
   final List<double>? initialWallLengths;
   final int? cloudProjectId;
+  final int? initialLocalProjectId;
   final bool canEdit;
 
   const SketchScreen({
@@ -38,6 +39,7 @@ class SketchScreen extends StatefulWidget {
     this.initialWallAngles,
     this.initialWallLengths,
     this.cloudProjectId,
+    this.initialLocalProjectId,
     this.canEdit = true,
   });
 
@@ -187,6 +189,10 @@ class _SketchScreenState extends State<SketchScreen>
       _wallDrawnLengths
         ..clear()
         ..addAll(widget.initialWallLengths!);
+    }
+    if (widget.initialLocalProjectId != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _loadProjectById(widget.initialLocalProjectId!));
     }
     widget.bleManager?.packetStream.listen((BlePacket packet) {
       // Skip capturing packets (laser-on signal) and zero readings
@@ -739,7 +745,10 @@ class _SketchScreenState extends State<SketchScreen>
     );
 
     if (projectId == null) return;
+    await _loadProjectById(projectId);
+  }
 
+  Future<void> _loadProjectById(int projectId) async {
     final data = await DatabaseHelper.instance.loadProject(projectId);
     if (data == null) return;
 
