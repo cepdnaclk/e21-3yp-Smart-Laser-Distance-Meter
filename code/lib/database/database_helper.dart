@@ -291,6 +291,93 @@ class DatabaseHelper {
     });
   }
 
+  Future<void> updateProject({
+    required int projectId,
+    required List<dynamic> shapes,
+    required List<RoomObject> roomObjects,
+    required List<double> wallAngles,
+    required List<double> wallDrawnLengths,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+
+    await db.transaction((txn) async {
+      await txn.update('projects', {'updated_at': now},
+          where: 'id = ?', whereArgs: [projectId]);
+
+      // Delete old data (CASCADE handles shape_points, wall_real_mm, wall_angles, wall_lengths)
+      await txn.delete('shapes', where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('room_objects', where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('furniture_items', where: 'project_id = ?', whereArgs: [projectId]);
+
+      // Re-insert shapes
+      for (int s = 0; s < shapes.length; s++) {
+        final shape = shapes[s];
+        final shapeId = await txn.insert('shapes', {
+          'project_id': projectId,
+          'shape_index': s,
+          'is_closed': shape.isClosed ? 1 : 0,
+        });
+        for (int i = 0; i < shape.points.length; i++) {
+          await txn.insert('shape_points', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'x': shape.points[i].dx,
+            'y': shape.points[i].dy,
+          });
+        }
+        for (final entry in shape.wallRealMm.entries) {
+          await txn.insert('wall_real_mm', {
+            'shape_id': shapeId,
+            'wall_index': entry.key,
+            'real_mm': entry.value,
+          });
+        }
+        for (int i = 0; i < wallAngles.length; i++) {
+          await txn.insert('wall_angles', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'angle': wallAngles[i],
+          });
+        }
+        for (int i = 0; i < wallDrawnLengths.length; i++) {
+          await txn.insert('wall_lengths', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'length': wallDrawnLengths[i],
+          });
+        }
+        for (final f in (shape.furnitureItems as List)) {
+          await txn.insert('furniture_items', {
+            'project_id': projectId,
+            'shape_index': s,
+            'furniture_id': (f as dynamic).id,
+            'type': f.type.name,
+            'position_x': f.position.dx,
+            'position_y': f.position.dy,
+            'rotation_deg': f.rotationDeg,
+            'width_mm': f.widthMm,
+            'depth_mm': f.depthMm,
+          });
+        }
+      }
+
+      // Re-insert room objects
+      for (final obj in roomObjects) {
+        await txn.insert('room_objects', {
+          'project_id': projectId,
+          'object_id': obj.id,
+          'type': obj.type.name,
+          'wall_index': obj.wallIndex,
+          'position_along': obj.positionAlong,
+          'width_mm': obj.widthMm,
+          'height_mm': obj.heightMm,
+          'elevation_mm': obj.elevationMm,
+        });
+      }
+    });
+  }
+
   // ── READ ──────────────────────────────────────────────────────────────────
 
   // Returns all projects for the project list screen
@@ -389,11 +476,28 @@ class DatabaseHelper {
 
   Future<void> deleteProject(int projectId) async {
     final db = await database;
-    await db.delete(
-      'projects', where: 'id = ?', whereArgs: [projectId],
-    );
-    // CASCADE in the table definition automatically deletes
-    // all shapes, points, objects linked to this project
+    await db.transaction((txn) async {
+      // Get shape IDs so we can manually delete child rows
+      // (SQLite foreign key CASCADE is off by default)
+      final shapeRows = await txn.query(
+        'shapes', columns: ['id'],
+        where: 'project_id = ?', whereArgs: [projectId],
+      );
+      for (final row in shapeRows) {
+        final sid = row['id'] as int;
+        await txn.delete('shape_points',  where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_real_mm',  where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_angles',   where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_lengths',  where: 'shape_id = ?', whereArgs: [sid]);
+      }
+      await txn.delete('shapes',        where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('room_objects',   where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('pending_uploads',where: 'project_id = ?', whereArgs: [projectId]);
+      try {
+        await txn.delete('furniture_items', where: 'project_id = ?', whereArgs: [projectId]);
+      } catch (_) {}
+      await txn.delete('projects', where: 'id = ?', whereArgs: [projectId]);
+    });
   }
 
   // Add an item to the upload queue
