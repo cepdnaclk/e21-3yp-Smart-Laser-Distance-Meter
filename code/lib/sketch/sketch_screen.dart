@@ -592,6 +592,7 @@ class _SketchScreenState extends State<SketchScreen>
 
     final shapesData = data['shapes'] as List<Map<String, dynamic>>;
     final objectsData = data['room_objects'] as List<Map<String, dynamic>>;
+    final furnitureData = data['furniture_items'] as List<Map<String, dynamic>>? ?? [];
 
     setState(() {
       shapes.clear();
@@ -611,6 +612,26 @@ class _SketchScreenState extends State<SketchScreen>
         }
 
         shapes.add(shape);
+      }
+
+      // Restore furniture items into the correct shape
+      for (final f in furnitureData) {
+        final si = f['shape_index'] as int;
+        if (si < shapes.length) {
+          final typeName = f['type'] as String;
+          final type = FurnitureType.values.firstWhere(
+            (t) => t.name == typeName,
+            orElse: () => FurnitureType.sofa,
+          );
+          shapes[si].furnitureItems.add(FurnitureItem(
+            id: f['furniture_id'] as String,
+            type: type,
+            position: Offset(f['position_x'] as double, f['position_y'] as double),
+            rotationDeg: f['rotation_deg'] as double,
+            widthMm: f['width_mm'] as double,
+            depthMm: f['depth_mm'] as double,
+          ));
+        }
       }
 
       if (shapes.isNotEmpty) {

@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:flutter/material.dart';
 import '../sketch/room_object.dart';
+import '../sketch/furniture_item.dart';
 
 class DatabaseHelper {
   // Singleton — only one instance ever exists in the app
@@ -24,7 +25,7 @@ class DatabaseHelper {
     final path = join(dbPath, fileName);
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createTables,
       onUpgrade: _onUpgrade,
     );
@@ -117,6 +118,22 @@ class DatabaseHelper {
     ''');
 
     await db.execute('''
+      CREATE TABLE furniture_items (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id    INTEGER NOT NULL,
+        shape_index   INTEGER NOT NULL,
+        furniture_id  TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        position_x    REAL NOT NULL,
+        position_y    REAL NOT NULL,
+        rotation_deg  REAL NOT NULL,
+        width_mm      REAL NOT NULL,
+        depth_mm      REAL NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
       CREATE TABLE pending_uploads (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id    INTEGER NOT NULL,
@@ -143,6 +160,23 @@ class DatabaseHelper {
         )
       ''');
     }
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS furniture_items (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id    INTEGER NOT NULL,
+          shape_index   INTEGER NOT NULL,
+          furniture_id  TEXT NOT NULL,
+          type          TEXT NOT NULL,
+          position_x    REAL NOT NULL,
+          position_y    REAL NOT NULL,
+          rotation_deg  REAL NOT NULL,
+          width_mm      REAL NOT NULL,
+          depth_mm      REAL NOT NULL,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      ''');
+    }
   }
 
   // ── CREATE ────────────────────────────────────────────────────────────────
@@ -155,6 +189,7 @@ class DatabaseHelper {
     required List<RoomObject> roomObjects,
     required List<double> wallAngles,
     required List<double> wallDrawnLengths,
+    List<List<FurnitureItem>>? furniturePerShape,
   }) async {
     final db = await database;
     final now = DateTime.now().toIso8601String();
@@ -229,6 +264,27 @@ class DatabaseHelper {
           'height_mm': obj.heightMm,
           'elevation_mm': obj.elevationMm,
         });
+      }
+
+      // 4. Save furniture items per shape
+      final furnitureSource = furniturePerShape ??
+          shapes.map<List<FurnitureItem>>(
+            (s) => List<FurnitureItem>.from(s.furnitureItems as List),
+          ).toList();
+      for (int s = 0; s < furnitureSource.length; s++) {
+        for (final f in furnitureSource[s]) {
+          await txn.insert('furniture_items', {
+            'project_id': projectId,
+            'shape_index': s,
+            'furniture_id': f.id,
+            'type': f.type.name,
+            'position_x': f.position.dx,
+            'position_y': f.position.dy,
+            'rotation_deg': f.rotationDeg,
+            'width_mm': f.widthMm,
+            'depth_mm': f.depthMm,
+          });
+        }
       }
 
       return projectId;
@@ -313,10 +369,19 @@ class DatabaseHelper {
       whereArgs: [projectId],
     );
 
+    // Furniture items
+    final furnitureRows = await db.query(
+      'furniture_items',
+      where: 'project_id = ?',
+      whereArgs: [projectId],
+      orderBy: 'shape_index ASC',
+    );
+
     return {
       'project': projects.first,
       'shapes': shapesData,
       'room_objects': objects,
+      'furniture_items': furnitureRows,
     };
   }
 
