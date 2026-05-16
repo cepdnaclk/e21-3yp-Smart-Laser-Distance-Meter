@@ -29,6 +29,7 @@ class SketchScreen extends StatefulWidget {
   final List<double>? initialWallAngles;
   final List<double>? initialWallLengths;
   final int? cloudProjectId;
+  final bool canEdit;
 
   const SketchScreen({
     super.key,
@@ -37,6 +38,7 @@ class SketchScreen extends StatefulWidget {
     this.initialWallAngles,
     this.initialWallLengths,
     this.cloudProjectId,
+    this.canEdit = true,
   });
 
   @override
@@ -443,6 +445,7 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   Future<void> _queueAutoSync() async {
+    if (!widget.canEdit) return;
     final isLoggedIn = await ApiService.isLoggedIn();
     if (!isLoggedIn) return;
     // Allow sync even if active shape is empty (e.g. after deleting a room).

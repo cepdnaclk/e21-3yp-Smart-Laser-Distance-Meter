@@ -20,26 +20,45 @@ router.post('/upload', async (req, res) => {
     // 1. Upsert project
     let cloudProjectId;
 
-    // If Flutter already knows the cloud project id, use it directly
+    // If Flutter already knows the cloud project id, find it regardless of owner
+    // (collaborators with edit access also need to update the shared project)
     if (project.cloud_project_id) {
       const byId = await client.query(
-        'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
-        [project.cloud_project_id, req.user.userId]
+        'SELECT id, updated_at FROM projects WHERE id = $1',
+        [project.cloud_project_id]
       );
       if (byId.rows.length > 0) {
         cloudProjectId = byId.rows[0].id;
       }
     }
 
-    // Otherwise fall back to local_id lookup
-    const existing = cloudProjectId ? { rows: [{ id: cloudProjectId }] } :
-      await client.query(
-        'SELECT id FROM projects WHERE user_id = $1 AND local_id = $2',
-        [req.user.userId, project.local_id]
-      );
+    // Fall back to local_id lookup (owner's own projects only)
+    const existing = await client.query(
+      cloudProjectId
+        ? 'SELECT id, updated_at FROM projects WHERE id = $1'
+        : 'SELECT id, updated_at FROM projects WHERE user_id = $1 AND local_id = $2',
+      cloudProjectId ? [cloudProjectId] : [req.user.userId, project.local_id]
+    );
 
     if (existing.rows.length > 0) {
       cloudProjectId = existing.rows[0].id;
+
+      // Verify edit permission: owner always allowed; collaborator needs can_edit=true
+      const projectMeta = await client.query(
+        'SELECT user_id FROM projects WHERE id = $1', [cloudProjectId]
+      );
+      if (projectMeta.rows[0].user_id !== req.user.userId) {
+        const editCheck = await client.query(
+          `SELECT can_edit FROM project_collaborators
+           WHERE project_id = $1 AND user_id = $2 AND status = 'accepted'`,
+          [cloudProjectId, req.user.userId]
+        );
+        if (editCheck.rows.length === 0 || !editCheck.rows[0].can_edit) {
+          await client.query('ROLLBACK');
+          client.release();
+          return res.status(403).json({ error: 'Edit access not granted' });
+        }
+      }
 
       // Conflict detection
       if (last_modified_at) {

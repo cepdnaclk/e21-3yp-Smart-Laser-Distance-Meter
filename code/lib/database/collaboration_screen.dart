@@ -9,6 +9,7 @@ import '../sketch/sketch_screen.dart';
 import '../sketch/sketch_model.dart';
 import '../sketch/room_object.dart';
 import '../sketch/furniture_item.dart';
+import '../services/sync_service.dart';
 
 class CollaborationScreen extends StatefulWidget {
   const CollaborationScreen({super.key});
@@ -86,7 +87,8 @@ class _CollaborationScreenState extends State<CollaborationScreen>
 
   // ── Open shared project with live polling ────────────────────────────────
 
-  Future<void> _openLive(int cloudProjectId, String name) async {
+  Future<void> _openLive(int cloudProjectId, String name,
+      {bool canEdit = false}) async {
     setState(() => _working = true);
     final data = await ApiService.downloadProject(cloudProjectId);
     if (data == null) {
@@ -111,6 +113,7 @@ class _CollaborationScreenState extends State<CollaborationScreen>
           initialWallAngles: wallAngles,
           initialWallLengths: wallLengths,
           lastKnownUpdatedAt: lastUpdatedAt,
+          canEdit: canEdit,
         ),
       ),
     );
@@ -264,45 +267,96 @@ class _CollaborationScreenState extends State<CollaborationScreen>
     if (!mounted) return;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A2A3A),
-        title: Text('Collaborators — $name',
-            style: const TextStyle(color: Colors.white, fontSize: 15)),
-        content: list.isEmpty
-            ? const Text('No one has joined yet.',
-                style: TextStyle(color: Color(0xFF778899)))
-            : SizedBox(
-                width: 280,
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: list.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(color: Color(0xFF334466), height: 1),
-                  itemBuilder: (_, i) {
-                    final c = list[i];
-                    return ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.person_outline,
-                          color: Color(0xFF00AAFF), size: 18),
-                      title: Text(c['email'] as String,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 13)),
-                      subtitle: Text(
-                        '${c['role']} · joined ${_shortDate(c['joined_at'])}',
-                        style: const TextStyle(
-                            color: Color(0xFF556677), fontSize: 11),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1A2A3A),
+          title: Text('Collaborators — $name',
+              style: const TextStyle(color: Colors.white, fontSize: 15)),
+          content: list.isEmpty
+              ? const Text('No one has joined yet.',
+                  style: TextStyle(color: Color(0xFF778899)))
+              : SizedBox(
+                  width: 320,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Toggle "Can Edit" to let a collaborator\nmake and sync changes.',
+                          style: TextStyle(
+                              color: Color(0xFF778899), fontSize: 12),
+                        ),
                       ),
-                    );
-                  },
+                      ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: list.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(color: Color(0xFF334466), height: 1),
+                        itemBuilder: (_, i) {
+                          final c = list[i];
+                          final email = c['email'] as String;
+                          final canEdit = (c['can_edit'] as bool?) ?? false;
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              canEdit ? Icons.edit : Icons.visibility,
+                              color: canEdit
+                                  ? const Color(0xFF00FF99)
+                                  : const Color(0xFF556677),
+                              size: 18,
+                            ),
+                            title: Text(email,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 13)),
+                            subtitle: Text(
+                              canEdit ? 'Can edit & sync' : 'View only',
+                              style: TextStyle(
+                                color: canEdit
+                                    ? const Color(0xFF00AA66)
+                                    : const Color(0xFF556677),
+                                fontSize: 11,
+                              ),
+                            ),
+                            trailing: Switch(
+                              value: canEdit,
+                              activeColor: const Color(0xFF00FF99),
+                              inactiveThumbColor: const Color(0xFF556677),
+                              inactiveTrackColor: const Color(0xFF223344),
+                              onChanged: (val) async {
+                                final ok = await ApiService.setEditAccess(
+                                    cloudProjectId, email, val);
+                                if (ok) {
+                                  setDialogState(() {
+                                    list[i] = {...c, 'can_edit': val};
+                                  });
+                                } else {
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Failed to update access'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close',
-                style: TextStyle(color: Color(0xFF556677))),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close',
+                  style: TextStyle(color: Color(0xFF556677))),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -531,6 +585,8 @@ class _CollaborationScreenState extends State<CollaborationScreen>
                     color: Color(0xFF778899)),
                 onSelected: (action) {
                   switch (action) {
+                    case 'open_live':
+                      _openLive(id, name, canEdit: true);
                     case 'restore':
                       _restoreProject(id, name);
                     case 'invite':
@@ -540,6 +596,16 @@ class _CollaborationScreenState extends State<CollaborationScreen>
                   }
                 },
                 itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'open_live',
+                    child: Row(children: [
+                      Icon(Icons.sync,
+                          color: Color(0xFF00FF99), size: 16),
+                      SizedBox(width: 8),
+                      Text('Open live',
+                          style: TextStyle(color: Colors.white)),
+                    ]),
+                  ),
                   const PopupMenuItem(
                     value: 'restore',
                     child: Row(children: [
@@ -635,9 +701,10 @@ class _CollaborationScreenState extends State<CollaborationScreen>
                 icon: const Icon(Icons.more_vert,
                     color: Color(0xFF778899)),
                 onSelected: (action) {
+                  final canEdit = (p['can_edit'] as bool?) ?? false;
                   switch (action) {
                     case 'open_live':
-                      _openLive(id, name);
+                      _openLive(id, name, canEdit: canEdit);
                     case 'restore':
                       _restoreProject(id, name);
                     case 'leave':
@@ -697,6 +764,7 @@ class _LiveCollabWrapper extends StatefulWidget {
   final List<double> initialWallAngles;
   final List<double> initialWallLengths;
   final String lastKnownUpdatedAt;
+  final bool canEdit;
 
   const _LiveCollabWrapper({
     required this.cloudProjectId,
@@ -705,6 +773,7 @@ class _LiveCollabWrapper extends StatefulWidget {
     required this.initialWallAngles,
     required this.initialWallLengths,
     required this.lastKnownUpdatedAt,
+    this.canEdit = false,
   });
 
   @override
@@ -713,6 +782,7 @@ class _LiveCollabWrapper extends StatefulWidget {
 
 class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
   Timer? _pollTimer;
+  StreamSubscription? _uploadSub;
   String _lastUpdatedAt = '';
   bool _syncing = false;
   DateTime? _lastSyncTime;
@@ -730,11 +800,21 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
     _wallLengths = widget.initialWallLengths;
     _pollTimer =
         Timer.periodic(const Duration(seconds: 10), (_) => _poll());
+
+    // When canEdit=true, track our own uploads so the poll doesn't
+    // mistake our own upload as "someone else's change" and rebuild.
+    if (widget.canEdit) {
+      _uploadSub = SyncService.instance.uploadSuccessStream.listen((event) {
+        final updatedAt = event['updated_at'] as String?;
+        if (updatedAt != null) _lastUpdatedAt = updatedAt;
+      });
+    }
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _uploadSub?.cancel();
     super.dispose();
   }
 
@@ -853,6 +933,7 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
           initialWallAngles: _wallAngles,
           initialWallLengths: _wallLengths,
           cloudProjectId: widget.cloudProjectId,
+          canEdit: widget.canEdit,
         ),
         Positioned(
           top: 56,
@@ -861,22 +942,39 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
             padding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF004422),
+              color: widget.canEdit
+                  ? const Color(0xFF1A3A00)
+                  : const Color(0xFF004422),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF00AA44)),
+              border: Border.all(
+                color: widget.canEdit
+                    ? const Color(0xFF88FF00)
+                    : const Color(0xFF00AA44),
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.sync,
-                    color: Color(0xFF00AA44), size: 12),
+                Icon(
+                  widget.canEdit ? Icons.edit : Icons.visibility,
+                  color: widget.canEdit
+                      ? const Color(0xFF88FF00)
+                      : const Color(0xFF00AA44),
+                  size: 12,
+                ),
                 const SizedBox(width: 4),
                 Text(
-                  _lastSyncTime == null
-                      ? 'Live sync active'
-                      : 'Synced ${_timeAgo(_lastSyncTime!)}',
-                  style: const TextStyle(
-                    color: Color(0xFF00AA44),
+                  widget.canEdit
+                      ? (_lastSyncTime == null
+                          ? 'Edit mode · live'
+                          : 'Edit mode · ${_timeAgo(_lastSyncTime!)}')
+                      : (_lastSyncTime == null
+                          ? 'View only · live'
+                          : 'View only · ${_timeAgo(_lastSyncTime!)}'),
+                  style: TextStyle(
+                    color: widget.canEdit
+                        ? const Color(0xFF88FF00)
+                        : const Color(0xFF00AA44),
                     fontSize: 10,
                     fontFamily: 'monospace',
                   ),
