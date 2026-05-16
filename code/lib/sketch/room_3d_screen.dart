@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'room_object.dart';
+import 'furniture_item.dart';
 import 'sketch_constants.dart';
 import '../ble/ble_manager.dart';
 
@@ -10,6 +11,7 @@ class Room3DScreen extends StatefulWidget {
   final List<Offset> points;
   final List<RoomObject> roomObjects;
   final Map<int, double> wallRealMm;
+  final List<FurnitureItem> furnitureItems;
   final BleManager? bleManager;
 
   final void Function(int wallIndex, double mm)? onWallMeasured;
@@ -21,6 +23,7 @@ class Room3DScreen extends StatefulWidget {
     required this.points,
     required this.roomObjects,
     required this.wallRealMm,
+    this.furnitureItems = const [],
     this.bleManager,
     this.onWallMeasured,
     this.initialHeightMm = 2400,
@@ -71,23 +74,33 @@ class _Room3DScreenState extends State<Room3DScreen> {
         title: const Text('3D Room View',
             style: TextStyle(fontFamily: 'monospace', fontSize: 15)),
         actions: [
-          // Room height input
-          TextButton.icon(
-            icon: const Icon(Icons.height,
-                color: Color(0xFF00AA66), size: 16),
-            label: Text(
-              '${(_wallHeightMm / 1000).toStringAsFixed(2)} m',
-              style: const TextStyle(
-                  color: Color(0xFF00AA66),
-                  fontFamily: 'monospace',
-                  fontSize: 12),
+          // Room height input — compact icon + text
+          GestureDetector(
+            onTap: _editHeight,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.height, color: Color(0xFF00AA66), size: 16),
+                  const SizedBox(width: 3),
+                  Text(
+                    '${(_wallHeightMm / 1000).toStringAsFixed(2)}m',
+                    style: const TextStyle(
+                        color: Color(0xFF00AA66),
+                        fontFamily: 'monospace',
+                        fontSize: 11),
+                  ),
+                ],
+              ),
             ),
-            onPressed: _editHeight,
           ),
           // Reset camera
           IconButton(
             icon: const Icon(Icons.center_focus_strong,
                 color: Color(0xFF556677), size: 20),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             tooltip: 'Reset view',
             onPressed: () => setState(() {
               _rotX = 1.1;
@@ -105,6 +118,8 @@ class _Room3DScreenState extends State<Room3DScreen> {
                   : const Color(0xFF556677),
               size: 20,
             ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             tooltip: _showCeiling ? 'Hide ceiling' : 'Show ceiling',
             onPressed: () => setState(() => _showCeiling = !_showCeiling),
           ),
@@ -117,42 +132,13 @@ class _Room3DScreenState extends State<Room3DScreen> {
                   : const Color(0xFF556677),
               size: 20,
             ),
-            tooltip:
-                _showDimensions ? 'Hide dimensions' : 'Show dimensions',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            tooltip: _showDimensions ? 'Hide dimensions' : 'Show dimensions',
             onPressed: () =>
                 setState(() => _showDimensions = !_showDimensions),
           ),
-          // BLE measure button
-          if (_selectedWallIndex != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: _waitingForBle
-                  ? const Row(children: [
-                      SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Color(0xFF00AAFF))),
-                      SizedBox(width: 8),
-                      Text('Waiting…',
-                          style: TextStyle(
-                              color: Color(0xFF00AAFF),
-                              fontFamily: 'monospace')),
-                    ])
-                  : TextButton.icon(
-                      icon: const Icon(Icons.bluetooth,
-                          color: Color(0xFF00AAFF), size: 16),
-                      label: Text(
-                        'Measure wall ${_selectedWallIndex! + 1}',
-                        style: const TextStyle(
-                            color: Color(0xFF00AAFF),
-                            fontFamily: 'monospace',
-                            fontSize: 12),
-                      ),
-                      onPressed: _triggerBleMeasurement,
-                    ),
-            ),
+          const SizedBox(width: 4),
         ],
       ),
       body: Stack(children: [
@@ -195,6 +181,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
                 points: widget.points,
                 roomObjects: widget.roomObjects,
                 wallRealMm: widget.wallRealMm,
+                furnitureItems: widget.furnitureItems,
                 rotX: _rotX,
                 rotY: _rotY,
                 zoom: _zoom,
@@ -214,28 +201,72 @@ class _Room3DScreenState extends State<Room3DScreen> {
         // ── Legend / info bar ─────────────────────────────────────────
         Positioned(
           bottom: 16,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF161B22),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF30363D)),
-              ),
-              child: Text(
-                _selectedWallIndex == null
-                    ? '1 finger = rotate  •  2 fingers = zoom / pan  •  tap wall to select'
-                    : 'Wall ${_selectedWallIndex! + 1} selected'
-                        '${widget.bleManager != null ? '  —  tap "Measure" to use laser' : ''}',
-                style: const TextStyle(
-                    color: Color(0xFF778899),
-                    fontFamily: 'monospace',
-                    fontSize: 11),
-              ),
+          left: 12,
+          right: 12,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF161B22),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF30363D)),
             ),
+            child: _selectedWallIndex == null
+                ? const Text(
+                    '1 finger = rotate  •  2 fingers = zoom/pan  •  tap wall to select',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Color(0xFF778899),
+                        fontFamily: 'monospace',
+                        fontSize: 11),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Wall ${_selectedWallIndex! + 1} selected',
+                        style: const TextStyle(
+                            color: Color(0xFF00AAFF),
+                            fontFamily: 'monospace',
+                            fontSize: 11),
+                      ),
+                      if (widget.bleManager != null)
+                        _waitingForBle
+                            ? const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Color(0xFF00AAFF))),
+                                  SizedBox(width: 6),
+                                  Text('Measuring…',
+                                      style: TextStyle(
+                                          color: Color(0xFF00AAFF),
+                                          fontFamily: 'monospace',
+                                          fontSize: 11)),
+                                ],
+                              )
+                            : GestureDetector(
+                                onTap: _triggerBleMeasurement,
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.bluetooth,
+                                        color: Color(0xFF00AAFF), size: 14),
+                                    SizedBox(width: 4),
+                                    Text('Measure',
+                                        style: TextStyle(
+                                            color: Color(0xFF00AAFF),
+                                            fontFamily: 'monospace',
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                    ],
+                  ),
           ),
         ),
 
@@ -410,6 +441,7 @@ class _Room3DPainter extends CustomPainter {
   final List<Offset> points;
   final List<RoomObject> roomObjects;
   final Map<int, double> wallRealMm;
+  final List<FurnitureItem> furnitureItems;
   final double rotX;
   final double rotY;
   final double zoom;
@@ -425,6 +457,7 @@ class _Room3DPainter extends CustomPainter {
     required this.points,
     required this.roomObjects,
     required this.wallRealMm,
+    required this.furnitureItems,
     required this.rotX,
     required this.rotY,
     required this.zoom,
@@ -502,18 +535,23 @@ class _Room3DPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5);
 
-    // ── 2. Walls — sorted back to front (painter's algorithm) ────────────
-    // Compute centre depth of each wall for sorting
-    final wallOrder = List.generate(n, (i) {
+    // ── 2. Unified draw order: walls + furniture, sorted back-to-front ───────
+    // (bool isWall, int idx, double depth)
+    final drawOrder = <(bool, int, double)>[];
+    for (int i = 0; i < n; i++) {
       final Offset a = points[i];
       final Offset b = points[(i + 1) % n];
       final double midX = (wx(a.dx) + wx(b.dx)) / 2;
       final double midZ = (wz(a.dy) + wz(b.dy)) / 2;
-      // Apply Y rotation to get depth (z after rotation)
-      final double depth = midX * math.sin(rotY) + midZ * math.cos(rotY);
-      return MapEntry(i, depth);
-    });
-    wallOrder.sort((a, b) => b.value.compareTo(a.value)); // far first
+      drawOrder.add((true, i, midX * math.sin(rotY) + midZ * math.cos(rotY)));
+    }
+    for (int fi = 0; fi < furnitureItems.length; fi++) {
+      final item = furnitureItems[fi];
+      drawOrder.add((false, fi,
+          wx(item.position.dx) * math.sin(rotY) +
+          wz(item.position.dy) * math.cos(rotY)));
+    }
+    drawOrder.sort((a, b) => b.$3.compareTo(a.$3)); // far first
 
     // ── Pre-compute inward normals ─────────────────────────────────────────
     const double wallThickMm = 200.0;
@@ -580,8 +618,121 @@ class _Room3DPainter extends CustomPainter {
       }
     }
 
-    for (final entry in wallOrder) {
-      final int i = entry.key;
+    for (final entry in drawOrder) {
+      if (!entry.$1) {
+        // ── Furniture item ───────────────────────────────────────────────────
+        final item = furnitureItems[entry.$2];
+        final double frad  = item.rotationDeg * math.pi / 180.0;
+        final double fcosR = math.cos(frad);
+        final double fsinR = math.sin(frad);
+        final double fhw   = item.widthMm  / (2.0 * mmPerUnit);
+        final double fhd   = item.depthMm  / (2.0 * mmPerUnit);
+        final double fH2   = item.type.heightMm * mmScale;
+
+        final fWorldPts = [
+          const Offset(-1.0, -1.0),
+          const Offset( 1.0, -1.0),
+          const Offset( 1.0,  1.0),
+          const Offset(-1.0,  1.0),
+        ].map((lp) {
+          final rx = lp.dx * fhw * fcosR - lp.dy * fhd * fsinR;
+          final ry = lp.dx * fhw * fsinR + lp.dy * fhd * fcosR;
+          return Offset(item.position.dx + rx, item.position.dy + ry);
+        }).toList();
+
+        final fBotPts = fWorldPts
+            .map((wp) => _project(wx(wp.dx), 0,    wz(wp.dy), size)).toList();
+        final fTopPts = fWorldPts
+            .map((wp) => _project(wx(wp.dx), -fH2, wz(wp.dy), size)).toList();
+
+        // Floor shadow
+        double fscx = 0, fscy = 0;
+        for (final bp in fBotPts) { fscx += bp.dx; fscy += bp.dy; }
+        fscx /= 4; fscy /= 4;
+        final double fsW = (fBotPts[1] - fBotPts[0]).distance +
+                           (fBotPts[2] - fBotPts[3]).distance;
+        final double fsD = (fBotPts[3] - fBotPts[0]).distance +
+                           (fBotPts[2] - fBotPts[1]).distance;
+        canvas.drawOval(
+          Rect.fromCenter(center: Offset(fscx, fscy),
+              width: fsW * 0.65, height: fsD * 0.65),
+          Paint()..color = Colors.black.withOpacity(0.22),
+        );
+
+        final fBaseColor = item.type.color;
+        final double ffcx = item.position.dx;
+        final double ffcz = item.position.dy;
+
+        // Side faces — back-to-front, back-face culled
+        final fFaceDepths = List.generate(4, (f) {
+          final j  = (f + 1) % 4;
+          final mx = (fWorldPts[f].dx + fWorldPts[j].dx) / 2;
+          final mz = (fWorldPts[f].dy + fWorldPts[j].dy) / 2;
+          return wx(mx) * math.sin(rotY) + wz(mz) * math.cos(rotY);
+        });
+        final fFaceOrder = [0, 1, 2, 3]
+          ..sort((a, b) => fFaceDepths[b].compareTo(fFaceDepths[a]));
+
+        for (final f in fFaceOrder) {
+          final int j = (f + 1) % 4;
+          final double fdx  = fWorldPts[j].dx - fWorldPts[f].dx;
+          final double fdz  = fWorldPts[j].dy - fWorldPts[f].dy;
+          final double flen = math.sqrt(fdx * fdx + fdz * fdz).clamp(1e-6, 1e9);
+          double fnx = fdz / flen, fnz = -fdx / flen;
+          final double fmx = (fWorldPts[f].dx + fWorldPts[j].dx) / 2;
+          final double fmz = (fWorldPts[f].dy + fWorldPts[j].dy) / 2;
+          if ((fmx - ffcx) * fnx + (fmz - ffcz) * fnz < 0) { fnx = -fnx; fnz = -fnz; }
+          final double fvis = fnx * math.sin(rotY) + fnz * math.cos(rotY);
+          if (fvis >= 0) continue;
+          final double fshade = (-fvis).clamp(0.0, 1.0);
+          final fFaceColor = Color.lerp(Colors.black, fBaseColor, 0.45 + fshade * 0.55)!;
+          final sidePath = Path()
+            ..moveTo(fBotPts[f].dx, fBotPts[f].dy)
+            ..lineTo(fBotPts[j].dx, fBotPts[j].dy)
+            ..lineTo(fTopPts[j].dx, fTopPts[j].dy)
+            ..lineTo(fTopPts[f].dx, fTopPts[f].dy)
+            ..close();
+          canvas.drawPath(sidePath, Paint()..color = fFaceColor..style = PaintingStyle.fill);
+          canvas.drawPath(sidePath,
+              Paint()..color = Colors.black.withOpacity(0.25)
+                ..style = PaintingStyle.stroke..strokeWidth = 0.7);
+        }
+
+        // Top face
+        final fTopColor = Color.lerp(Colors.white, fBaseColor, 0.65)!;
+        final fTopPath = Path()
+          ..moveTo(fTopPts[0].dx, fTopPts[0].dy)
+          ..lineTo(fTopPts[1].dx, fTopPts[1].dy)
+          ..lineTo(fTopPts[2].dx, fTopPts[2].dy)
+          ..lineTo(fTopPts[3].dx, fTopPts[3].dy)
+          ..close();
+        canvas.drawPath(fTopPath, Paint()..color = fTopColor..style = PaintingStyle.fill);
+        canvas.drawPath(fTopPath,
+            Paint()..color = Colors.black.withOpacity(0.2)
+              ..style = PaintingStyle.stroke..strokeWidth = 0.7);
+        for (int k = 0; k < 4; k++) {
+          canvas.drawLine(fBotPts[k], fTopPts[k],
+              Paint()..color = Colors.black.withOpacity(0.2)..strokeWidth = 0.7);
+        }
+
+        // Label
+        final ftp = TextPainter(
+          text: TextSpan(
+            text: item.type.displayName,
+            style: const TextStyle(color: Colors.white, fontSize: 8,
+                fontFamily: 'monospace',
+                shadows: [Shadow(blurRadius: 2, color: Colors.black)]),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        double flx = 0, fly = 0;
+        for (final p in fTopPts) { flx += p.dx; fly += p.dy; }
+        ftp.paint(canvas, Offset(flx / 4 - ftp.width / 2, fly / 4 - ftp.height / 2));
+        continue;
+      }
+
+      // ── Wall ────────────────────────────────────────────────────────────────
+      final int i = entry.$2;
       final Offset a = points[i];
       final Offset b = points[(i + 1) % n];
       final bool isSelected = i == selectedWallIndex;
@@ -604,7 +755,7 @@ class _Room3DPainter extends CustomPainter {
       final si3 = _project(wx(icA.dx), -H, wz(icA.dy), size);
 
       // Depth-based lightness for each face
-      final double depth = entry.value;
+      final double depth = entry.$3;
       final int outerL = (180 + (depth * 8).clamp(-60.0, 60.0)).toInt().clamp(100, 240);
       final int topL   = (outerL + 35).clamp(100, 255);
       final int innerL = (outerL - 45).clamp(60,  200);
@@ -754,6 +905,162 @@ class _Room3DPainter extends CustomPainter {
             ..color = const Color(0xFF2D3748)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 0.8);
+    }
+
+    if (false) { // placeholder — furniture now drawn inside drawOrder loop above
+      for (final item in furnitureItems) {
+        final double rad  = item.rotationDeg * math.pi / 180.0;
+        final double cosR = math.cos(rad);
+        final double sinR = math.sin(rad);
+        final double hw   = item.widthMm  / (2.0 * mmPerUnit);
+        final double hd   = item.depthMm  / (2.0 * mmPerUnit);
+        final double fH   = item.type.heightMm * mmScale;
+
+        // 4 footprint corners in world sketch units (CW: fl, fr, br, bl)
+        final worldPts = [
+          const Offset(-1.0, -1.0),
+          const Offset( 1.0, -1.0),
+          const Offset( 1.0,  1.0),
+          const Offset(-1.0,  1.0),
+        ].map((lp) {
+          final rx = lp.dx * hw * cosR - lp.dy * hd * sinR;
+          final ry = lp.dx * hw * sinR + lp.dy * hd * cosR;
+          return Offset(item.position.dx + rx, item.position.dy + ry);
+        }).toList();
+
+        final botPts = worldPts
+            .map((wp) => _project(wx(wp.dx), 0,   wz(wp.dy), size))
+            .toList();
+        final topPts = worldPts
+            .map((wp) => _project(wx(wp.dx), -fH, wz(wp.dy), size))
+            .toList();
+
+        // Floor shadow ellipse
+        double scx = 0, scy = 0;
+        for (final bp in botPts) { scx += bp.dx; scy += bp.dy; }
+        scx /= 4; scy /= 4;
+        final double sW = (botPts[1] - botPts[0]).distance +
+                          (botPts[2] - botPts[3]).distance;
+        final double sD = (botPts[3] - botPts[0]).distance +
+                          (botPts[2] - botPts[1]).distance;
+        canvas.drawOval(
+          Rect.fromCenter(
+              center: Offset(scx, scy),
+              width:  sW * 0.65,
+              height: sD * 0.65),
+          Paint()..color = Colors.black.withOpacity(0.22),
+        );
+
+        final baseColor = item.type.color;
+        final double fcx = item.position.dx;
+        final double fcz = item.position.dy;
+
+        // 4 side faces — sorted back-to-front, back-face culled
+        final faceDepths = List.generate(4, (f) {
+          final j   = (f + 1) % 4;
+          final mx  = (worldPts[f].dx + worldPts[j].dx) / 2;
+          final mz  = (worldPts[f].dy + worldPts[j].dy) / 2;
+          return wx(mx) * math.sin(rotY) + wz(mz) * math.cos(rotY);
+        });
+        final faceOrder = [0, 1, 2, 3]
+          ..sort((a, b) => faceDepths[b].compareTo(faceDepths[a]));
+
+        for (final f in faceOrder) {
+          final int j = (f + 1) % 4;
+          final double dx  = worldPts[j].dx - worldPts[f].dx;
+          final double dz  = worldPts[j].dy - worldPts[f].dy;
+          final double len = math.sqrt(dx * dx + dz * dz).clamp(1e-6, 1e9);
+          double nx = dz / len, nz = -dx / len;
+
+          // Ensure normal points away from box centre
+          final double mx = (worldPts[f].dx + worldPts[j].dx) / 2;
+          final double mz = (worldPts[f].dy + worldPts[j].dy) / 2;
+          if ((mx - fcx) * nx + (mz - fcz) * nz < 0) { nx = -nx; nz = -nz; }
+
+          // Skip back faces (outward normal points away from camera)
+          final double vis = nx * math.sin(rotY) + nz * math.cos(rotY);
+          if (vis >= 0) continue;
+
+          // Lambert shading: face perpendicular to camera = brightest
+          final double shade = (-vis).clamp(0.0, 1.0);
+          final faceColor = Color.lerp(
+              Colors.black, baseColor, 0.45 + shade * 0.55)!;
+
+          canvas.drawPath(
+            Path()
+              ..moveTo(botPts[f].dx, botPts[f].dy)
+              ..lineTo(botPts[j].dx, botPts[j].dy)
+              ..lineTo(topPts[j].dx, topPts[j].dy)
+              ..lineTo(topPts[f].dx, topPts[f].dy)
+              ..close(),
+            Paint()..color = faceColor..style = PaintingStyle.fill,
+          );
+          // Subtle edge line
+          canvas.drawPath(
+            Path()
+              ..moveTo(botPts[f].dx, botPts[f].dy)
+              ..lineTo(botPts[j].dx, botPts[j].dy)
+              ..lineTo(topPts[j].dx, topPts[j].dy)
+              ..lineTo(topPts[f].dx, topPts[f].dy)
+              ..close(),
+            Paint()
+              ..color = Colors.black.withOpacity(0.25)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 0.7,
+          );
+        }
+
+        // Top face (always visible from above since camera angle > 0)
+        final topColor =
+            Color.lerp(Colors.white, baseColor, 0.65)!;
+        canvas.drawPath(
+          Path()
+            ..moveTo(topPts[0].dx, topPts[0].dy)
+            ..lineTo(topPts[1].dx, topPts[1].dy)
+            ..lineTo(topPts[2].dx, topPts[2].dy)
+            ..lineTo(topPts[3].dx, topPts[3].dy)
+            ..close(),
+          Paint()..color = topColor..style = PaintingStyle.fill,
+        );
+        canvas.drawPath(
+          Path()
+            ..moveTo(topPts[0].dx, topPts[0].dy)
+            ..lineTo(topPts[1].dx, topPts[1].dy)
+            ..lineTo(topPts[2].dx, topPts[2].dy)
+            ..lineTo(topPts[3].dx, topPts[3].dy)
+            ..close(),
+          Paint()
+            ..color = Colors.black.withOpacity(0.2)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.7,
+        );
+
+        // Vertical edges (bottom→top for visible corners)
+        for (int k = 0; k < 4; k++) {
+          canvas.drawLine(
+            botPts[k], topPts[k],
+            Paint()
+              ..color = Colors.black.withOpacity(0.2)
+              ..strokeWidth = 0.7,
+          );
+        }
+
+        // Label on top face
+        final tp = TextPainter(
+          text: TextSpan(
+            text: item.type.displayName,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8,
+                fontFamily: 'monospace',
+                shadows: [Shadow(blurRadius: 2, color: Colors.black)]),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        double lx = 0, ly = 0;
+        for (final p in topPts) { lx += p.dx; ly += p.dy; }
+        tp.paint(canvas, Offset(lx / 4 - tp.width / 2, ly / 4 - tp.height / 2));
+      }
     }
 
     // ── 5. Corner dots ────────────────────────────────────────────────────
@@ -923,5 +1230,6 @@ class _Room3DPainter extends CustomPainter {
       old.wallHeightMm != wallHeightMm ||
       old.showCeiling != showCeiling ||
       old.showDimensions != showDimensions ||
-      old.roomObjects.length != roomObjects.length;
+      old.roomObjects.length != roomObjects.length ||
+      old.furnitureItems.length != furnitureItems.length;
 }

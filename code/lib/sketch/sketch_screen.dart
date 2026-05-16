@@ -2035,62 +2035,83 @@ class _SketchScreenState extends State<SketchScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF2D2D2D),
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.60,
+        minChildSize: 0.35,
+        maxChildSize: 0.90,
+        expand: false,
+        builder: (_, scrollController) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Add Furniture',
-                style: TextStyle(
-                    color: Color(0xFFCCCCCC),
-                    fontFamily: 'monospace',
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            const Text('Tap a type, then tap inside the room to place it',
-                style: TextStyle(
-                    color: Color(0xFF888888),
-                    fontFamily: 'monospace',
-                    fontSize: 11)),
-            const SizedBox(height: 16),
-            GridView.count(
-              crossAxisCount: 4,
-              shrinkWrap: true,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              childAspectRatio: 0.85,
-              physics: const NeverScrollableScrollPhysics(),
-              children: FurnitureType.values.map((ft) {
-                return GestureDetector(
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    setState(() => _furniturePlacingType = ft);
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3A3A3A),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: ft.color.withOpacity(0.5)),
+            // Drag handle
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF555555),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 6, 16, 2),
+              child: Text('Add Furniture',
+                  style: TextStyle(
+                      color: Color(0xFFCCCCCC),
+                      fontFamily: 'monospace',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text('Tap a type, then tap inside the room to place it',
+                  style: TextStyle(
+                      color: Color(0xFF888888),
+                      fontFamily: 'monospace',
+                      fontSize: 11)),
+            ),
+            Expanded(
+              child: GridView.count(
+                controller: scrollController,
+                crossAxisCount: 4,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 0.85,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                children: FurnitureType.values.map((ft) {
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      setState(() => _furniturePlacingType = ft);
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3A3A3A),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: ft.color.withOpacity(0.5)),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(ft.icon, color: ft.color, size: 26),
+                          const SizedBox(height: 4),
+                          Text(ft.displayName,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: ft.color.withOpacity(0.9),
+                                  fontSize: 9,
+                                  fontFamily: 'monospace')),
+                        ],
+                      ),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(ft.icon, color: ft.color, size: 26),
-                        const SizedBox(height: 4),
-                        Text(ft.displayName,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: ft.color.withOpacity(0.9),
-                                fontSize: 9,
-                                fontFamily: 'monospace')),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }).toList(),
+              ),
             ),
           ],
         ),
@@ -2371,8 +2392,48 @@ class _SketchScreenState extends State<SketchScreen>
               ),
             ),
 
+          // ── Furniture-placing cancel strip ────────────────────────────────────
+          if (_furniturePlacingType != null)
+            Positioned(
+              bottom: 52,
+              left: 0,
+              right: 0,
+              child: Container(
+                color: const Color(0xFF1A2A1A),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(_furniturePlacingType!.icon,
+                        color: _furniturePlacingType!.color, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Placing ${_furniturePlacingType!.displayName} — tap inside room',
+                        style: const TextStyle(
+                            color: Color(0xFFAADDAA),
+                            fontFamily: 'monospace',
+                            fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _furniturePlacingType = null),
+                      child: const Text('CANCEL',
+                          style: TextStyle(
+                              color: Color(0xFFFF6666),
+                              fontFamily: 'monospace',
+                              fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
           // ── 3D View button ────────────────────────────────────────────────────────
-          if (activeShape.isClosed && activeShape.points.length >= 3)
+          if (activeShape.isClosed &&
+              activeShape.points.length >= 3 &&
+              _selectedFurnitureId == null &&
+              _furniturePlacingType == null)
             Positioned(
               right: 8,
               bottom: 62,
@@ -2395,6 +2456,7 @@ class _SketchScreenState extends State<SketchScreen>
                         points: activeShape.points,
                         roomObjects: activeShape.roomObjects,
                         wallRealMm: activeShape.wallRealMm,
+                        furnitureItems: activeShape.furnitureItems,
                         bleManager: widget.bleManager,
                         initialHeightMm: activeShape.heightMm,
                         onWallMeasured: (wallIndex, mm) {

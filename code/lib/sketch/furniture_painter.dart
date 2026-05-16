@@ -87,38 +87,67 @@ void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
 void _drawSymbol(Canvas canvas, FurnitureType type, double w, double d, bool sel) {
   switch (type) {
     case FurnitureType.sofa:
-      _drawSofa(canvas, w, d, sel);
-      break;
-    case FurnitureType.singleBed:
-      _drawBed(canvas, w, d, sel, single: true);
-      break;
-    case FurnitureType.doubleBed:
-      _drawBed(canvas, w, d, sel, single: false);
-      break;
-    case FurnitureType.diningTable:
-      _drawDiningTable(canvas, w, d, sel);
-      break;
-    case FurnitureType.bathtub:
-      _drawBathtub(canvas, w, d, sel);
-      break;
-    case FurnitureType.toilet:
-      _drawToilet(canvas, w, d, sel);
-      break;
-    case FurnitureType.kitchenCounter:
-      _drawKitchenCounter(canvas, w, d, sel);
-      break;
-    case FurnitureType.wardrobe:
-      _drawWardrobe(canvas, w, d, sel);
-      break;
-    case FurnitureType.desk:
-      _drawDesk(canvas, w, d, sel);
-      break;
-    case FurnitureType.chair:
-      _drawChair(canvas, w, d, sel);
-      break;
+      _drawSofa(canvas, w, d, sel); break;
+    case FurnitureType.armchair:
+      _drawArmchair(canvas, w, d, sel); break;
+    case FurnitureType.coffeeTable:
+      _drawCoffeeTable(canvas, w, d, sel); break;
+    case FurnitureType.floorLamp:
+      _drawFloorLamp(canvas, w, d, sel); break;
+    case FurnitureType.bookshelf:
+      _drawBookshelf(canvas, w, d, sel); break;
     case FurnitureType.tvUnit:
-      _drawTvUnit(canvas, w, d, sel);
-      break;
+      _drawTvUnit(canvas, w, d, sel); break;
+    case FurnitureType.singleBed:
+      _drawBed(canvas, w, d, sel, single: true); break;
+    case FurnitureType.doubleBed:
+      _drawBed(canvas, w, d, sel, single: false); break;
+    case FurnitureType.queenBed:
+      _drawBed(canvas, w, d, sel, single: false); break;
+    case FurnitureType.kingBed:
+      _drawBed(canvas, w, d, sel, single: false); break;
+    case FurnitureType.dresser:
+      _drawDresser(canvas, w, d, sel); break;
+    case FurnitureType.nightstand:
+      _drawNightstand(canvas, w, d, sel); break;
+    case FurnitureType.wardrobe:
+      _drawWardrobe(canvas, w, d, sel); break;
+    case FurnitureType.diningTable:
+      _drawDiningTable(canvas, w, d, sel); break;
+    case FurnitureType.roundDiningTable:
+      _drawRoundDiningTable(canvas, w, d, sel); break;
+    case FurnitureType.barStool:
+      _drawChair(canvas, w, d, sel); break;
+    case FurnitureType.chair:
+      _drawChair(canvas, w, d, sel); break;
+    case FurnitureType.kitchenCounter:
+      _drawKitchenCounter(canvas, w, d, sel); break;
+    case FurnitureType.islandCounter:
+      _drawIslandCounter(canvas, w, d, sel); break;
+    case FurnitureType.refrigerator:
+      _drawRefrigerator(canvas, w, d, sel); break;
+    case FurnitureType.stove:
+      _drawStove(canvas, w, d, sel); break;
+    case FurnitureType.sink:
+      _drawSink(canvas, w, d, sel); break;
+    case FurnitureType.bathtub:
+      _drawBathtub(canvas, w, d, sel); break;
+    case FurnitureType.shower:
+      _drawShower(canvas, w, d, sel); break;
+    case FurnitureType.toilet:
+      _drawToilet(canvas, w, d, sel); break;
+    case FurnitureType.basinSink:
+      _drawBasinSink(canvas, w, d, sel); break;
+    case FurnitureType.vanity:
+      _drawDesk(canvas, w, d, sel); break;
+    case FurnitureType.desk:
+      _drawDesk(canvas, w, d, sel); break;
+    case FurnitureType.officeChair:
+      _drawChair(canvas, w, d, sel); break;
+    case FurnitureType.filingCabinet:
+      _drawFilingCabinet(canvas, w, d, sel); break;
+    case FurnitureType.washingMachine:
+      _drawWashingMachine(canvas, w, d, sel); break;
   }
 }
 
@@ -446,6 +475,277 @@ void _drawChair(Canvas canvas, double w, double d, bool sel) {
   );
   canvas.drawRRect(seat, _fill(fillColor));
   canvas.drawRRect(seat, _stroke(outlineColor, 1.5));
+}
+
+// ── Armchair ─────────────────────────────────────────────────────────────
+void _drawArmchair(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF388E3C) : const Color(0xFF43A047);
+  final fillColor    = sel ? const Color(0xFF81C784) : const Color(0xFFA5D6A7);
+  final backH = d * 0.28;
+  final armW  = w * 0.18;
+
+  final outer = Rect.fromLTWH(-w / 2, -d / 2, w, d);
+  canvas.drawRect(outer, _fill(fillColor));
+  canvas.drawRect(outer, _stroke(outlineColor, 1.5));
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, backH),
+      _fill(outlineColor.withOpacity(0.35)));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2 + backH, armW, d - backH),
+      _fill(outlineColor.withOpacity(0.25)));
+  canvas.drawRect(Rect.fromLTWH(w / 2 - armW, -d / 2 + backH, armW, d - backH),
+      _fill(outlineColor.withOpacity(0.25)));
+}
+
+// ── Coffee Table ─────────────────────────────────────────────────────────
+void _drawCoffeeTable(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF5D4037) : const Color(0xFF6D4C41);
+  final fillColor    = sel ? const Color(0xFFBCAAA4) : const Color(0xFFD7CCC8);
+
+  final outer = RRect.fromRectAndRadius(
+      Rect.fromLTWH(-w / 2, -d / 2, w, d), const Radius.circular(6));
+  canvas.drawRRect(outer, _fill(fillColor));
+  canvas.drawRRect(outer, _stroke(outlineColor, 1.5));
+
+  // Cross legs
+  final inset = math.min(w, d) * 0.15;
+  canvas.drawLine(Offset(-w / 2 + inset, -d / 2 + inset),
+      Offset(w / 2 - inset, d / 2 - inset), _stroke(outlineColor, 1.0));
+  canvas.drawLine(Offset(w / 2 - inset, -d / 2 + inset),
+      Offset(-w / 2 + inset, d / 2 - inset), _stroke(outlineColor, 1.0));
+}
+
+// ── Floor Lamp ───────────────────────────────────────────────────────────
+void _drawFloorLamp(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFFF9A825) : const Color(0xFFFBC02D);
+  final r = math.min(w, d) / 2;
+
+  canvas.drawCircle(Offset.zero, r, _fill(outlineColor.withOpacity(0.3)));
+  canvas.drawCircle(Offset.zero, r, _stroke(outlineColor, 1.5));
+  canvas.drawCircle(Offset.zero, r * 0.3, _fill(outlineColor));
+}
+
+// ── Bookshelf ────────────────────────────────────────────────────────────
+void _drawBookshelf(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF4E342E) : const Color(0xFF5D4037);
+  final fillColor    = sel ? const Color(0xFFBCAAA4) : const Color(0xFFD7CCC8);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Shelf lines (3 shelves)
+  final int shelves = 3;
+  for (int i = 1; i <= shelves; i++) {
+    final y = -d / 2 + d * i / (shelves + 1);
+    canvas.drawLine(Offset(-w / 2 + 3, y), Offset(w / 2 - 3, y),
+        _stroke(outlineColor, 0.8));
+  }
+}
+
+// ── Dresser ─────────────────────────────────────────────────────────────
+void _drawDresser(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF78909C) : const Color(0xFF90A4AE);
+  final fillColor    = sel ? const Color(0xFFB0BEC5) : const Color(0xFFCFD8DC);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // 3 drawer rows
+  final int rows = 3;
+  for (int i = 0; i < rows; i++) {
+    final y = -d / 2 + d * i / rows;
+    canvas.drawLine(Offset(-w / 2 + 3, y + d / rows),
+        Offset(w / 2 - 3, y + d / rows), _stroke(outlineColor, 0.8));
+    canvas.drawLine(Offset(0, y + 3), Offset(0, y + d / rows - 3),
+        _stroke(outlineColor, 0.8));
+    // Handles
+    for (final hx in [-w / 4, w / 4]) {
+      canvas.drawLine(Offset(hx - 5, y + d / rows / 2),
+          Offset(hx + 5, y + d / rows / 2), _stroke(outlineColor, 1.5));
+    }
+  }
+}
+
+// ── Nightstand ───────────────────────────────────────────────────────────
+void _drawNightstand(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF546E7A) : const Color(0xFF607D8B);
+  final fillColor    = sel ? const Color(0xFF90A4AE) : const Color(0xFFB0BEC5);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // One drawer
+  canvas.drawLine(
+      Offset(-w / 2 + 3, 0), Offset(w / 2 - 3, 0), _stroke(outlineColor, 0.8));
+  canvas.drawLine(Offset(-6, d / 4), Offset(6, d / 4), _stroke(outlineColor, 1.5));
+}
+
+// ── Round Dining Table ───────────────────────────────────────────────────
+void _drawRoundDiningTable(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFFE65100) : const Color(0xFFEF6C00);
+  final fillColor    = sel ? const Color(0xFFFFCC80) : const Color(0xFFFFE0B2);
+  final r = math.min(w, d) / 2;
+
+  // 4 chairs around the circle
+  final chairD = r * 0.35;
+  for (int i = 0; i < 4; i++) {
+    final angle = i * math.pi / 2;
+    final cx = (r + chairD / 2) * math.cos(angle);
+    final cy = (r + chairD / 2) * math.sin(angle);
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: chairD * 1.5, height: chairD),
+        _fill(outlineColor.withOpacity(0.20)));
+    canvas.drawRect(
+        Rect.fromCenter(center: Offset(cx, cy), width: chairD * 1.5, height: chairD),
+        _stroke(outlineColor, 1.0));
+  }
+
+  canvas.drawCircle(Offset.zero, r, _fill(fillColor));
+  canvas.drawCircle(Offset.zero, r, _stroke(outlineColor, 1.5));
+}
+
+// ── Island Counter ───────────────────────────────────────────────────────
+void _drawIslandCounter(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFFBF360C) : const Color(0xFFD84315);
+  final fillColor    = sel ? const Color(0xFFFF8A65) : const Color(0xFFFFCCBC);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Surface marking
+  canvas.drawRect(
+      Rect.fromLTWH(-w / 2 + 6, -d / 2 + 6, w - 12, d - 12),
+      _stroke(outlineColor.withOpacity(0.5), 0.8));
+}
+
+// ── Refrigerator ─────────────────────────────────────────────────────────
+void _drawRefrigerator(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF546E7A) : const Color(0xFF607D8B);
+  final fillColor    = sel ? const Color(0xFFB0BEC5) : const Color(0xFFCFD8DC);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Divider (fridge on top ~65%, freezer below)
+  final divY = -d / 2 + d * 0.65;
+  canvas.drawLine(Offset(-w / 2 + 3, divY), Offset(w / 2 - 3, divY),
+      _stroke(outlineColor, 1.0));
+
+  // Handles
+  canvas.drawLine(Offset(w / 2 - 6, -d / 2 + d * 0.2),
+      Offset(w / 2 - 6, -d / 2 + d * 0.45), _stroke(outlineColor, 2.0));
+  canvas.drawLine(Offset(w / 2 - 6, divY + d * 0.07),
+      Offset(w / 2 - 6, divY + d * 0.2), _stroke(outlineColor, 2.0));
+}
+
+// ── Stove ────────────────────────────────────────────────────────────────
+void _drawStove(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF455A64) : const Color(0xFF546E7A);
+  final fillColor    = sel ? const Color(0xFF78909C) : const Color(0xFF90A4AE);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // 4 burner circles
+  final bR = math.min(w, d) * 0.18;
+  for (final pos in [
+    Offset(-w / 4, -d / 4),
+    Offset( w / 4, -d / 4),
+    Offset(-w / 4,  d / 4),
+    Offset( w / 4,  d / 4),
+  ]) {
+    canvas.drawCircle(pos, bR, _fill(outlineColor.withOpacity(0.5)));
+    canvas.drawCircle(pos, bR, _stroke(outlineColor, 1.0));
+    canvas.drawCircle(pos, bR * 0.4, _fill(outlineColor.withOpacity(0.7)));
+  }
+}
+
+// ── Kitchen Sink ─────────────────────────────────────────────────────────
+void _drawSink(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF00838F) : const Color(0xFF0097A7);
+  final fillColor    = sel ? const Color(0xFF80DEEA) : const Color(0xFFB2EBF2);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Basin oval
+  final basin = Rect.fromLTWH(-w / 2 + 8, -d / 2 + 8, w - 16, d - 16);
+  canvas.drawOval(basin, _fill(Colors.white.withOpacity(0.55)));
+  canvas.drawOval(basin, _stroke(outlineColor, 1.0));
+  canvas.drawCircle(Offset(0, d / 2 - 10), 3, _fill(outlineColor.withOpacity(0.6)));
+}
+
+// ── Shower ───────────────────────────────────────────────────────────────
+void _drawShower(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF00838F) : const Color(0xFF0097A7);
+  final fillColor    = sel ? const Color(0xFF80DEEA) : const Color(0xFFB2EBF2);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Drain circle
+  canvas.drawCircle(Offset.zero, math.min(w, d) * 0.15,
+      _fill(outlineColor.withOpacity(0.4)));
+  canvas.drawCircle(Offset.zero, math.min(w, d) * 0.15, _stroke(outlineColor, 1.0));
+
+  // Showerhead dot (corner)
+  canvas.drawCircle(Offset(-w / 2 + 8, -d / 2 + 8), 5, _fill(outlineColor));
+}
+
+// ── Basin Sink ───────────────────────────────────────────────────────────
+void _drawBasinSink(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF00695C) : const Color(0xFF00796B);
+  final fillColor    = sel ? const Color(0xFF80CBC4) : const Color(0xFFB2DFDB);
+
+  final outer = RRect.fromRectAndRadius(
+      Rect.fromLTWH(-w / 2, -d / 2, w, d), const Radius.circular(8));
+  canvas.drawRRect(outer, _fill(fillColor));
+  canvas.drawRRect(outer, _stroke(outlineColor, 1.5));
+
+  final basin = Rect.fromLTWH(-w / 2 + 8, -d / 2 + 8, w - 16, d - 16);
+  canvas.drawOval(basin, _fill(Colors.white.withOpacity(0.55)));
+  canvas.drawOval(basin, _stroke(outlineColor, 1.0));
+  canvas.drawCircle(Offset(0, 0), 3, _fill(outlineColor.withOpacity(0.6)));
+}
+
+// ── Filing Cabinet ───────────────────────────────────────────────────────
+void _drawFilingCabinet(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF455A64) : const Color(0xFF546E7A);
+  final fillColor    = sel ? const Color(0xFF78909C) : const Color(0xFF90A4AE);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // 4 drawer lines
+  for (int i = 1; i <= 3; i++) {
+    final y = -d / 2 + d * i / 4;
+    canvas.drawLine(Offset(-w / 2 + 3, y), Offset(w / 2 - 3, y),
+        _stroke(outlineColor, 0.8));
+    canvas.drawLine(Offset(-6, y - d / 8), Offset(6, y - d / 8),
+        _stroke(outlineColor, 1.5));
+  }
+  canvas.drawLine(Offset(-6, d / 2 - d / 8), Offset(6, d / 2 - d / 8),
+      _stroke(outlineColor, 1.5));
+}
+
+// ── Washing Machine ──────────────────────────────────────────────────────
+void _drawWashingMachine(Canvas canvas, double w, double d, bool sel) {
+  final outlineColor = sel ? const Color(0xFF1565C0) : const Color(0xFF1976D2);
+  final fillColor    = sel ? const Color(0xFF90CAF9) : const Color(0xFFBBDEFB);
+
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _fill(fillColor));
+  canvas.drawRect(Rect.fromLTWH(-w / 2, -d / 2, w, d), _stroke(outlineColor, 1.5));
+
+  // Door circle
+  final r = math.min(w, d) * 0.33;
+  canvas.drawCircle(Offset.zero, r, _fill(Colors.white.withOpacity(0.55)));
+  canvas.drawCircle(Offset.zero, r, _stroke(outlineColor, 1.5));
+  canvas.drawCircle(Offset.zero, r * 0.55,
+      _fill(outlineColor.withOpacity(0.2)));
+  canvas.drawCircle(Offset.zero, r * 0.55, _stroke(outlineColor, 1.0));
+
+  // Control panel (top strip)
+  canvas.drawLine(Offset(-w / 2 + 4, -d / 2 + 5), Offset(w / 2 - 4, -d / 2 + 5),
+      _stroke(outlineColor, 1.0));
 }
 
 // ── TV Unit ─────────────────────────────────────────────────────────────
