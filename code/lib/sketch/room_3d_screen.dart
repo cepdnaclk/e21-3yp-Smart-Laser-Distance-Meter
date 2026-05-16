@@ -535,21 +535,30 @@ class _Room3DPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5);
 
-    // ── 2. Unified draw order: walls + furniture, sorted back-to-front ───────
-    // (bool isWall, int idx, double depth)
-    final drawOrder = <(bool, int, double)>[];
+    // ── 2. Unified draw order: walls + furniture + corner caps, back-to-front ─
+    // type: 0=wall, 1=furniture, 2=corner cap
+    final drawOrder = <(int, int, double)>[];
     for (int i = 0; i < n; i++) {
       final Offset a = points[i];
       final Offset b = points[(i + 1) % n];
       final double midX = (wx(a.dx) + wx(b.dx)) / 2;
       final double midZ = (wz(a.dy) + wz(b.dy)) / 2;
-      drawOrder.add((true, i, midX * math.sin(rotY) + midZ * math.cos(rotY)));
+      drawOrder.add((0, i, midX * math.sin(rotY) + midZ * math.cos(rotY)));
     }
     for (int fi = 0; fi < furnitureItems.length; fi++) {
       final item = furnitureItems[fi];
-      drawOrder.add((false, fi,
+      drawOrder.add((1, fi,
           wx(item.position.dx) * math.sin(rotY) +
           wz(item.position.dy) * math.cos(rotY)));
+    }
+    // Corner caps fill the wall-thickness cross-section at each vertex.
+    // They are invisible at convex corners (next wall covers them) but become
+    // visible at re-entrant corners (L-shape notch). Sorting by vertex depth
+    // keeps them correctly ordered relative to adjacent walls.
+    for (int j = 0; j < n; j++) {
+      drawOrder.add((2, j,
+          wx(points[j].dx) * math.sin(rotY) +
+          wz(points[j].dy) * math.cos(rotY)));
     }
     drawOrder.sort((a, b) => b.$3.compareTo(a.$3)); // far first
 
@@ -619,7 +628,45 @@ class _Room3DPainter extends CustomPainter {
     }
 
     for (final entry in drawOrder) {
-      if (!entry.$1) {
+      // ── Corner cap ────────────────────────────────────────────────────────
+      if (entry.$1 == 2) {
+        final int j = entry.$2;
+        final Offset pj = points[j];
+        final Offset ic = innerCorners[j];
+        // Cap outward normal: perpendicular to the (outer→inner) line in XZ
+        final double dxCap = ic.dx - pj.dx;
+        final double dyCap = ic.dy - pj.dy;
+        double cnx = dyCap, cny = -dxCap;
+        // Flip to point away from room interior
+        if ((pj.dx - cxWorld) * cnx + (pj.dy - cyWorld) * cny < 0) {
+          cnx = -cnx; cny = -cny;
+        }
+        // Only draw when this face points toward the camera
+        final double capVis = cnx * math.sin(rotY) + cny * math.cos(rotY);
+        if (capVis <= 0) continue;
+
+        final cfo = _project(wx(pj.dx), 0,  wz(pj.dy), size); // outer floor
+        final cfi = _project(wx(ic.dx), 0,  wz(ic.dy), size); // inner floor
+        final cti = _project(wx(ic.dx), -H, wz(ic.dy), size); // inner top
+        final cto = _project(wx(pj.dx), -H, wz(pj.dy), size); // outer top
+
+        final double depth = entry.$3;
+        final int capL = (175 + (depth * 8).clamp(-60.0, 60.0)).toInt().clamp(90, 230);
+        canvas.drawPath(
+          Path()
+            ..moveTo(cfo.dx, cfo.dy)
+            ..lineTo(cfi.dx, cfi.dy)
+            ..lineTo(cti.dx, cti.dy)
+            ..lineTo(cto.dx, cto.dy)
+            ..close(),
+          Paint()
+            ..color = Color.fromARGB(255, capL, capL, capL).withOpacity(0.9)
+            ..style = PaintingStyle.fill,
+        );
+        continue;
+      }
+
+      if (entry.$1 == 1) {
         // ── Furniture item ───────────────────────────────────────────────────
         final item = furnitureItems[entry.$2];
         final double frad  = item.rotationDeg * math.pi / 180.0;
@@ -793,24 +840,29 @@ class _Room3DPainter extends CustomPainter {
           ..style = PaintingStyle.fill,
       );
 
-      // 3. Outer face (faces outside — mid brightness)
-      final wallPath = Path()
-        ..moveTo(s0.dx, s0.dy)
-        ..lineTo(s1.dx, s1.dy)
-        ..lineTo(s2.dx, s2.dy)
-        ..lineTo(s3.dx, s3.dy)
-        ..close();
-      canvas.drawPath(wallPath,
-          Paint()
-            ..color = (isSelected ? const Color(0xFF4A90D9) : outerCol).withOpacity(0.85)
-            ..style = PaintingStyle.fill);
-      // Selection outline on outer face only
-      if (isSelected) {
+      // 3. Outer face — only draw when it faces the camera (back-face culling).
+      // innerVis > 0 means the inward normal points toward camera → inner face
+      // visible → outer face is pointing AWAY from camera → skip it.
+      // Without this, the step wall of an L-shape draws its back face over the
+      // adjacent wall's outer face, creating a visible seam at the corner.
+      if (innerVis <= 0) {
+        final wallPath = Path()
+          ..moveTo(s0.dx, s0.dy)
+          ..lineTo(s1.dx, s1.dy)
+          ..lineTo(s2.dx, s2.dy)
+          ..lineTo(s3.dx, s3.dy)
+          ..close();
         canvas.drawPath(wallPath,
             Paint()
-              ..color = const Color(0xFF00AAFF)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 2.5);
+              ..color = (isSelected ? const Color(0xFF4A90D9) : outerCol).withOpacity(0.85)
+              ..style = PaintingStyle.fill);
+        if (isSelected) {
+          canvas.drawPath(wallPath,
+              Paint()
+                ..color = const Color(0xFF00AAFF)
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 2.5);
+        }
       }
 
       // ── Doors and windows on this wall (drawn right after the wall ──────
