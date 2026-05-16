@@ -16,6 +16,7 @@ import 'sketch_widgets.dart';
 import 'room_object.dart';
 import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
+import 'furniture_painter.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
 import '../services/api_service.dart';
@@ -105,6 +106,9 @@ class _SketchScreenState extends State<SketchScreen>
   bool _isDraggingFurniture = false;
   Offset? _furnitureDragStartWorld;
   bool _furnitureDragOccurred = false;
+  bool _isRotatingFurniture = false;
+  double _furnitureRotationStartAngle = 0.0;
+  double _furnitureRotationStartDeg = 0.0;
   int _furnitureCounter = 0;
 
   final List<List<List<FurnitureItem>>> _undoAllFurnitureStack = [];
@@ -1289,6 +1293,32 @@ class _SketchScreenState extends State<SketchScreen>
     // ── end move mode ──────────────────────────────────────────
 
     if (activeShape.isClosed) {
+      // ── Rotation handle hit test (only if already selected) ──────
+      if (_selectedFurnitureId != null) {
+        final fidx = activeShape.furnitureItems
+            .indexWhere((f) => f.id == _selectedFurnitureId);
+        if (fidx >= 0) {
+          final item = activeShape.furnitureItems[fidx];
+          final handlePos = furnitureRotationHandlePos(
+            item: item,
+            worldToScreen: worldToScreen,
+            scale: _scale,
+          );
+          if ((event.localPosition - handlePos).distance < 22) {
+            final center = worldToScreen(item.position);
+            final toHandle = event.localPosition - center;
+            setState(() {
+              _isRotatingFurniture = true;
+              _furnitureRotationStartAngle = math.atan2(toHandle.dy, toHandle.dx);
+              _furnitureRotationStartDeg = item.rotationDeg;
+              _activePointIndex = -1;
+            });
+            _panStartPosition = null;
+            _panConfirmed = false;
+            return;
+          }
+        }
+      }
       // ── Furniture drag start (only if already selected) ──────────
       if (_selectedFurnitureId != null) {
         final fidx = activeShape.furnitureItems
@@ -1372,6 +1402,24 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // ── FURNITURE ROTATION ─────────────────────────────────────────
+    if (_isRotatingFurniture && _selectedFurnitureId != null) {
+      final fidx = activeShape.furnitureItems
+          .indexWhere((f) => f.id == _selectedFurnitureId);
+      if (fidx >= 0) {
+        final item = activeShape.furnitureItems[fidx];
+        final center = worldToScreen(item.position);
+        final toFinger = event.localPosition - center;
+        final currentAngle = math.atan2(toFinger.dy, toFinger.dx);
+        final delta = (currentAngle - _furnitureRotationStartAngle) * 180 / math.pi;
+        setState(() {
+          activeShape.furnitureItems[fidx] = item.copyWith(
+            rotationDeg: (_furnitureRotationStartDeg + delta) % 360,
+          );
+        });
+      }
+      return;
+    }
     // ── FURNITURE DRAG ─────────────────────────────────────────────
     if (_isDraggingFurniture && _furnitureDragStartWorld != null) {
       final currentWorld = screenToWorld(event.localPosition);
@@ -1540,6 +1588,15 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // ── FURNITURE ROTATION END ─────────────────────────────────────
+    if (_isRotatingFurniture) {
+      _saveUndo();
+      setState(() {
+        _isRotatingFurniture = false;
+      });
+      _queueAutoSync();
+      return;
+    }
     // ── FURNITURE DRAG END ─────────────────────────────────────────
     if (_isDraggingFurniture) {
       final moved = _furnitureDragOccurred;
