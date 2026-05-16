@@ -13,7 +13,7 @@ Offset furnitureRotationHandlePos({
 }) {
   final center = worldToScreen(item.position);
   final halfPx = math.max(item.widthMm, item.depthMm) / mmPerUnit * scale / 2;
-  return center - Offset(0, halfPx + 30);
+  return center - Offset(0, halfPx + 52);
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -54,23 +54,76 @@ void drawFurnitureItem({
         ..color = const Color(0xFF1976D2).withOpacity(0.6)
         ..strokeWidth = 1.2,
     );
-    // Handle circle
-    canvas.drawCircle(handle, 9,
-        Paint()..color = const Color(0xFF1976D2)..style = PaintingStyle.fill);
-    canvas.drawCircle(handle, 9,
+    // Handle circle — larger for easier grabbing
+    canvas.drawCircle(handle, 22,
+        Paint()..color = const Color(0xFF1565C0)..style = PaintingStyle.fill);
+    canvas.drawCircle(handle, 22,
         Paint()
           ..color = Colors.white
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5);
-    // Rotation arrow icon (simplified arc with arrowhead)
-    final rect = Rect.fromCenter(center: handle, width: 12, height: 12);
+          ..strokeWidth = 2.5);
+    // Rotation arrow icon
+    final rect = Rect.fromCenter(center: handle, width: 26, height: 26);
     canvas.drawArc(rect, -math.pi * 0.8, math.pi * 1.4, false,
         Paint()
           ..color = Colors.white
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
+          ..strokeWidth = 2.0
           ..strokeCap = StrokeCap.round);
+
+    // ── Dimension labels in screen space ─────────────────────────
+    _drawDimensionLabels(canvas, item, center, w, d);
   }
+}
+
+void _drawDimensionLabels(
+    Canvas canvas, FurnitureItem item, Offset center, double wPx, double dPx) {
+  final rad = item.rotationDeg * math.pi / 180;
+
+  // Furniture local-X in screen → (cos, sin); local-Y → (-sin, cos)
+  final rightX = math.cos(rad);
+  final rightY = math.sin(rad);
+  final downX = -math.sin(rad);
+  final downY = math.cos(rad);
+
+  // Width label — below the bottom edge (local +Y side)
+  final wLabel = '${(item.widthMm / 10).round()} cm';
+  final wPos = center + Offset(downX, downY) * (dPx / 2 + 16);
+  _drawDimLabel(canvas, wLabel, wPos);
+
+  // Depth label — right of the right edge (local +X side)
+  final dLabel = '${(item.depthMm / 10).round()} cm';
+  final dPos = center + Offset(rightX, rightY) * (wPx / 2 + 16);
+  _drawDimLabel(canvas, dLabel, dPos);
+}
+
+void _drawDimLabel(Canvas canvas, String text, Offset pos) {
+  final tp = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: const TextStyle(
+        color: Color(0xFF1565C0),
+        fontSize: 10,
+        fontWeight: FontWeight.bold,
+        letterSpacing: 0.3,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+
+  final bgRect = RRect.fromRectAndRadius(
+    Rect.fromCenter(center: pos, width: tp.width + 8, height: tp.height + 4),
+    const Radius.circular(3),
+  );
+  canvas.drawRRect(
+      bgRect, Paint()..color = const Color(0xDDE3F2FD)..style = PaintingStyle.fill);
+  canvas.drawRRect(
+      bgRect,
+      Paint()
+        ..color = const Color(0xFF1565C0)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8);
+  tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
 }
 
 // ── Architectural style helpers ───────────────────────────────────────────────

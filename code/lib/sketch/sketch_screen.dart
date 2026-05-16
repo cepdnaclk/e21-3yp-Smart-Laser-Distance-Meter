@@ -109,6 +109,8 @@ class _SketchScreenState extends State<SketchScreen>
   bool _isRotatingFurniture = false;
   double _furnitureRotationStartAngle = 0.0;
   double _furnitureRotationStartDeg = 0.0;
+  double _furniturePinchStartWidthMm = 0.0;
+  double _furniturePinchStartDepthMm = 0.0;
   int _furnitureCounter = 0;
 
   final List<List<List<FurnitureItem>>> _undoAllFurnitureStack = [];
@@ -1002,6 +1004,521 @@ class _SketchScreenState extends State<SketchScreen>
     return rotated.dx.abs() <= w / 2 + 10 && rotated.dy.abs() <= d / 2 + 10;
   }
 
+  /// Snaps the furniture position so its nearest edge sits flush against the
+  /// nearest wall of [shape] when within 300 mm of it.
+  Offset _snapFurnitureToWall(Offset newPos, FurnitureItem item, SketchShape shape) {
+    if (!shape.isClosed || shape.points.length < 3) return newPos;
+
+    const snapMm = 300.0;
+    final snapThreshold = snapMm / mmPerUnit;
+
+    final rad = item.rotationDeg * math.pi / 180;
+    final halfW = item.widthMm / mmPerUnit / 2;
+    final halfD = item.depthMm / mmPerUnit / 2;
+
+    Offset bestPos = newPos;
+    double bestGap = snapThreshold;
+
+    final n = shape.points.length;
+    for (int i = 0; i < n; i++) {
+      final wA = shape.points[i];
+      final wB = shape.points[(i + 1) % n];
+      final wallVec = wB - wA;
+      final wallLen = wallVec.distance;
+      if (wallLen < 1) continue;
+
+      final wallDir = wallVec / wallLen;
+      // Perpendicular (one of the two normals)
+      final normal = Offset(-wallDir.dy, wallDir.dx);
+
+      final toCenter = newPos - wA;
+      final distAlongWall = toCenter.dx * wallDir.dx + toCenter.dy * wallDir.dy;
+      final distFromWall = toCenter.dx * normal.dx + toCenter.dy * normal.dy;
+
+      // Only consider walls the center is roughly projected onto
+      if (distAlongWall < -(halfW + halfD) || distAlongWall > wallLen + halfW + halfD) continue;
+
+      // Half-extent of the (possibly rotated) rectangle in the wall-normal direction
+      final halfExtent =
+          (halfW * (math.cos(rad) * normal.dx + math.sin(rad) * normal.dy)).abs() +
+          (halfD * (-math.sin(rad) * normal.dx + math.cos(rad) * normal.dy)).abs();
+
+      final gap = distFromWall.abs() - halfExtent;
+      if (gap >= 0 && gap < bestGap) {
+        bestGap = gap;
+        final sign = distFromWall >= 0 ? 1.0 : -1.0;
+        // Move centre so this edge is flush with the wall
+        bestPos = newPos - normal * (distFromWall - sign * halfExtent);
+      }
+    }
+    return bestPos;
+  }
+
+  // ── Furniture positioning helpers ─────────────────────────────────────────
+
+  /// Half-extent of the furniture in a given unit direction.
+  double _furnitureHalfExtent(FurnitureItem item, Offset dir) {
+    final rad = item.rotationDeg * math.pi / 180;
+    final halfW = item.widthMm / mmPerUnit / 2;
+    final halfD = item.depthMm / mmPerUnit / 2;
+    return (halfW * (math.cos(rad) * dir.dx + math.sin(rad) * dir.dy)).abs() +
+           (halfD * (-math.sin(rad) * dir.dx + math.cos(rad) * dir.dy)).abs();
+  }
+
+  /// Current perpendicular gap in mm from furniture edge to wall [wallIdx].
+  double _wallEdgeGapMm(FurnitureItem item, int wallIdx) {
+    final n = activeShape.points.length;
+    if (wallIdx >= n) return 0;
+    final wA = activeShape.points[wallIdx];
+    final wB = activeShape.points[(wallIdx + 1) % n];
+    final wallVec = wB - wA;
+    final wallLen = wallVec.distance;
+    if (wallLen < 1) return 0;
+    final normal = Offset(-(wB - wA).dy, (wB - wA).dx) / wallLen;
+    final signedDist = (item.position - wA).dx * normal.dx +
+                       (item.position - wA).dy * normal.dy;
+    return ((signedDist.abs() - _furnitureHalfExtent(item, normal)) * mmPerUnit)
+        .clamp(0.0, 99999.0);
+  }
+
+  /// Move furniture so its nearest edge is exactly [distMm] from wall [wallIdx],
+  /// keeping the same lateral position along the wall.
+  void _applyWallDist(int itemIdx, int wallIdx, double distMm) {
+    final item = activeShape.furnitureItems[itemIdx];
+    final n = activeShape.points.length;
+    final wA = activeShape.points[wallIdx];
+    final wB = activeShape.points[(wallIdx + 1) % n];
+    final wallLen = (wB - wA).distance;
+    if (wallLen < 1) return;
+    final wallDir = (wB - wA) / wallLen;
+    final normal = Offset(-wallDir.dy, wallDir.dx);
+    final toCenter = item.position - wA;
+    final t = toCenter.dx * wallDir.dx + toCenter.dy * wallDir.dy;
+    final signedDist = toCenter.dx * normal.dx + toCenter.dy * normal.dy;
+    final halfExtent = _furnitureHalfExtent(item, normal);
+    final sign = signedDist >= 0 ? 1.0 : -1.0;
+    final newPos = wA + wallDir * t + normal * (sign * (halfExtent + distMm / mmPerUnit));
+    _saveUndo();
+    setState(() => activeShape.furnitureItems[itemIdx] = item.copyWith(position: newPos));
+    _queueAutoSync();
+  }
+
+  /// Gap in mm from corner [cornerIdx] along the wall AFTER it
+  /// (the edge of the furniture that faces the corner).
+  double _cornerGapAfterMm(FurnitureItem item, int cornerIdx) {
+    final n = activeShape.points.length;
+    final P = activeShape.points[cornerIdx];
+    final Q = activeShape.points[(cornerIdx + 1) % n];
+    final wallLen = (Q - P).distance;
+    if (wallLen < 1) return 0;
+    final wallDir = (Q - P) / wallLen;
+    final halfExtent = _furnitureHalfExtent(item, wallDir);
+    final tCenter = (item.position - P).dx * wallDir.dx +
+                    (item.position - P).dy * wallDir.dy;
+    return ((tCenter - halfExtent) * mmPerUnit).clamp(0.0, 99999.0);
+  }
+
+  /// Gap in mm from corner [cornerIdx] along the wall BEFORE it.
+  double _cornerGapBeforeMm(FurnitureItem item, int cornerIdx) {
+    final n = activeShape.points.length;
+    final P = activeShape.points[cornerIdx];
+    final prevP = activeShape.points[(cornerIdx - 1 + n) % n];
+    final wallLen = (P - prevP).distance;
+    if (wallLen < 1) return 0;
+    final wallDir = (P - prevP) / wallLen;
+    final halfExtent = _furnitureHalfExtent(item, wallDir);
+    final tCenter = (item.position - prevP).dx * wallDir.dx +
+                    (item.position - prevP).dy * wallDir.dy;
+    return ((wallLen - tCenter - halfExtent) * mmPerUnit).clamp(0.0, 99999.0);
+  }
+
+  /// Move furniture so its edge is [distMm] from corner [cornerIdx] along
+  /// the wall after it, keeping perpendicular distance unchanged.
+  void _applyCornerDistAfter(int itemIdx, int cornerIdx, double distMm) {
+    final item = activeShape.furnitureItems[itemIdx];
+    final n = activeShape.points.length;
+    final P = activeShape.points[cornerIdx];
+    final Q = activeShape.points[(cornerIdx + 1) % n];
+    final wallLen = (Q - P).distance;
+    if (wallLen < 1) return;
+    final wallDir = (Q - P) / wallLen;
+    final normal = Offset(-wallDir.dy, wallDir.dx);
+    final sPerp = (item.position - P).dx * normal.dx +
+                  (item.position - P).dy * normal.dy;
+    final halfExtent = _furnitureHalfExtent(item, wallDir);
+    final newT = halfExtent + distMm / mmPerUnit;
+    final newPos = P + wallDir * newT + normal * sPerp;
+    _saveUndo();
+    setState(() => activeShape.furnitureItems[itemIdx] = item.copyWith(position: newPos));
+    _queueAutoSync();
+  }
+
+  /// Move furniture so its edge is [distMm] from corner [cornerIdx] along
+  /// the wall before it, keeping perpendicular distance unchanged.
+  void _applyCornerDistBefore(int itemIdx, int cornerIdx, double distMm) {
+    final item = activeShape.furnitureItems[itemIdx];
+    final n = activeShape.points.length;
+    final P = activeShape.points[cornerIdx];
+    final prevP = activeShape.points[(cornerIdx - 1 + n) % n];
+    final wallLen = (P - prevP).distance;
+    if (wallLen < 1) return;
+    final wallDir = (P - prevP) / wallLen;
+    final normal = Offset(-wallDir.dy, wallDir.dx);
+    final sPerp = (item.position - prevP).dx * normal.dx +
+                  (item.position - prevP).dy * normal.dy;
+    final halfExtent = _furnitureHalfExtent(item, wallDir);
+    final newT = wallLen - halfExtent - distMm / mmPerUnit;
+    final newPos = prevP + wallDir * newT + normal * sPerp;
+    _saveUndo();
+    setState(() => activeShape.furnitureItems[itemIdx] = item.copyWith(position: newPos));
+    _queueAutoSync();
+  }
+
+  // ── Furniture dialogs ──────────────────────────────────────────────────────
+
+  void _showFurnitureSizeDialog(int itemIdx) {
+    final item = activeShape.furnitureItems[itemIdx];
+    final wCtrl = TextEditingController(
+        text: (item.widthMm / 10).toStringAsFixed(0));
+    final dCtrl = TextEditingController(
+        text: (item.depthMm / 10).toStringAsFixed(0));
+
+    void Function()? pendingAction;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2D2D2D),
+        title: Text(
+          '${item.type.displayName} — Size',
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _furnitureDimField('Width (cm)', wCtrl),
+            const SizedBox(height: 12),
+            _furnitureDimField('Depth (cm)', dCtrl),
+            const SizedBox(height: 8),
+            const Text(
+              'Tip: you can also pinch-zoom with 2 fingers to resize',
+              style: TextStyle(color: Color(0xFF778899), fontSize: 11),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              pendingAction = () {
+                _saveUndo();
+                setState(() {
+                  activeShape.furnitureItems[itemIdx] =
+                      activeShape.furnitureItems[itemIdx].copyWith(
+                    widthMm: item.type.defaultSizeMm.$1,
+                    depthMm: item.type.defaultSizeMm.$2,
+                  );
+                });
+                _queueAutoSync();
+              };
+              Navigator.pop(ctx);
+            },
+            child: const Text('Reset', style: TextStyle(color: Color(0xFFAAAAAA))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1565C0)),
+            onPressed: () {
+              final w = double.tryParse(wCtrl.text);
+              final d = double.tryParse(dCtrl.text);
+              if (w != null && d != null && w > 0 && d > 0) {
+                pendingAction = () {
+                  _saveUndo();
+                  setState(() {
+                    activeShape.furnitureItems[itemIdx] =
+                        activeShape.furnitureItems[itemIdx].copyWith(
+                      widthMm: (w * 10).clamp(100.0, 6000.0),
+                      depthMm: (d * 10).clamp(100.0, 6000.0),
+                    );
+                  });
+                  _queueAutoSync();
+                };
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    ).then((_) {
+      pendingAction?.call();
+      // Delay dispose: .then() fires when pop() is called, but the dialog
+      // dismiss animation still runs (~300ms) and TextFields remain mounted
+      // during that time. Disposing early crashes the IME connection.
+      Future.delayed(const Duration(milliseconds: 500), () {
+        wCtrl.dispose();
+        dCtrl.dispose();
+      });
+    });
+  }
+
+  Widget _furnitureDimField(String label, TextEditingController ctrl) =>
+      TextField(
+        controller: ctrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontSize: 15),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Color(0xFF7EB8F7), fontSize: 13),
+          enabledBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF444455))),
+          focusedBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF1565C0))),
+          filled: true,
+          fillColor: const Color(0xFF1A1A2E),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        ),
+      );
+
+  void _showFurniturePositionDialog(int itemIdx) {
+    if (!activeShape.isClosed || activeShape.points.length < 3) return;
+    final n = activeShape.points.length;
+    final item = activeShape.furnitureItems[itemIdx];
+
+    // Dialog state (mutable vars captured by StatefulBuilder closure)
+    var fromWall = true;
+    var selWall = 0;
+    var selCorner = 0;
+    var cornerAfter = true;
+
+    // Single controller — disposed only in .then(), never inside the dialog
+    final distCtrl = TextEditingController(
+        text: (_wallEdgeGapMm(item, 0) / 10).toStringAsFixed(0));
+
+    void refreshCtrl(bool fw, int sw, int sc, bool ca) {
+      fromWall = fw;
+      selWall = sw;
+      selCorner = sc;
+      cornerAfter = ca;
+      final gap = fw
+          ? _wallEdgeGapMm(activeShape.furnitureItems[itemIdx], sw)
+          : ca
+              ? _cornerGapAfterMm(activeShape.furnitureItems[itemIdx], sc)
+              : _cornerGapBeforeMm(activeShape.furnitureItems[itemIdx], sc);
+      distCtrl.text = (gap / 10).toStringAsFixed(0);
+    }
+
+    // Action is stored here and applied AFTER dialog closes (avoids setState-while-mounted crash)
+    void Function()? pendingAction;
+
+    final inputDeco = InputDecoration(
+      suffixText: 'cm',
+      suffixStyle: const TextStyle(color: Color(0xFF7EB8F7)),
+      enabledBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFF444455))),
+      focusedBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFF1565C0))),
+      filled: true,
+      fillColor: const Color(0xFF1A1A2E),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSB) => AlertDialog(
+          backgroundColor: const Color(0xFF2D2D2D),
+          contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          title: Row(children: [
+            const Icon(Icons.place, color: Color(0xFF7EB8F7), size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Position — ${item.type.displayName}',
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+              ),
+            ),
+          ]),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Mode toggle ──────────────────────────────────────
+                Row(children: [
+                  Expanded(
+                    child: RadioListTile<bool>(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      activeColor: const Color(0xFF7EB8F7),
+                      title: const Text('From wall',
+                          style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: true,
+                      groupValue: fromWall,
+                      onChanged: (_) =>
+                          setSB(() => refreshCtrl(true, selWall, selCorner, cornerAfter)),
+                    ),
+                  ),
+                  Expanded(
+                    child: RadioListTile<bool>(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      activeColor: const Color(0xFF7EB8F7),
+                      title: const Text('From corner',
+                          style: TextStyle(color: Colors.white, fontSize: 13)),
+                      value: false,
+                      groupValue: fromWall,
+                      onChanged: (_) =>
+                          setSB(() => refreshCtrl(false, selWall, selCorner, cornerAfter)),
+                    ),
+                  ),
+                ]),
+                const Divider(color: Color(0xFF444455)),
+                const SizedBox(height: 6),
+
+                if (fromWall) ...[
+                  // ── Wall picker ──────────────────────────────────
+                  const Text('Select wall:',
+                      style: TextStyle(color: Color(0xFF7EB8F7), fontSize: 12)),
+                  const SizedBox(height: 4),
+                  DropdownButton<int>(
+                    value: selWall,
+                    isExpanded: true,
+                    dropdownColor: const Color(0xFF2D2D2D),
+                    style: const TextStyle(color: Colors.white),
+                    underline: Container(height: 1, color: const Color(0xFF444455)),
+                    items: [
+                      for (int i = 0; i < n; i++)
+                        DropdownMenuItem(
+                            value: i, child: Text('Wall ${i + 1}')),
+                    ],
+                    onChanged: (v) =>
+                        setSB(() => refreshCtrl(true, v!, selCorner, cornerAfter)),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Distance from wall edge (cm):',
+                      style: TextStyle(color: Color(0xFF7EB8F7), fontSize: 12)),
+                ] else ...[
+                  // ── Corner picker ─────────────────────────────────
+                  const Text('Select corner:',
+                      style: TextStyle(color: Color(0xFF7EB8F7), fontSize: 12)),
+                  const SizedBox(height: 4),
+                  DropdownButton<int>(
+                    value: selCorner,
+                    isExpanded: true,
+                    dropdownColor: const Color(0xFF2D2D2D),
+                    style: const TextStyle(color: Colors.white),
+                    underline: Container(height: 1, color: const Color(0xFF444455)),
+                    items: [
+                      for (int i = 0; i < n; i++)
+                        DropdownMenuItem(
+                          value: i,
+                          child: Text(
+                              'Corner ${i + 1}  (W${((i - 1 + n) % n) + 1} ↔ W${i + 1})'),
+                        ),
+                    ],
+                    onChanged: (v) =>
+                        setSB(() => refreshCtrl(false, selWall, v!, cornerAfter)),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Direction along wall:',
+                      style: TextStyle(color: Color(0xFF7EB8F7), fontSize: 12)),
+                  Row(children: [
+                    Expanded(
+                      child: RadioListTile<bool>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: const Color(0xFF7EB8F7),
+                        title: Text('→ Wall ${selCorner + 1}',
+                            style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        value: true,
+                        groupValue: cornerAfter,
+                        onChanged: (_) =>
+                            setSB(() => refreshCtrl(false, selWall, selCorner, true)),
+                      ),
+                    ),
+                    Expanded(
+                      child: RadioListTile<bool>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: const Color(0xFF7EB8F7),
+                        title: Text('← Wall ${((selCorner - 1 + n) % n) + 1}',
+                            style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        value: false,
+                        groupValue: cornerAfter,
+                        onChanged: (_) =>
+                            setSB(() => refreshCtrl(false, selWall, selCorner, false)),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 4),
+                  const Text('Gap from corner to furniture edge (cm):',
+                      style: TextStyle(color: Color(0xFF7EB8F7), fontSize: 12)),
+                ],
+
+                const SizedBox(height: 6),
+                TextField(
+                  controller: distCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'monospace',
+                      fontSize: 16),
+                  decoration: inputDeco,
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1565C0)),
+              onPressed: () {
+                final v = double.tryParse(distCtrl.text);
+                if (v != null && v >= 0) {
+                  // Capture action — applied after dialog fully closes
+                  final fw = fromWall;
+                  final sw = selWall;
+                  final sc = selCorner;
+                  final ca = cornerAfter;
+                  final distMm = v * 10;
+                  pendingAction = () {
+                    if (fw) {
+                      _applyWallDist(itemIdx, sw, distMm);
+                    } else if (ca) {
+                      _applyCornerDistAfter(itemIdx, sc, distMm);
+                    } else {
+                      _applyCornerDistBefore(itemIdx, sc, distMm);
+                    }
+                  };
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    ).then((_) {
+      pendingAction?.call();
+      Future.delayed(const Duration(milliseconds: 500), () {
+        distCtrl.dispose();
+      });
+    });
+  }
+
   double _pointToSegmentDist(Offset p, Offset a, Offset b) {
     final dx = b.dx - a.dx, dy = b.dy - a.dy;
     final lenSq = dx * dx + dy * dy;
@@ -1304,7 +1821,7 @@ class _SketchScreenState extends State<SketchScreen>
             worldToScreen: worldToScreen,
             scale: _scale,
           );
-          if ((event.localPosition - handlePos).distance < 22) {
+          if ((event.localPosition - handlePos).distance < 50) {
             final center = worldToScreen(item.position);
             final toHandle = event.localPosition - center;
             setState(() {
@@ -1427,11 +1944,11 @@ class _SketchScreenState extends State<SketchScreen>
       final idx = activeShape.furnitureItems
           .indexWhere((f) => f.id == _selectedFurnitureId);
       if (idx >= 0) {
+        final item = activeShape.furnitureItems[idx];
         setState(() {
           _furnitureDragOccurred = true;
-          activeShape.furnitureItems[idx] = activeShape.furnitureItems[idx].copyWith(
-            position: activeShape.furnitureItems[idx].position + delta,
-          );
+          activeShape.furnitureItems[idx] = item.copyWith(
+              position: item.position + delta);
           _furnitureDragStartWorld = currentWorld;
         });
       }
@@ -1768,6 +2285,21 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleStart(ScaleStartDetails d) {
+    // If furniture is selected and 2 fingers — start furniture pinch resize
+    if (_selectedFurnitureId != null && d.pointerCount >= 2) {
+      final fidx = activeShape.furnitureItems
+          .indexWhere((f) => f.id == _selectedFurnitureId);
+      if (fidx >= 0) {
+        final item = activeShape.furnitureItems[fidx];
+        _furniturePinchStartWidthMm = item.widthMm;
+        _furniturePinchStartDepthMm = item.depthMm;
+        _isDraggingFurniture = false;
+        _isMultiTouch = true;
+        _tapCancelled = true;
+        _pendingTap = null;
+        return;
+      }
+    }
     // If an object is selected and 2 fingers — start object pinch resize
     if (_selectedObjectId != null && d.pointerCount >= 2) {
       final selIdx = activeShape.roomObjects
@@ -1792,6 +2324,22 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
+    // Furniture pinch resize — 2 fingers while furniture selected
+    if (_selectedFurnitureId != null && d.pointerCount >= 2 && _furniturePinchStartWidthMm > 0) {
+      final fidx = activeShape.furnitureItems
+          .indexWhere((f) => f.id == _selectedFurnitureId);
+      if (fidx >= 0) {
+        const minMm = 100.0;
+        const maxMm = 6000.0;
+        setState(() {
+          activeShape.furnitureItems[fidx] = activeShape.furnitureItems[fidx].copyWith(
+            widthMm: (_furniturePinchStartWidthMm * d.scale).clamp(minMm, maxMm),
+            depthMm: (_furniturePinchStartDepthMm * d.scale).clamp(minMm, maxMm),
+          );
+        });
+      }
+      return;
+    }
     // Object pinch resize — 2 fingers while object selected
     if (_selectedObjectId != null && d.pointerCount >= 2 && _objectPinchStartWidthMm > 0) {
       final selIdx = activeShape.roomObjects
@@ -1829,6 +2377,13 @@ class _SketchScreenState extends State<SketchScreen>
   }
 
   void _onScaleEnd(ScaleEndDetails d) {
+    // If we were doing furniture pinch, save undo and reset
+    if (_selectedFurnitureId != null && _furniturePinchStartWidthMm > 0) {
+      _saveUndo();
+      _furniturePinchStartWidthMm = 0.0;
+      _furniturePinchStartDepthMm = 0.0;
+      _queueAutoSync();
+    }
     // If we were doing object pinch, save undo and reset
     if (_selectedObjectId != null && _objectPinchStartWidthMm > 0) {
       _saveUndo();
@@ -1863,7 +2418,8 @@ class _SketchScreenState extends State<SketchScreen>
     if (_dragOccurred) { _dragOccurred = false; return; }
     if (_objectDragOccurred) { _objectDragOccurred = false; return; }
 
-    // ── FURNITURE DRAG guard ──────────────────────────────────────
+    // ── FURNITURE ROTATION / DRAG guard ──────────────────────────
+    if (_isRotatingFurniture) return;
     if (_isDraggingFurniture) return;
 
     // ── FURNITURE PLACEMENT MODE ───────────────────────────────────
@@ -2377,72 +2933,169 @@ class _SketchScreenState extends State<SketchScreen>
               right: 0,
               child: Container(
                 color: const Color(0xFF2D2D2D),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.rotate_left,
-                          color: Color(0xFF00AAFF)),
-                      onPressed: () {
-                        final idx = activeShape.furnitureItems
+                    // ── Dimensions + hints row ─────────────────────────
+                    GestureDetector(
+                      onTap: () {
+                        final fidx = activeShape.furnitureItems
                             .indexWhere((f) => f.id == _selectedFurnitureId);
-                        if (idx >= 0) {
-                          _saveUndo();
-                          setState(() {
-                            activeShape.furnitureItems[idx] =
-                                activeShape.furnitureItems[idx].copyWith(
-                              rotationDeg:
-                                  (activeShape.furnitureItems[idx].rotationDeg -
-                                          45) %
-                                      360,
-                            );
-                          });
-                        }
+                        if (fidx >= 0) _showFurnitureSizeDialog(fidx);
                       },
+                      child: Container(
+                        width: double.infinity,
+                        color: const Color(0xFF2D2D2D),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 5),
+                        child: () {
+                          final fidx = activeShape.furnitureItems
+                              .indexWhere((f) => f.id == _selectedFurnitureId);
+                          if (fidx < 0) return const SizedBox.shrink();
+                          final item = activeShape.furnitureItems[fidx];
+                          final wCm = (item.widthMm / 10).toStringAsFixed(0);
+                          final dCm = (item.depthMm / 10).toStringAsFixed(0);
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.straighten,
+                                  color: Color(0xFF7EB8F7), size: 14),
+                              const SizedBox(width: 6),
+                              Text(
+                                'W: ${wCm}cm  ×  D: ${dCm}cm',
+                                style: const TextStyle(
+                                    color: Color(0xFF7EB8F7),
+                                    fontSize: 13,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(Icons.edit,
+                                  color: Color(0xFF445566), size: 12),
+                            ],
+                          );
+                        }(),
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.rotate_right,
-                          color: Color(0xFF00AAFF)),
-                      onPressed: () {
-                        final idx = activeShape.furnitureItems
-                            .indexWhere((f) => f.id == _selectedFurnitureId);
-                        if (idx >= 0) {
-                          _saveUndo();
-                          setState(() {
-                            activeShape.furnitureItems[idx] =
-                                activeShape.furnitureItems[idx].copyWith(
-                              rotationDeg:
-                                  (activeShape.furnitureItems[idx].rotationDeg +
-                                          45) %
-                                      360,
-                            );
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 16),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline,
-                          color: Color(0xFFFF4444)),
-                      onPressed: () {
-                        _saveUndo();
-                        setState(() {
-                          activeShape.furnitureItems.removeWhere(
-                              (f) => f.id == _selectedFurnitureId);
-                          _selectedFurnitureId = null;
-                        });
-                        _queueAutoSync();
-                      },
-                    ),
-                    const SizedBox(width: 16),
-                    TextButton(
-                      onPressed: () =>
-                          setState(() => _selectedFurnitureId = null),
-                      child: const Text('Done',
-                          style: TextStyle(
-                              color: Color(0xFF00CC44),
-                              fontFamily: 'monospace')),
+                    // ── Controls row ────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.rotate_left,
+                                color: Color(0xFF00AAFF)),
+                            tooltip: 'Rotate −45°',
+                            iconSize: 22,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                            onPressed: () {
+                              final idx = activeShape.furnitureItems.indexWhere(
+                                  (f) => f.id == _selectedFurnitureId);
+                              if (idx >= 0) {
+                                _saveUndo();
+                                setState(() {
+                                  activeShape.furnitureItems[idx] =
+                                      activeShape.furnitureItems[idx].copyWith(
+                                    rotationDeg: (activeShape
+                                                .furnitureItems[idx]
+                                                .rotationDeg -
+                                            45) %
+                                        360,
+                                  );
+                                });
+                              }
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.rotate_right,
+                                color: Color(0xFF00AAFF)),
+                            tooltip: 'Rotate +45°',
+                            iconSize: 22,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                            onPressed: () {
+                              final idx = activeShape.furnitureItems.indexWhere(
+                                  (f) => f.id == _selectedFurnitureId);
+                              if (idx >= 0) {
+                                _saveUndo();
+                                setState(() {
+                                  activeShape.furnitureItems[idx] =
+                                      activeShape.furnitureItems[idx].copyWith(
+                                    rotationDeg: (activeShape
+                                                .furnitureItems[idx]
+                                                .rotationDeg +
+                                            45) %
+                                        360,
+                                  );
+                                });
+                              }
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          // ── Size dialog button ─────────────────────
+                          IconButton(
+                            icon: const Icon(Icons.open_in_full,
+                                color: Color(0xFF7EB8F7)),
+                            tooltip: 'Edit size',
+                            iconSize: 20,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                            onPressed: () {
+                              final fidx = activeShape.furnitureItems
+                                  .indexWhere((f) => f.id == _selectedFurnitureId);
+                              if (fidx >= 0) _showFurnitureSizeDialog(fidx);
+                            },
+                          ),
+                          // ── Position dialog button ─────────────────
+                          IconButton(
+                            icon: const Icon(Icons.place,
+                                color: Color(0xFF7EB8F7)),
+                            tooltip: 'Set position from wall / corner',
+                            iconSize: 22,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                            onPressed: () {
+                              final fidx = activeShape.furnitureItems
+                                  .indexWhere((f) => f.id == _selectedFurnitureId);
+                              if (fidx >= 0) _showFurniturePositionDialog(fidx);
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline,
+                                color: Color(0xFFFF4444)),
+                            iconSize: 22,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                            onPressed: () {
+                              _saveUndo();
+                              setState(() {
+                                activeShape.furnitureItems.removeWhere(
+                                    (f) => f.id == _selectedFurnitureId);
+                                _selectedFurnitureId = null;
+                              });
+                              _queueAutoSync();
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          TextButton(
+                            onPressed: () => setState(
+                                () => _selectedFurnitureId = null),
+                            child: const Text('Done',
+                                style: TextStyle(
+                                    color: Color(0xFF00CC44),
+                                    fontFamily: 'monospace')),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
