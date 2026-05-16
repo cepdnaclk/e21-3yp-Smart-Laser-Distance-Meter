@@ -515,7 +515,7 @@ class _Room3DPainter extends CustomPainter {
     });
     wallOrder.sort((a, b) => b.value.compareTo(a.value)); // far first
 
-    // ── Pre-compute inward normals (reused by door/window section) ────────
+    // ── Pre-compute inward normals ─────────────────────────────────────────
     const double wallThickMm = 200.0;
     final double wallThickW  = wallThickMm / mmPerUnit;
     final double cxWorld = cx / mmPerUnit;
@@ -539,6 +539,47 @@ class _Room3DPainter extends CustomPainter {
       wallNormals[k] = Offset(nx, ny);
     }
 
+    // ── Pre-compute miter inner corners so adjacent walls share exact points ─
+    // For vertex j, find the intersection of the two adjacent walls' inner edges.
+    // Both walls use the same intersection point → no gap or spike at corners.
+    final List<Offset> innerCorners = List.filled(n, Offset.zero);
+    for (int j = 0; j < n; j++) {
+      final int prevW = (j - 1 + n) % n;
+      final Offset pj    = points[j];
+      final Offset pprev = points[prevW];
+      final Offset pnext = points[(j + 1) % n];
+      final Offset nPrev = wallNormals[prevW];
+      final Offset nNext = wallNormals[j];
+
+      // A point on each wall's inner edge at this vertex
+      final double p1x = pj.dx + nPrev.dx * wallThickW;
+      final double p1y = pj.dy + nPrev.dy * wallThickW;
+      final double p2x = pj.dx + nNext.dx * wallThickW;
+      final double p2y = pj.dy + nNext.dy * wallThickW;
+
+      // Direction vectors along each wall
+      final double d1x = pj.dx - pprev.dx;
+      final double d1y = pj.dy - pprev.dy;
+      final double d2x = pnext.dx - pj.dx;
+      final double d2y = pnext.dy - pj.dy;
+
+      final double cross = d1x * d2y - d1y * d2x;
+      if (cross.abs() < 1e-6) {
+        // Parallel walls: fall back to simple average offset
+        innerCorners[j] = Offset(
+          pj.dx + (nPrev.dx + nNext.dx) * wallThickW * 0.5,
+          pj.dy + (nPrev.dy + nNext.dy) * wallThickW * 0.5,
+        );
+      } else {
+        final double t = ((p2x - p1x) * d2y - (p2y - p1y) * d2x) / cross;
+        // Miter limit: cap at 3× thickness to avoid extreme spikes on acute corners
+        final double maxT = 3.0 * wallThickW /
+            math.sqrt(d1x * d1x + d1y * d1y).clamp(1e-6, double.infinity);
+        final double tc = t.clamp(-maxT, maxT);
+        innerCorners[j] = Offset(p1x + tc * d1x, p1y + tc * d1y);
+      }
+    }
+
     for (final entry in wallOrder) {
       final int i = entry.key;
       final Offset a = points[i];
@@ -554,11 +595,13 @@ class _Room3DPainter extends CustomPainter {
 
       wallPolygons[i] = [s0, s1, s2, s3];
 
-      // Inner face corners (inset by wall thickness)
-      final si0 = _project(wx(a.dx + norm.dx * wallThickW), 0,  wz(a.dy + norm.dy * wallThickW), size);
-      final si1 = _project(wx(b.dx + norm.dx * wallThickW), 0,  wz(b.dy + norm.dy * wallThickW), size);
-      final si2 = _project(wx(b.dx + norm.dx * wallThickW), -H, wz(b.dy + norm.dy * wallThickW), size);
-      final si3 = _project(wx(a.dx + norm.dx * wallThickW), -H, wz(a.dy + norm.dy * wallThickW), size);
+      // Inner face corners — use miter points so adjacent walls share exact vertices
+      final Offset icA = innerCorners[i];
+      final Offset icB = innerCorners[(i + 1) % n];
+      final si0 = _project(wx(icA.dx), 0,  wz(icA.dy), size);
+      final si1 = _project(wx(icB.dx), 0,  wz(icB.dy), size);
+      final si2 = _project(wx(icB.dx), -H, wz(icB.dy), size);
+      final si3 = _project(wx(icA.dx), -H, wz(icA.dy), size);
 
       // Depth-based lightness for each face
       final double depth = entry.value;
@@ -568,36 +611,36 @@ class _Room3DPainter extends CustomPainter {
       final outerCol = Color.fromARGB(255, outerL, outerL, outerL);
       final topCol   = Color.fromARGB(255, topL,   topL,   topL);
       final innerCol = Color.fromARGB(255, innerL, innerL, innerL);
-      final stroke   = isSelected ? const Color(0xFF00AAFF) : const Color(0xFF888888);
-      final strokeW  = isSelected ? 2.5 : 1.2;
 
-      // 1. Inner face (faces room interior — darkest)
-      final innerPath = Path()
-        ..moveTo(si0.dx, si0.dy)
-        ..lineTo(si1.dx, si1.dy)
-        ..lineTo(si2.dx, si2.dy)
-        ..lineTo(si3.dx, si3.dy)
-        ..close();
-      canvas.drawPath(innerPath,
+      // 1. Inner face — only draw when it faces the camera (back-face culling).
+      // dot(inward normal, camera direction in XZ) > 0  ⟹  face is visible.
+      final double innerVis = norm.dx * math.sin(rotY) + norm.dy * math.cos(rotY);
+      if (innerVis > 0) {
+        canvas.drawPath(
+          Path()
+            ..moveTo(si0.dx, si0.dy)
+            ..lineTo(si1.dx, si1.dy)
+            ..lineTo(si2.dx, si2.dy)
+            ..lineTo(si3.dx, si3.dy)
+            ..close(),
           Paint()
             ..color = (isSelected ? const Color(0xFF2A5F8A) : innerCol).withOpacity(0.9)
-            ..style = PaintingStyle.fill);
-      canvas.drawPath(innerPath,
-          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
+            ..style = PaintingStyle.fill,
+        );
+      }
 
       // 2. Top face (faces up — lightest, most visible from above)
-      final topPath = Path()
-        ..moveTo(s3.dx,  s3.dy)
-        ..lineTo(s2.dx,  s2.dy)
-        ..lineTo(si2.dx, si2.dy)
-        ..lineTo(si3.dx, si3.dy)
-        ..close();
-      canvas.drawPath(topPath,
-          Paint()
-            ..color = (isSelected ? const Color(0xFF5AAAE0) : topCol).withOpacity(0.95)
-            ..style = PaintingStyle.fill);
-      canvas.drawPath(topPath,
-          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
+      canvas.drawPath(
+        Path()
+          ..moveTo(s3.dx,  s3.dy)
+          ..lineTo(s2.dx,  s2.dy)
+          ..lineTo(si2.dx, si2.dy)
+          ..lineTo(si3.dx, si3.dy)
+          ..close(),
+        Paint()
+          ..color = (isSelected ? const Color(0xFF5AAAE0) : topCol).withOpacity(0.95)
+          ..style = PaintingStyle.fill,
+      );
 
       // 3. Outer face (faces outside — mid brightness)
       final wallPath = Path()
@@ -610,8 +653,14 @@ class _Room3DPainter extends CustomPainter {
           Paint()
             ..color = (isSelected ? const Color(0xFF4A90D9) : outerCol).withOpacity(0.85)
             ..style = PaintingStyle.fill);
-      canvas.drawPath(wallPath,
-          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
+      // Selection outline on outer face only
+      if (isSelected) {
+        canvas.drawPath(wallPath,
+            Paint()
+              ..color = const Color(0xFF00AAFF)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.5);
+      }
 
       // ── Doors and windows on this wall (drawn right after the wall ──────
       // so painter's algorithm keeps them behind closer walls)
