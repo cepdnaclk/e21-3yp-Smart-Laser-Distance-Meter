@@ -172,20 +172,20 @@ class _Room3DScreenState extends State<Room3DScreen> {
             if (!hit) setState(() => _selectedWallIndex = null);
           },
           onScaleStart: (d) {
-            _lastRotX = _rotX;
-            _lastRotY = _rotY;
+            // Only zoom needs the start value; rotation/pan accumulate incrementally
             _lastZoom = _zoom;
-            _lastPanOffset = _panOffset;
           },
           onScaleUpdate: (d) {
             setState(() {
               if (d.pointerCount == 1) {
-                _rotY = _lastRotY + d.focalPointDelta.dx * 0.01;
-                _rotX = (_lastRotX - d.focalPointDelta.dy * 0.008)
+                // Accumulate rotation incrementally from each event's delta
+                _rotY += d.focalPointDelta.dx * 0.01;
+                _rotX = (_rotX - d.focalPointDelta.dy * 0.008)
                     .clamp(0.05, math.pi / 2);
               } else {
+                // Zoom is relative to gesture start; pan accumulates incrementally
                 _zoom = (_lastZoom * d.scale).clamp(0.3, 5.0);
-                _panOffset = _lastPanOffset + d.focalPointDelta;
+                _panOffset += d.focalPointDelta;
               }
             });
           },
@@ -462,7 +462,9 @@ class _Room3DPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Pre-size the list so index = actual wall index (not painter order)
     wallPolygons.clear();
+    for (int k = 0; k < points.length; k++) wallPolygons.add([]);
 
     // Centre the model
     double cx = 0, cy = 0;
@@ -513,57 +515,156 @@ class _Room3DPainter extends CustomPainter {
     });
     wallOrder.sort((a, b) => b.value.compareTo(a.value)); // far first
 
+    // ── Pre-compute inward normals (reused by door/window section) ────────
+    const double wallThickMm = 200.0;
+    final double wallThickW  = wallThickMm / mmPerUnit;
+    final double cxWorld = cx / mmPerUnit;
+    final double cyWorld = cy / mmPerUnit;
+    final List<Offset> wallNormals = List.filled(n, Offset.zero);
+    for (int k = 0; k < n; k++) {
+      final Offset pa = points[k];
+      final Offset pb = points[(k + 1) % n];
+      final double dxW = pb.dx - pa.dx;
+      final double dyW = pb.dy - pa.dy;
+      final double len = math.sqrt(dxW * dxW + dyW * dyW);
+      if (len < 1e-6) continue;
+      double nx = dyW / len;
+      double ny = -dxW / len;
+      final double mx = (pa.dx + pb.dx) / 2;
+      final double my = (pa.dy + pb.dy) / 2;
+      if ((cxWorld - mx) * nx + (cyWorld - my) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      wallNormals[k] = Offset(nx, ny);
+    }
+
     for (final entry in wallOrder) {
       final int i = entry.key;
       final Offset a = points[i];
       final Offset b = points[(i + 1) % n];
       final bool isSelected = i == selectedWallIndex;
+      final Offset norm = wallNormals[i];
 
-      final s0 = _project(wx(a.dx), 0, wz(a.dy), size);
-      final s1 = _project(wx(b.dx), 0, wz(b.dy), size);
+      // Outer face corners
+      final s0 = _project(wx(a.dx), 0,  wz(a.dy), size);
+      final s1 = _project(wx(b.dx), 0,  wz(b.dy), size);
       final s2 = _project(wx(b.dx), -H, wz(b.dy), size);
       final s3 = _project(wx(a.dx), -H, wz(a.dy), size);
 
-      wallPolygons.add([s0, s1, s2, s3]);
+      wallPolygons[i] = [s0, s1, s2, s3];
 
+      // Inner face corners (inset by wall thickness)
+      final si0 = _project(wx(a.dx + norm.dx * wallThickW), 0,  wz(a.dy + norm.dy * wallThickW), size);
+      final si1 = _project(wx(b.dx + norm.dx * wallThickW), 0,  wz(b.dy + norm.dy * wallThickW), size);
+      final si2 = _project(wx(b.dx + norm.dx * wallThickW), -H, wz(b.dy + norm.dy * wallThickW), size);
+      final si3 = _project(wx(a.dx + norm.dx * wallThickW), -H, wz(a.dy + norm.dy * wallThickW), size);
+
+      // Depth-based lightness for each face
+      final double depth = entry.value;
+      final int outerL = (180 + (depth * 8).clamp(-60.0, 60.0)).toInt().clamp(100, 240);
+      final int topL   = (outerL + 35).clamp(100, 255);
+      final int innerL = (outerL - 45).clamp(60,  200);
+      final outerCol = Color.fromARGB(255, outerL, outerL, outerL);
+      final topCol   = Color.fromARGB(255, topL,   topL,   topL);
+      final innerCol = Color.fromARGB(255, innerL, innerL, innerL);
+      final stroke   = isSelected ? const Color(0xFF00AAFF) : const Color(0xFF888888);
+      final strokeW  = isSelected ? 2.5 : 1.2;
+
+      // 1. Inner face (faces room interior — darkest)
+      final innerPath = Path()
+        ..moveTo(si0.dx, si0.dy)
+        ..lineTo(si1.dx, si1.dy)
+        ..lineTo(si2.dx, si2.dy)
+        ..lineTo(si3.dx, si3.dy)
+        ..close();
+      canvas.drawPath(innerPath,
+          Paint()
+            ..color = (isSelected ? const Color(0xFF2A5F8A) : innerCol).withOpacity(0.9)
+            ..style = PaintingStyle.fill);
+      canvas.drawPath(innerPath,
+          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
+
+      // 2. Top face (faces up — lightest, most visible from above)
+      final topPath = Path()
+        ..moveTo(s3.dx,  s3.dy)
+        ..lineTo(s2.dx,  s2.dy)
+        ..lineTo(si2.dx, si2.dy)
+        ..lineTo(si3.dx, si3.dy)
+        ..close();
+      canvas.drawPath(topPath,
+          Paint()
+            ..color = (isSelected ? const Color(0xFF5AAAE0) : topCol).withOpacity(0.95)
+            ..style = PaintingStyle.fill);
+      canvas.drawPath(topPath,
+          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
+
+      // 3. Outer face (faces outside — mid brightness)
       final wallPath = Path()
         ..moveTo(s0.dx, s0.dy)
         ..lineTo(s1.dx, s1.dy)
         ..lineTo(s2.dx, s2.dy)
         ..lineTo(s3.dx, s3.dy)
         ..close();
-
-      // Wall fill — simulate lighting: walls facing viewer are lighter
-      final double depth = entry.value;
-      final int lightness = (180 + (depth * 8).clamp(-60, 60)).toInt()
-          .clamp(100, 240);
-      final wallColor = Color.fromARGB(255, lightness, lightness, lightness);
-      canvas.drawPath(
-          wallPath,
+      canvas.drawPath(wallPath,
           Paint()
-            ..color = isSelected
-                ? const Color(0xFF4A90D9).withOpacity(0.85)
-                : wallColor.withOpacity(0.85)
+            ..color = (isSelected ? const Color(0xFF4A90D9) : outerCol).withOpacity(0.85)
             ..style = PaintingStyle.fill);
-      canvas.drawPath(
-          wallPath,
-          Paint()
-            ..color = isSelected
-                ? const Color(0xFF00AAFF)
-                : const Color(0xFF888888)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = isSelected ? 2.5 : 1.2);
+      canvas.drawPath(wallPath,
+          Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = strokeW);
 
-      // ── Wall dimension label ────────────────────────────────────────
+      // ── Doors and windows on this wall (drawn right after the wall ──────
+      // so painter's algorithm keeps them behind closer walls)
+      for (final obj in roomObjects) {
+        if (obj.wallIndex != i) continue;
+
+        final double ocx = a.dx + obj.positionAlong * (b.dx - a.dx);
+        final double ocy = a.dy + obj.positionAlong * (b.dy - a.dy);
+
+        final double dxW2    = b.dx - a.dx;
+        final double dyW2    = b.dy - a.dy;
+        final double wallLen = math.sqrt(dxW2 * dxW2 + dyW2 * dyW2);
+        if (wallLen < 1) continue;
+        final double udx = dxW2 / wallLen;
+        final double udy = dyW2 / wallLen;
+
+        final double halfWW   = (obj.widthMm / mmPerUnit) / 2;
+        final double objH2    = obj.heightMm * mmScale;
+        final double elevDraw = obj.elevationMm * mmScale;
+
+        final double lx = ocx - udx * halfWW;
+        final double ly = ocy - udy * halfWW;
+        final double rx = ocx + udx * halfWW;
+        final double ry = ocy + udy * halfWW;
+
+        final obl = _project(wx(lx), -elevDraw,           wz(ly), size);
+        final obr = _project(wx(rx), -elevDraw,           wz(ry), size);
+        final otr = _project(wx(rx), -(elevDraw + objH2), wz(ry), size);
+        final otl = _project(wx(lx), -(elevDraw + objH2), wz(ly), size);
+
+        final ilx = lx + norm.dx * wallThickW;
+        final ily = ly + norm.dy * wallThickW;
+        final irx = rx + norm.dx * wallThickW;
+        final iry = ry + norm.dy * wallThickW;
+
+        final ibl = _project(wx(ilx), -elevDraw,           wz(ily), size);
+        final ibr = _project(wx(irx), -elevDraw,           wz(iry), size);
+        final itr = _project(wx(irx), -(elevDraw + objH2), wz(iry), size);
+        final itl = _project(wx(ilx), -(elevDraw + objH2), wz(ily), size);
+
+        if (obj.isDoor) {
+          _drawDoor3D(canvas, obl, obr, otr, otl, ibl, ibr, itr, itl);
+        } else {
+          _drawWindow3D(canvas, obl, obr, otr, otl, ibl, ibr, itr, itl);
+        }
+      }
+
+      // ── Wall dimension label ──────────────────────────────────────────
       if (showDimensions) {
-        final mid = Offset((s0.dx + s1.dx) / 2, (s0.dy + s1.dy) / 2);
+        final mid    = Offset((s0.dx + s1.dx) / 2, (s0.dy + s1.dy) / 2);
         final topMid = Offset((s2.dx + s3.dx) / 2, (s2.dy + s3.dy) / 2);
-        final labelPos = Offset(
-          (mid.dx + topMid.dx) / 2,
-          (mid.dy + topMid.dy) / 2,
-        );
-        final lenMm =
-            wallRealMm[i] ?? ((b - a).distance * mmPerUnit);
+        final labelPos = Offset((mid.dx + topMid.dx) / 2, (mid.dy + topMid.dy) / 2);
+        final lenMm = wallRealMm[i] ?? ((b - a).distance * mmPerUnit);
         final label = lenMm >= 1000
             ? '${(lenMm / 1000).toStringAsFixed(2)} m'
             : '${lenMm.toStringAsFixed(0)} mm';
@@ -572,9 +673,7 @@ class _Room3DPainter extends CustomPainter {
           text: TextSpan(
             text: 'W${i + 1}  $label',
             style: TextStyle(
-              color: isSelected
-                  ? const Color(0xFF00AAFF)
-                  : const Color(0xFF4A5568),
+              color: isSelected ? const Color(0xFF00AAFF) : const Color(0xFF4A5568),
               fontSize: 10,
               fontFamily: 'monospace',
             ),
@@ -583,51 +682,6 @@ class _Room3DPainter extends CustomPainter {
         )..layout();
         tp.paint(canvas,
             Offset(labelPos.dx - tp.width / 2, labelPos.dy - tp.height / 2));
-      }
-    }
-
-    // ── 3. Doors and windows ──────────────────────────────────────────────
-    for (final obj in roomObjects) {
-      if (obj.wallIndex >= n) continue;
-
-      final Offset a = points[obj.wallIndex];
-      final Offset b = points[(obj.wallIndex + 1) % n];
-
-      // Object centre along wall (world coords)
-      final double ocx = a.dx + obj.positionAlong * (b.dx - a.dx);
-      final double ocy = a.dy + obj.positionAlong * (b.dy - a.dy);
-
-      // Wall direction unit vector (world)
-      final double dxW = b.dx - a.dx;
-      final double dyW = b.dy - a.dy;
-      final double wallLen = math.sqrt(dxW * dxW + dyW * dyW);
-      if (wallLen < 1) continue;
-      final double udx = dxW / wallLen;
-      final double udy = dyW / wallLen;
-
-      // Object half-width in world units
-      final double halfWW = (obj.widthMm / mmPerUnit) / 2;
-      // Object height in draw units
-      final double objH = (obj.heightMm * mmScale);
-      // Object elevation in draw units (distance from floor)
-      final double elevDraw = obj.elevationMm * mmScale;
-
-      // Four corners of the opening (bottom-left, bottom-right, top-right, top-left)
-      // in world space, then projected
-      final double lx = ocx - udx * halfWW;
-      final double ly = ocy - udy * halfWW;
-      final double rx = ocx + udx * halfWW;
-      final double ry = ocy + udy * halfWW;
-
-      final Offset bl = _project(wx(lx), -elevDraw, wz(ly), size);
-      final Offset br = _project(wx(rx), -elevDraw, wz(ry), size);
-      final Offset tr = _project(wx(rx), -(elevDraw + objH), wz(ry), size);
-      final Offset tl = _project(wx(lx), -(elevDraw + objH), wz(ly), size);
-
-      if (obj.isDoor) {
-        _drawDoor3D(canvas, bl, br, tr, tl);
-      } else {
-        _drawWindow3D(canvas, bl, br, tr, tl);
       }
     }
 
@@ -666,37 +720,66 @@ class _Room3DPainter extends CustomPainter {
     }
   }
 
+  // ── Reveal: the visible surface inside a wall opening ────────────────────
+  void _drawReveal(Canvas canvas, Offset a, Offset b, Offset c, Offset d) {
+    final path = Path()
+      ..moveTo(a.dx, a.dy)
+      ..lineTo(b.dx, b.dy)
+      ..lineTo(c.dx, c.dy)
+      ..lineTo(d.dx, d.dy)
+      ..close();
+    canvas.drawPath(path,
+        Paint()..color = const Color(0xFF0D1117)..style = PaintingStyle.fill);
+    canvas.drawPath(path,
+        Paint()
+          ..color = const Color(0xFF333333)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8);
+  }
+
   // ── Draw a door opening in 3D ─────────────────────────────────────────────
-  void _drawDoor3D(Canvas canvas, Offset bl, Offset br, Offset tr, Offset tl) {
-    // Dark hole (opening)
-    final holePath = Path()
+  void _drawDoor3D(Canvas canvas,
+      Offset bl, Offset br, Offset tr, Offset tl,
+      Offset ibl, Offset ibr, Offset itr, Offset itl) {
+    // Outer dark hole
+    final outerHole = Path()
       ..moveTo(bl.dx, bl.dy)
       ..lineTo(br.dx, br.dy)
       ..lineTo(tr.dx, tr.dy)
       ..lineTo(tl.dx, tl.dy)
       ..close();
-    canvas.drawPath(holePath,
+    canvas.drawPath(outerHole,
         Paint()..color = const Color(0xFF0A0E14)..style = PaintingStyle.fill);
 
-    // Brown door panel (slightly inset — offset toward viewer)
-    // We approximate inset by scaling toward centre
-    Offset inset(Offset p, Offset centre, double f) =>
-        Offset(p.dx + (centre.dx - p.dx) * f,
-               p.dy + (centre.dy - p.dy) * f);
+    // Reveals: left jamb, right jamb, lintel (tunnel through wall thickness)
+    _drawReveal(canvas, tl, bl, ibl, itl);
+    _drawReveal(canvas, br, tr, itr, ibr);
+    _drawReveal(canvas, tr, tl, itl, itr);
+
+    // Inner dark hole
+    canvas.drawPath(
+      Path()
+        ..moveTo(ibl.dx, ibl.dy)
+        ..lineTo(ibr.dx, ibr.dy)
+        ..lineTo(itr.dx, itr.dy)
+        ..lineTo(itl.dx, itl.dy)
+        ..close(),
+      Paint()..color = const Color(0xFF0A0E14)..style = PaintingStyle.fill,
+    );
+
+    // Door panel (slightly inset from outer face)
     final centre = Offset(
         (bl.dx + br.dx + tr.dx + tl.dx) / 4,
         (bl.dy + br.dy + tr.dy + tl.dy) / 4);
-    const double ins = 0.05;
-    final dbl = inset(bl, centre, ins);
-    final dbr = inset(br, centre, ins);
-    final dtr = inset(tr, centre, ins);
-    final dtl = inset(tl, centre, ins);
+    Offset ins(Offset p) => Offset(
+        p.dx + (centre.dx - p.dx) * 0.05,
+        p.dy + (centre.dy - p.dy) * 0.05);
 
     final doorPath = Path()
-      ..moveTo(dbl.dx, dbl.dy)
-      ..lineTo(dbr.dx, dbr.dy)
-      ..lineTo(dtr.dx, dtr.dy)
-      ..lineTo(dtl.dx, dtl.dy)
+      ..moveTo(ins(bl).dx, ins(bl).dy)
+      ..lineTo(ins(br).dx, ins(br).dy)
+      ..lineTo(ins(tr).dx, ins(tr).dy)
+      ..lineTo(ins(tl).dx, ins(tl).dy)
       ..close();
     canvas.drawPath(doorPath,
         Paint()..color = const Color(0xFF8B4513)..style = PaintingStyle.fill);
@@ -706,67 +789,78 @@ class _Room3DPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2);
 
-    // Door frame (outline of opening)
-    canvas.drawPath(holePath,
+    // Frame outline
+    canvas.drawPath(outerHole,
         Paint()
           ..color = const Color(0xFF4A3728)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5);
 
-    // Door knob — small circle near right edge
+    // Door knob
     final knobPos = Offset(
-        dbr.dx + (dbl.dx - dbr.dx) * 0.15,
-        dbr.dy + (dtl.dy - dbl.dy) * 0.45);
-    canvas.drawCircle(knobPos, 3,
-        Paint()..color = const Color(0xFFFFD700));
+        ins(br).dx + (ins(bl).dx - ins(br).dx) * 0.15,
+        ins(br).dy + (ins(tl).dy - ins(bl).dy) * 0.45);
+    canvas.drawCircle(knobPos, 3, Paint()..color = const Color(0xFFFFD700));
   }
 
   // ── Draw a window opening in 3D ───────────────────────────────────────────
-  void _drawWindow3D(Canvas canvas, Offset bl, Offset br, Offset tr, Offset tl) {
-    // Dark hole (opening)
-    final holePath = Path()
+  void _drawWindow3D(Canvas canvas,
+      Offset bl, Offset br, Offset tr, Offset tl,
+      Offset ibl, Offset ibr, Offset itr, Offset itl) {
+    // Outer dark hole + glass tint
+    final outerPath = Path()
       ..moveTo(bl.dx, bl.dy)
       ..lineTo(br.dx, br.dy)
       ..lineTo(tr.dx, tr.dy)
       ..lineTo(tl.dx, tl.dy)
       ..close();
-    canvas.drawPath(holePath,
+    canvas.drawPath(outerPath,
         Paint()..color = const Color(0xFF0A0E14)..style = PaintingStyle.fill);
-
-    // Sky blue glass fill
-    canvas.drawPath(holePath,
+    canvas.drawPath(outerPath,
         Paint()
           ..color = const Color(0xFF4FC3F7).withOpacity(0.25)
           ..style = PaintingStyle.fill);
 
-    // Window frame (outer border)
-    canvas.drawPath(holePath,
+    // Reveals: left, right, head, sill
+    _drawReveal(canvas, tl, bl, ibl, itl);
+    _drawReveal(canvas, br, tr, itr, ibr);
+    _drawReveal(canvas, tr, tl, itl, itr);
+    _drawReveal(canvas, bl, br, ibr, ibl);
+
+    // Inner glazing (faint tint on room side)
+    canvas.drawPath(
+      Path()
+        ..moveTo(ibl.dx, ibl.dy)
+        ..lineTo(ibr.dx, ibr.dy)
+        ..lineTo(itr.dx, itr.dy)
+        ..lineTo(itl.dx, itl.dy)
+        ..close(),
+      Paint()
+        ..color = const Color(0xFF4FC3F7).withOpacity(0.15)
+        ..style = PaintingStyle.fill,
+    );
+
+    // Frame
+    canvas.drawPath(outerPath,
         Paint()
           ..color = const Color(0xFF90A4AE)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5);
 
-    // Cross dividers (horizontal + vertical midline)
-    final midTop = Offset((tl.dx + tr.dx) / 2, (tl.dy + tr.dy) / 2);
-    final midBot = Offset((bl.dx + br.dx) / 2, (bl.dy + br.dy) / 2);
-    final midLeft = Offset((tl.dx + bl.dx) / 2, (tl.dy + bl.dy) / 2);
+    // Cross dividers
+    final midTop   = Offset((tl.dx + tr.dx) / 2, (tl.dy + tr.dy) / 2);
+    final midBot   = Offset((bl.dx + br.dx) / 2, (bl.dy + br.dy) / 2);
+    final midLeft  = Offset((tl.dx + bl.dx) / 2, (tl.dy + bl.dy) / 2);
     final midRight = Offset((tr.dx + br.dx) / 2, (tr.dy + br.dy) / 2);
+    final crossPaint = Paint()..color = const Color(0xFF90A4AE)..strokeWidth = 1.5;
+    canvas.drawLine(midTop, midBot, crossPaint);
+    canvas.drawLine(midLeft, midRight, crossPaint);
 
-    final crossPaint = Paint()
-      ..color = const Color(0xFF90A4AE)
-      ..strokeWidth = 1.5;
-
-    canvas.drawLine(midTop, midBot, crossPaint);  // vertical
-    canvas.drawLine(midLeft, midRight, crossPaint); // horizontal
-
-    // Glass highlight (thin bright line near top-left)
-    final hiPaint = Paint()
-      ..color = Colors.white.withOpacity(0.2)
-      ..strokeWidth = 1.0;
+    // Glass highlight
     canvas.drawLine(
       Offset(tl.dx + (tr.dx - tl.dx) * 0.1, tl.dy + (tr.dy - tl.dy) * 0.1),
       Offset(bl.dx + (br.dx - bl.dx) * 0.1, bl.dy + (br.dy - bl.dy) * 0.1),
-      hiPaint,
+      Paint()..color = Colors.white.withOpacity(0.2)..strokeWidth = 1.0,
     );
   }
 
@@ -777,6 +871,7 @@ class _Room3DPainter extends CustomPainter {
       old.zoom != zoom ||
       old.panOffset != panOffset ||
       old.selectedWallIndex != selectedWallIndex ||
+      old.wallHeightMm != wallHeightMm ||
       old.showCeiling != showCeiling ||
       old.showDimensions != showDimensions ||
       old.roomObjects.length != roomObjects.length;
