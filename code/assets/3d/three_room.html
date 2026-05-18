@@ -40,7 +40,6 @@
     };
 
     // ── Minimal OrbitControls (touch orbit + pinch zoom, no ES-module import) ──
-    // Uses global THREE set by the injected three.min.js.
     THREE.OrbitControls = function(camera, domElement) {
       var self = this;
       this.camera      = camera;
@@ -52,12 +51,11 @@
       this.maxDistance    = 1000;
       this.maxPolarAngle  = Math.PI * 0.88;
 
-      // Convert camera position to spherical coordinates relative to target
       var _sph = new THREE.Spherical();
       _sph.setFromVector3(camera.position.clone().sub(this.target));
 
-      var _prev = [];   // previous touch list
-      var _pinch0 = 0; // pinch distance at start of two-finger gesture
+      var _prev = [];
+      var _pinch0 = 0;
 
       function pinchDist(touches) {
         var dx = touches[0].clientX - touches[1].clientX;
@@ -74,21 +72,17 @@
       domElement.addEventListener('touchmove', function(e) {
         e.preventDefault();
         var cur = Array.from(e.touches);
-
         if (cur.length === 1 && _prev.length === 1) {
-          // Single finger → orbit
           var dx = (cur[0].clientX - _prev[0].clientX) / domElement.clientWidth;
           var dy = (cur[0].clientY - _prev[0].clientY) / domElement.clientHeight;
           _sph.theta -= dx * 3.0;
-          _sph.phi = Math.max(0.05,
-            Math.min(self.maxPolarAngle, _sph.phi - dy * 2.0));
+          _sph.phi = Math.max(0.05, Math.min(self.maxPolarAngle, _sph.phi - dy * 2.0));
         } else if (cur.length === 2 && _prev.length >= 2) {
-          // Two fingers → zoom
-          var d = pinchDist(cur);
-          if (d > 0) {
+          var d2 = pinchDist(cur);
+          if (d2 > 0) {
             _sph.radius = Math.max(self.minDistance,
-              Math.min(self.maxDistance, _sph.radius * (_pinch0 / d)));
-            _pinch0 = d;
+              Math.min(self.maxDistance, _sph.radius * (_pinch0 / d2)));
+            _pinch0 = d2;
           }
         }
         _prev = cur;
@@ -104,14 +98,10 @@
         camera.lookAt(self.target);
       };
 
-      // Move camera to an absolute world position and rebuild _sph from it.
-      // Must be used instead of camera.position.set() so that subsequent
-      // update() calls don't overwrite the position.
       this.setPosition = function(x, y, z) {
         var pos = new THREE.Vector3(x, y, z);
         _sph.setFromVector3(pos.clone().sub(self.target));
-        _sph.radius = Math.max(self.minDistance,
-          Math.min(self.maxDistance, _sph.radius));
+        _sph.radius = Math.max(self.minDistance, Math.min(self.maxDistance, _sph.radius));
         self.update();
       };
 
@@ -119,9 +109,6 @@
     };
 
     // ── Flutter → JS data queue ────────────────────────────────────────────────
-    // Flutter calls initRoom() via runJavaScript() the moment onPageFinished
-    // fires — before this script may have fully evaluated on slow devices.
-    // The queue ensures no data is lost.
     window._pendingRoomData = null;
     window.initRoom = function(data) {
       window._pendingRoomData = data;
@@ -140,8 +127,7 @@
     scene.background = new THREE.Color(0x1A2030);
 
     // ── Camera ────────────────────────────────────────────────────────────────
-    var camera = new THREE.PerspectiveCamera(
-      55, window.innerWidth / window.innerHeight, 0.01, 200);
+    var camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 200);
     camera.position.set(6, 5, 6);
 
     // ── Orbit controls ────────────────────────────────────────────────────────
@@ -150,20 +136,19 @@
     controls.maxDistance   = 50;
     controls.maxPolarAngle = Math.PI * 0.88;
     controls.target.set(0, 1.2, 0);
-    controls.setPosition(6, 5, 6); // sets _sph relative to new target, then updates
+    controls.setPosition(6, 5, 6);
 
     // ── Lights ────────────────────────────────────────────────────────────────
     scene.add(new THREE.HemisphereLight(0xC8D8FF, 0x442200, 0.7));
-
     var sun = new THREE.DirectionalLight(0xFFF8EE, 1.4);
     sun.position.set(10, 18, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.width  = 2048;
     sun.shadow.mapSize.height = 2048;
-    sun.shadow.camera.near   = 0.1;
-    sun.shadow.camera.far    = 100;
-    sun.shadow.camera.left   = sun.shadow.camera.bottom = -25;
-    sun.shadow.camera.right  = sun.shadow.camera.top    =  25;
+    sun.shadow.camera.near = 0.1;
+    sun.shadow.camera.far  = 100;
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -25;
+    sun.shadow.camera.right = sun.shadow.camera.top   =  25;
     sun.shadow.bias = -0.0004;
     scene.add(sun);
 
@@ -176,6 +161,7 @@
     function disposeGroup(group) {
       var kids = group.children.slice();
       kids.forEach(function(obj) {
+        if (obj.children && obj.children.length > 0) disposeGroup(obj);
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
           if (Array.isArray(obj.material)) obj.material.forEach(function(m) { m.dispose(); });
@@ -185,18 +171,685 @@
       });
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    // Phase 3D-3 — Procedural furniture shapes
+    // Each builder receives (group, w, d, h, col, dark) and populates group.
+    // group origin = centre of footprint at floor level (y=0).
+    // Canonical orientation: backrest / head / tank at -Z, front at +Z.
+    // ════════════════════════════════════════════════════════════════════════════
+
+    function darkenHex(hex, f) {
+      return (Math.max(0, Math.floor(((hex >> 16) & 0xFF) * f)) << 16) |
+             (Math.max(0, Math.floor(((hex >>  8) & 0xFF) * f)) <<  8) |
+              Math.max(0, Math.floor( (hex        & 0xFF) * f));
+    }
+    function lightenHex(hex, f) {
+      return (Math.min(255, Math.floor(((hex >> 16) & 0xFF) * f)) << 16) |
+             (Math.min(255, Math.floor(((hex >>  8) & 0xFF) * f)) <<  8) |
+              Math.min(255, Math.floor( (hex        & 0xFF) * f));
+    }
+
+    function mkBox(w, h, d, color) {
+      var m = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshLambertMaterial({ color: color })
+      );
+      m.castShadow = m.receiveShadow = true;
+      return m;
+    }
+
+    // ── Chair / bar stool / office chair ──────────────────────────────────────
+    function buildChair(g, w, d, h, col, dark) {
+      var seatH = h * 0.46;
+      var seatT = h * 0.07;
+      var legT  = Math.min(w * 0.10, 0.055);
+      var backT = Math.min(d * 0.10, 0.055);
+      var backH = h - seatH - seatT;
+
+      var seat = mkBox(w * 0.88, seatT, d * 0.62, col);
+      seat.position.set(0, seatH + seatT / 2, d * 0.05);
+      g.add(seat);
+
+      var back = mkBox(w * 0.84, backH, backT, dark);
+      back.position.set(0, seatH + seatT + backH / 2, -(d * 0.48 - backT / 2));
+      g.add(back);
+
+      var lx = w * 0.35, lzF = d * 0.28, lzB = -(d * 0.28);
+      [[-lx, lzF], [lx, lzF], [-lx, lzB], [lx, lzB]].forEach(function(p) {
+        var leg = mkBox(legT, seatH, legT, dark);
+        leg.position.set(p[0], seatH / 2, p[1]);
+        g.add(leg);
+      });
+    }
+
+    // ── Armchair (compact sofa shape) ─────────────────────────────────────────
+    function buildArmchair(g, w, d, h, col, dark) {
+      var armW  = w * 0.12;
+      var backT = d * 0.22;
+      var seatH = h * 0.40;
+      var seatT = h * 0.14;
+      var armH  = h * 0.75;
+      var innerW = w - 2 * armW;
+      var seatD  = d - backT;
+      var backCZ = -(d / 2 - backT / 2);
+      var seatCZ = -(d / 2) + backT + seatD / 2;
+
+      var base = mkBox(w, seatH, d, dark);
+      base.position.set(0, seatH / 2, 0);
+      g.add(base);
+
+      var back = mkBox(w, h - seatH, backT, dark);
+      back.position.set(0, seatH + (h - seatH) / 2, backCZ);
+      g.add(back);
+
+      var cush = mkBox(innerW - 0.02, seatT, seatD * 0.87, col);
+      cush.position.set(0, seatH + seatT / 2, seatCZ);
+      g.add(cush);
+
+      var larm = mkBox(armW, armH, seatD, col);
+      larm.position.set(-(innerW / 2 + armW / 2), armH / 2, seatCZ);
+      g.add(larm);
+
+      var rarm = mkBox(armW, armH, seatD, col);
+      rarm.position.set(innerW / 2 + armW / 2, armH / 2, seatCZ);
+      g.add(rarm);
+    }
+
+    // ── Sofa ──────────────────────────────────────────────────────────────────
+    function buildSofa(g, w, d, h, col, dark) {
+      var armW   = w * 0.09;
+      var backT  = d * 0.20;
+      var seatH  = h * 0.38;
+      var seatT  = h * 0.13;
+      var armH   = h * 0.72;
+      var innerW = w - 2 * armW;
+      var seatD  = d - backT;
+      var backCZ = -(d / 2 - backT / 2);
+      var seatCZ = -(d / 2) + backT + seatD / 2;
+
+      var base = mkBox(w, seatH, d, dark);
+      base.position.set(0, seatH / 2, 0);
+      g.add(base);
+
+      var back = mkBox(w, h - seatH, backT, dark);
+      back.position.set(0, seatH + (h - seatH) / 2, backCZ);
+      g.add(back);
+
+      var nC = w > 2.0 ? 3 : (w > 1.4 ? 2 : 1);
+      var segW = innerW / nC;
+      for (var ci = 0; ci < nC; ci++) {
+        var cX = -(innerW / 2) + (ci + 0.5) * segW;
+        var cush = mkBox(segW - 0.025, seatT, seatD * 0.87, col);
+        cush.position.set(cX, seatH + seatT / 2, seatCZ);
+        g.add(cush);
+      }
+
+      var larm = mkBox(armW, armH, seatD, col);
+      larm.position.set(-(innerW / 2 + armW / 2), armH / 2, seatCZ);
+      g.add(larm);
+
+      var rarm = mkBox(armW, armH, seatD, col);
+      rarm.position.set(innerW / 2 + armW / 2, armH / 2, seatCZ);
+      g.add(rarm);
+    }
+
+    // ── Bed (all sizes) ───────────────────────────────────────────────────────
+    function buildBed(g, w, d, h, col, dark, lite) {
+      var frameH = h * 0.28;
+      var mattH  = h * 0.14;
+      var headH  = h * 0.85;
+      var headT  = Math.max(0.08, d * 0.07);
+
+      var head = mkBox(w, headH, headT, dark);
+      head.position.set(0, headH / 2, -(d / 2 - headT / 2));
+      g.add(head);
+
+      var frame = mkBox(w, frameH, d, dark);
+      frame.position.set(0, frameH / 2, 0);
+      g.add(frame);
+
+      var mattD = d - headT;
+      var mattZ = -(d / 2) + headT + mattD / 2;
+      var matt = mkBox(w * 0.93, mattH, mattD, lite);
+      matt.position.set(0, frameH + mattH / 2, mattZ);
+      g.add(matt);
+
+      var pilH = h * 0.08, pilD = d * 0.14;
+      var pilY = frameH + mattH + pilH / 2;
+      var pilZ = -(d / 2) + headT + pilD / 2 + 0.01;
+      if (w > 1.3) {
+        [-(w * 0.2), w * 0.2].forEach(function(px) {
+          var p = mkBox(w * 0.35, pilH, pilD, 0xF5F0EB);
+          p.position.set(px, pilY, pilZ);
+          g.add(p);
+        });
+      } else {
+        var ps = mkBox(w * 0.70, pilH, pilD, 0xF5F0EB);
+        ps.position.set(0, pilY, pilZ);
+        g.add(ps);
+      }
+    }
+
+    // ── Rectangular table (dining, coffee, desk, counter) ────────────────────
+    function buildTable(g, w, d, h, col, dark) {
+      var topT = h * 0.06;
+      var legT = Math.min(w * 0.05, 0.06);
+      var legH = h - topT;
+      var lx = w / 2 - legT * 0.8;
+      var lz = d / 2 - legT * 0.8;
+
+      var top = mkBox(w, topT, d, col);
+      top.position.set(0, h - topT / 2, 0);
+      g.add(top);
+
+      [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]].forEach(function(p) {
+        var leg = mkBox(legT, legH, legT, dark);
+        leg.position.set(p[0], legH / 2, p[1]);
+        g.add(leg);
+      });
+    }
+
+    // ── Round dining table ────────────────────────────────────────────────────
+    function buildRoundTable(g, w, d, h, col, dark) {
+      var topT = h * 0.06;
+      var r    = Math.min(w, d) / 2;
+      var legR = Math.min(r * 0.12, 0.045);
+      var legH = h - topT;
+
+      var top = new THREE.Mesh(
+        new THREE.CylinderGeometry(r, r, topT, 28),
+        new THREE.MeshLambertMaterial({ color: col })
+      );
+      top.castShadow = top.receiveShadow = true;
+      top.position.set(0, h - topT / 2, 0);
+      g.add(top);
+
+      var post = new THREE.Mesh(
+        new THREE.CylinderGeometry(legR, legR * 1.3, legH, 10),
+        new THREE.MeshLambertMaterial({ color: dark })
+      );
+      post.castShadow = true;
+      post.position.set(0, legH / 2, 0);
+      g.add(post);
+
+      var fR = r * 0.72, fH = 0.04;
+      var footX = mkBox(fR * 2, fH, legR * 3, dark);
+      footX.position.set(0, fH / 2, 0);
+      g.add(footX);
+      var footZ = mkBox(legR * 3, fH, fR * 2, dark);
+      footZ.position.set(0, fH / 2, 0);
+      g.add(footZ);
+    }
+
+    // ── Toilet ────────────────────────────────────────────────────────────────
+    function buildToilet(g, w, d, h, col, dark) {
+      var tankH = h * 0.82;
+      var tankT = d * 0.28;
+      var tankW = w * 0.62;
+      var bowlH = h * 0.45;
+      var bowlD = d - tankT;
+      var seatT = h * 0.04;
+
+      var tank = mkBox(tankW, tankH, tankT, dark);
+      tank.position.set(0, tankH / 2, -(d / 2 - tankT / 2));
+      g.add(tank);
+
+      var bowlZ = -(d / 2) + tankT + bowlD / 2;
+      var bowl = mkBox(w, bowlH, bowlD, col);
+      bowl.position.set(0, bowlH / 2, bowlZ);
+      g.add(bowl);
+
+      var seat = mkBox(w * 0.92, seatT, bowlD * 0.88, 0xEEEEEC);
+      seat.position.set(0, bowlH + seatT / 2, bowlZ);
+      g.add(seat);
+    }
+
+    // ── Wardrobe / tall cabinet / bookshelf ───────────────────────────────────
+    function buildWardrobe(g, w, d, h, col, dark) {
+      var body = mkBox(w, h, d, col);
+      body.position.set(0, h / 2, 0);
+      g.add(body);
+
+      var cap = mkBox(w * 1.01, h * 0.045, d * 1.01, dark);
+      cap.position.set(0, h - h * 0.0225, 0);
+      g.add(cap);
+
+      var divH = h * 0.78;
+      var div = mkBox(0.025, divH, 0.015, dark);
+      div.position.set(0, h * 0.11 + divH / 2, d / 2 + 0.001);
+      g.add(div);
+
+      [-(w * 0.22), w * 0.22].forEach(function(hx) {
+        var handle = mkBox(0.018, h * 0.10, 0.018, 0xAAAAAA);
+        handle.position.set(hx, h * 0.50, d / 2 + 0.02);
+        g.add(handle);
+      });
+    }
+
+    // ── Bathtub ───────────────────────────────────────────────────────────────
+    function buildBathtub(g, w, d, h, col, dark) {
+      var wallT = h * 0.18;
+      var innerH = h - wallT;
+
+      var outer = mkBox(w, h, d, dark);
+      outer.position.set(0, h / 2, 0);
+      g.add(outer);
+
+      var inner = mkBox(w - wallT * 2, innerH, d - wallT * 2, col);
+      inner.position.set(0, wallT + innerH / 2, 0);
+      g.add(inner);
+    }
+
+    // ── Sink / basin ──────────────────────────────────────────────────────────
+    function buildSink(g, w, d, h, col, dark) {
+      var pedH = h * 0.72;
+      var pedW = w * 0.35;
+      var pedD = d * 0.35;
+      var basinH = h * 0.18;
+
+      var ped = mkBox(pedW, pedH, pedD, dark);
+      ped.position.set(0, pedH / 2, 0);
+      g.add(ped);
+
+      var basin = mkBox(w, basinH, d, col);
+      basin.position.set(0, pedH + basinH / 2, 0);
+      g.add(basin);
+
+      var tap = mkBox(0.03, h * 0.12, 0.03, 0xCCCCCC);
+      tap.position.set(0, pedH + basinH + h * 0.06, -(d * 0.3));
+      g.add(tap);
+    }
+
+    // ── Floor lamp ───────────────────────────────────────────────────────────
+    function buildFloorLamp(g, w, d, h, col, dark) {
+      var r     = Math.min(w, d) * 0.5;
+      var poleR = r * 0.10;
+      var baseH = h * 0.04;
+      var shadeH = h * 0.16;
+      var poleH  = h - baseH - shadeH;
+
+      // Weighted base
+      var base = new THREE.Mesh(
+        new THREE.CylinderGeometry(r * 0.75, r * 0.90, baseH, 16),
+        new THREE.MeshLambertMaterial({ color: dark })
+      );
+      base.castShadow = true;
+      base.position.set(0, baseH / 2, 0);
+      g.add(base);
+
+      // Thin pole
+      var pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(poleR, poleR, poleH, 8),
+        new THREE.MeshLambertMaterial({ color: dark })
+      );
+      pole.castShadow = true;
+      pole.position.set(0, baseH + poleH / 2, 0);
+      g.add(pole);
+
+      // Tapered shade (wide at bottom, narrow at top)
+      var shade = new THREE.Mesh(
+        new THREE.CylinderGeometry(r * 0.55, r, shadeH, 16),
+        new THREE.MeshLambertMaterial({ color: col })
+      );
+      shade.castShadow = true;
+      shade.position.set(0, baseH + poleH + shadeH / 2, 0);
+      g.add(shade);
+    }
+
+    // ── Nightstand ────────────────────────────────────────────────────────────
+    function buildNightstand(g, w, d, h, col, dark) {
+      // Body
+      var body = mkBox(w, h * 0.92, d, col);
+      body.position.set(0, h * 0.46, 0);
+      g.add(body);
+
+      // Overhanging top
+      var top = mkBox(w * 1.04, h * 0.04, d * 1.04, dark);
+      top.position.set(0, h * 0.94, 0);
+      g.add(top);
+
+      // Drawer divider line
+      var groove = mkBox(w * 0.86, h * 0.012, 0.012, dark);
+      groove.position.set(0, h * 0.58, d / 2 + 0.001);
+      g.add(groove);
+
+      // Single drawer handle
+      var handle = mkBox(w * 0.26, h * 0.038, 0.016, 0xBBBBBB);
+      handle.position.set(0, h * 0.50, d / 2 + 0.020);
+      g.add(handle);
+    }
+
+    // ── Dresser (chest of drawers) ────────────────────────────────────────────
+    function buildDresser(g, w, d, h, col, dark) {
+      // Body
+      var body = mkBox(w, h, d, col);
+      body.position.set(0, h / 2, 0);
+      g.add(body);
+
+      // Overhanging top
+      var top = mkBox(w * 1.04, h * 0.035, d * 1.04, dark);
+      top.position.set(0, h + h * 0.0175, 0);
+      g.add(top);
+
+      // 3 horizontal drawer rows with handles
+      var nDrawers = 3;
+      var drawerH  = (h * 0.80) / nDrawers;
+      for (var i = 0; i < nDrawers; i++) {
+        var rowY = h * 0.08 + i * drawerH + drawerH / 2;
+
+        // Drawer divider line above each row (except first)
+        if (i > 0) {
+          var line = mkBox(w * 0.90, h * 0.012, 0.012, dark);
+          line.position.set(0, rowY - drawerH / 2, d / 2 + 0.001);
+          g.add(line);
+        }
+
+        // Two handles per drawer
+        [-(w * 0.22), w * 0.22].forEach(function(hx) {
+          var handle = mkBox(w * 0.14, h * 0.028, 0.016, 0xBBBBBB);
+          handle.position.set(hx, rowY, d / 2 + 0.020);
+          g.add(handle);
+        });
+      }
+    }
+
+    // ── Refrigerator ──────────────────────────────────────────────────────────
+    function buildRefrigerator(g, w, d, h, col, dark) {
+      var body = mkBox(w, h, d, col);
+      body.position.set(0, h / 2, 0);
+      g.add(body);
+
+      // Top cap
+      var cap = mkBox(w * 1.01, h * 0.025, d * 1.01, dark);
+      cap.position.set(0, h - h * 0.0125, 0);
+      g.add(cap);
+
+      // Freezer / fridge split line (at ~28% from top)
+      var splitY = h * 0.72;
+      var split = mkBox(w * 0.96, h * 0.012, 0.012, dark);
+      split.position.set(0, splitY, d / 2 + 0.001);
+      g.add(split);
+
+      // Fridge door handle (tall, right side)
+      var fdH = h * 0.28;
+      var fHandle = mkBox(0.028, fdH, 0.045, dark);
+      fHandle.position.set(w * 0.34, splitY / 2, d / 2 + 0.045);
+      g.add(fHandle);
+
+      // Freezer door handle (short, right side)
+      var fzH = h * 0.08;
+      var fzHandle = mkBox(0.028, fzH, 0.045, dark);
+      fzHandle.position.set(w * 0.34, splitY + (h - splitY) * 0.45, d / 2 + 0.045);
+      g.add(fzHandle);
+    }
+
+    // ── Shower enclosure ──────────────────────────────────────────────────────
+    function buildShower(g, w, d, h, col, dark) {
+      var wallT = 0.022;
+      var trayH = h * 0.04;
+
+      // Floor tray
+      var tray = mkBox(w, trayH, d, dark);
+      tray.position.set(0, trayH / 2, 0);
+      g.add(tray);
+
+      var glassMat = new THREE.MeshLambertMaterial({
+        color: 0xCCEEFF, transparent: true, opacity: 0.22
+      });
+      var frameY = trayH + h / 2;
+
+      // Back wall (-z)
+      var bk = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallT), glassMat);
+      bk.position.set(0, frameY, -(d / 2 - wallT / 2));
+      g.add(bk);
+
+      // Left wall
+      var lw = new THREE.Mesh(new THREE.BoxGeometry(wallT, h, d), glassMat);
+      lw.position.set(-(w / 2 - wallT / 2), frameY, 0);
+      g.add(lw);
+
+      // Right wall
+      var rw = new THREE.Mesh(new THREE.BoxGeometry(wallT, h, d), glassMat);
+      rw.position.set(w / 2 - wallT / 2, frameY, 0);
+      g.add(rw);
+
+      // Shower head arm (horizontal, at back, near top)
+      var armY = trayH + h * 0.90;
+      var arm = mkBox(w * 0.28, 0.025, 0.025, dark);
+      arm.position.set(0, armY, -(d / 2 - w * 0.14 - wallT));
+      g.add(arm);
+
+      // Shower rose (flat disc)
+      var rose = new THREE.Mesh(
+        new THREE.CylinderGeometry(w * 0.18, w * 0.18, 0.018, 16),
+        new THREE.MeshLambertMaterial({ color: dark })
+      );
+      rose.position.set(0, armY - 0.05, -(d / 2 - w * 0.28 - wallT));
+      g.add(rose);
+    }
+
+    // ── Washing machine ───────────────────────────────────────────────────────
+    function buildWashingMachine(g, w, d, h, col, dark) {
+      var body = mkBox(w, h, d, col);
+      body.position.set(0, h / 2, 0);
+      g.add(body);
+
+      // Top panel cap
+      var cap = mkBox(w * 1.01, h * 0.02, d * 1.01, dark);
+      cap.position.set(0, h - h * 0.01, 0);
+      g.add(cap);
+
+      // Circular porthole door
+      var doorR = Math.min(w, h) * 0.30;
+      var porthole = new THREE.Mesh(
+        new THREE.CylinderGeometry(doorR, doorR, 0.032, 24),
+        new THREE.MeshLambertMaterial({ color: 0x112233 })
+      );
+      porthole.rotation.x = Math.PI / 2;
+      porthole.castShadow = true;
+      porthole.position.set(0, h * 0.45, d / 2 + 0.016);
+      g.add(porthole);
+
+      // Chrome ring around porthole
+      var ring = new THREE.Mesh(
+        new THREE.CylinderGeometry(doorR + 0.022, doorR + 0.022, 0.018, 24),
+        new THREE.MeshLambertMaterial({ color: 0xCCCCCC })
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(0, h * 0.45, d / 2 + 0.009);
+      g.add(ring);
+
+      // Control panel strip
+      var panel = mkBox(w * 0.88, h * 0.07, 0.010, dark);
+      panel.position.set(0, h * 0.87, d / 2 + 0.005);
+      g.add(panel);
+    }
+
+    // ── Dispatcher ────────────────────────────────────────────────────────────
+    function createFurnitureGroup(item, col) {
+      var g = new THREE.Group();
+      var w = item.widthM, d = item.depthM, h = item.heightM;
+      var dark = darkenHex(col, 0.62);
+      var lite = lightenHex(col, 1.35);
+
+      switch (item.type) {
+        case 'chair': case 'officeChair': case 'barStool':
+          buildChair(g, w, d, h, col, dark); break;
+        case 'armchair':
+          buildArmchair(g, w, d, h, col, dark); break;
+        case 'sofa':
+          buildSofa(g, w, d, h, col, dark); break;
+        case 'singleBed': case 'doubleBed': case 'queenBed': case 'kingBed':
+          buildBed(g, w, d, h, col, dark, lite); break;
+        case 'diningTable': case 'coffeeTable': case 'desk':
+        case 'kitchenCounter': case 'islandCounter': case 'stove': case 'tvUnit':
+          buildTable(g, w, d, h, col, dark); break;
+        case 'roundDiningTable':
+          buildRoundTable(g, w, d, h, col, dark); break;
+        case 'toilet':
+          buildToilet(g, w, d, h, col, dark); break;
+        case 'wardrobe': case 'bookshelf':
+        case 'filingCabinet': case 'vanity':
+          buildWardrobe(g, w, d, h, col, dark); break;
+        case 'dresser':
+          buildDresser(g, w, d, h, col, dark); break;
+        case 'nightstand':
+          buildNightstand(g, w, d, h, col, dark); break;
+        case 'bathtub':
+          buildBathtub(g, w, d, h, col, dark); break;
+        case 'sink': case 'basinSink':
+          buildSink(g, w, d, h, col, dark); break;
+        case 'floorLamp':
+          buildFloorLamp(g, w, d, h, col, dark); break;
+        case 'refrigerator':
+          buildRefrigerator(g, w, d, h, col, dark); break;
+        case 'shower':
+          buildShower(g, w, d, h, col, dark); break;
+        case 'washingMachine':
+          buildWashingMachine(g, w, d, h, col, dark); break;
+        default: {
+          var fb = mkBox(w, h, d, col);
+          fb.position.y = h / 2;
+          g.add(fb);
+        }
+      }
+      g.userData.furnitureType = item.type;
+      return g;
+    }
+
+    // ── Door builder — local wall space (x=along wall, y=up, z=through wall) ──
+    // Inner face is -z, outer face is +z. Door leaf faces the inner side.
+    function _buildDoor(g, w, h, el, T) {
+      var fT   = Math.min(0.065, w * 0.08);  // frame strip width
+      var lT   = 0.038;                       // leaf thickness
+      var fd   = T + 0.064;                   // frame depth (protrudes both sides)
+      var cy   = el + h / 2;
+      var fCol = 0xD6CAB8;                    // warm plaster/wood frame
+
+      // Dark void — hides the wall colour in the opening
+      var vd = mkBox(w, h, T * 1.06, 0x050810);
+      vd.position.set(0, cy, 0);
+      g.add(vd);
+
+      // Frame: left jamb, right jamb, header
+      var lj = mkBox(fT, h, fd, fCol);
+      lj.position.set(-(w / 2 + fT / 2), cy, 0);
+      g.add(lj);
+
+      var rj = mkBox(fT, h, fd, fCol);
+      rj.position.set(w / 2 + fT / 2, cy, 0);
+      g.add(rj);
+
+      var hd = mkBox(w + fT * 2, fT, fd, fCol);
+      hd.position.set(0, el + h + fT / 2, 0);
+      g.add(hd);
+
+      // Door leaf — sits at inner wall face
+      var leafW = w - 0.014;
+      var leafH = h - fT - 0.008;
+      var leafY = el + 0.004 + leafH / 2;
+      var leafZ = -(T / 2) - lT / 2;
+
+      var leaf = mkBox(leafW, leafH, lT, 0x9B6540);
+      leaf.position.set(0, leafY, leafZ);
+      g.add(leaf);
+
+      // Two raised panels on inner face of leaf
+      var panW  = leafW * 0.72;
+      var botPH = leafH * 0.46;
+      var topPH = leafH * 0.36;
+      var panZ  = leafZ - lT / 2 - 0.007;
+      var panCol = 0x7A5030;
+
+      var bp = mkBox(panW, botPH, 0.013, panCol);
+      bp.position.set(0, el + 0.014 + botPH / 2, panZ);
+      g.add(bp);
+
+      var tp = mkBox(panW, topPH, 0.013, panCol);
+      tp.position.set(0, el + 0.014 + botPH + 0.024 + topPH / 2, panZ);
+      g.add(tp);
+
+      // Handle: backplate + grip bar
+      var hx = leafW * 0.34;
+      var hy = el + leafH * 0.48;
+      var plate = mkBox(0.020, 0.160, 0.011, 0xBB9020);
+      plate.position.set(hx, hy, leafZ - lT / 2 - 0.006);
+      g.add(plate);
+
+      var grip = mkBox(0.012, 0.090, 0.012, 0xD4AF37);
+      grip.position.set(hx, hy, leafZ - lT / 2 - 0.016);
+      g.add(grip);
+    }
+
+    // ── Window builder — local wall space ─────────────────────────────────────
+    function _buildWindow(g, w, h, el, T) {
+      var fT   = Math.min(0.055, w * 0.065); // frame strip width
+      var gT   = 0.010;                       // glass thickness
+      var fd   = T + 0.050;                   // frame depth
+      var cy   = el + h / 2;
+      var fCol = 0xECEAE4;                    // near-white frame
+
+      // Dark void
+      var vd = mkBox(w, h, T * 1.06, 0x050810);
+      vd.position.set(0, cy, 0);
+      g.add(vd);
+
+      // 4-piece frame
+      var innerW = w - fT * 2;
+      var innerH = h - fT * 2;
+
+      var fl = mkBox(fT, h, fd, fCol);
+      fl.position.set(-(w / 2 - fT / 2), cy, 0);
+      g.add(fl);
+
+      var fr = mkBox(fT, h, fd, fCol);
+      fr.position.set(w / 2 - fT / 2, cy, 0);
+      g.add(fr);
+
+      var ft = mkBox(w, fT, fd, fCol);
+      ft.position.set(0, el + h - fT / 2, 0);
+      g.add(ft);
+
+      var fb = mkBox(w, fT, fd, fCol);
+      fb.position.set(0, el + fT / 2, 0);
+      g.add(fb);
+
+      // Glass pane (centered in wall)
+      var glassMat = new THREE.MeshLambertMaterial({
+        color: 0xB8D8F5, transparent: true, opacity: 0.28
+      });
+      var glass = new THREE.Mesh(new THREE.BoxGeometry(innerW, innerH, gT), glassMat);
+      glass.position.set(0, cy, 0);
+      g.add(glass);
+
+      // Muntins: 1 horizontal + 1 vertical → 4 panes
+      var mT   = fT * 0.45;
+      var mCol = 0xDDD9D2;
+      var mH = mkBox(innerW, mT, gT + 0.008, mCol);
+      mH.position.set(0, cy, 0);
+      g.add(mH);
+
+      var mV = mkBox(mT, innerH, gT + 0.008, mCol);
+      mV.position.set(0, cy, 0);
+      g.add(mV);
+
+      // Window sill (inner face, protrudes into room at bottom)
+      var sill = mkBox(w + 0.06, 0.040, 0.110, 0xCDC8C0);
+      sill.position.set(0, el - 0.005, -(T / 2 + 0.030));
+      g.add(sill);
+    }
+
     // ── Build scene from room JSON ─────────────────────────────────────────────
     function buildRoom(data) {
       lastData = data;
       disposeGroup(roomGroup);
 
-      var pts = data.points;        // [{x, z}] metres, floor plane
-      var H   = data.wallHeightM   || 2.4;
+      var pts = data.points;
+      var H   = data.wallHeightM    || 2.4;
       var T   = data.wallThicknessM || 0.2;
       var n   = pts.length;
       if (n < 3) return;
 
-      // Centre the room at world origin
       var cx = 0, cz = 0;
       pts.forEach(function(p) { cx += p.x; cz += p.z; });
       cx /= n; cz /= n;
@@ -214,8 +867,7 @@
 
       var floorGeo = new THREE.ShapeGeometry(shape);
       floorGeo.rotateX(-Math.PI / 2);
-      var floor = new THREE.Mesh(floorGeo,
-        new THREE.MeshLambertMaterial({ color: 0xB8C0A8 }));
+      var floor = new THREE.Mesh(floorGeo, new THREE.MeshLambertMaterial({ color: 0xB8C0A8 }));
       floor.receiveShadow = true;
       floor.position.y = 0.001;
       roomGroup.add(floor);
@@ -233,57 +885,50 @@
         var a = pts[i], b = pts[(i + 1) % n];
         var ax = lx(a), az = lz(a), bx = lx(b), bz = lz(b);
         var dx = bx - ax, dz = bz - az;
-        var len = Math.sqrt(dx*dx + dz*dz);
+        var len = Math.sqrt(dx * dx + dz * dz);
         if (len < 0.01) continue;
 
         var wallGeo = new THREE.BoxGeometry(len + T, H, T);
-        var wall    = new THREE.Mesh(wallGeo,
-          new THREE.MeshLambertMaterial({ color: 0xE0DDD5 }));
-        wall.castShadow    = true;
-        wall.receiveShadow = true;
+        var wall    = new THREE.Mesh(wallGeo, new THREE.MeshLambertMaterial({ color: 0xE0DDD5 }));
+        wall.castShadow = wall.receiveShadow = true;
         wall.position.set((ax + bx) / 2, H / 2, (az + bz) / 2);
         wall.rotation.y = -Math.atan2(dz, dx);
         wall.userData.wallIndex = i;
         roomGroup.add(wall);
       }
 
-      // ── Door / window markers ──────────────────────────────────────────────
+      // ── Doors & windows ────────────────────────────────────────────────────
       (data.roomObjects || []).forEach(function(obj) {
         var wi = obj.wallIndex;
         var a  = pts[wi], b = pts[(wi + 1) % n];
         var ax = lx(a), az = lz(a), bx = lx(b), bz = lz(b);
         var dx = bx - ax, dz = bz - az;
-        var len = Math.sqrt(dx*dx + dz*dz);
+        var len = Math.sqrt(dx * dx + dz * dz);
         if (len < 0.01) return;
         var ux = dx / len, uz = dz / len;
         var posX = ax + ux * obj.positionAlong * len;
         var posZ = az + uz * obj.positionAlong * len;
 
-        var color = obj.isDoor ? 0x6B3A22 : 0x4FC3F7;
-        var mat   = new THREE.MeshLambertMaterial({
-          color: color,
-          transparent: !obj.isDoor,
-          opacity: obj.isDoor ? 1.0 : 0.4
-        });
-        var mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(obj.widthM, obj.heightM, T * 1.02), mat);
-        mesh.position.set(posX, obj.elevationM + obj.heightM / 2, posZ);
-        mesh.rotation.y = -Math.atan2(dz, dx);
-        roomGroup.add(mesh);
+        // Group centred at opening XZ, y=0, aligned with wall
+        var og = new THREE.Group();
+        og.position.set(posX, 0, posZ);
+        og.rotation.y = -Math.atan2(dz, dx);
+
+        if (obj.isDoor) {
+          _buildDoor(og, obj.widthM, obj.heightM, obj.elevationM, T);
+        } else {
+          _buildWindow(og, obj.widthM, obj.heightM, obj.elevationM, T);
+        }
+        roomGroup.add(og);
       });
 
-      // ── Furniture ──────────────────────────────────────────────────────────
+      // ── Furniture — procedural shapes (Phase 3D-3) ────────────────────────
       (data.furnitureItems || []).forEach(function(item) {
         var color = parseInt(item.colorHex.replace('#', ''), 16);
-        var mesh  = new THREE.Mesh(
-          new THREE.BoxGeometry(item.widthM, item.heightM, item.depthM),
-          new THREE.MeshLambertMaterial({ color: color }));
-        mesh.castShadow    = true;
-        mesh.receiveShadow = true;
-        mesh.position.set(item.x - cx, item.heightM / 2, item.z - cz);
-        mesh.rotation.y = -item.rotationDeg * Math.PI / 180;
-        mesh.userData.furnitureType = item.type;
-        roomGroup.add(mesh);
+        var group = createFurnitureGroup(item, color);
+        group.position.set(item.x - cx, 0, item.z - cz);
+        group.rotation.y = -item.rotationDeg * Math.PI / 180;
+        roomGroup.add(group);
       });
 
       // ── Ceiling point light ────────────────────────────────────────────────
@@ -294,11 +939,11 @@
       // ── Fit camera to room ─────────────────────────────────────────────────
       var maxR = 0;
       pts.forEach(function(p) {
-        maxR = Math.max(maxR, Math.sqrt(lx(p)*lx(p) + lz(p)*lz(p)));
+        maxR = Math.max(maxR, Math.sqrt(lx(p) * lx(p) + lz(p) * lz(p)));
       });
-      var d = maxR * 1.8 + 2;
+      var camD = maxR * 1.8 + 2;
       controls.target.set(0, H / 2, 0);
-      controls.setPosition(d, d * 0.75, d);
+      controls.setPosition(camD, camD * 0.75, camD);
 
       document.getElementById('loading').style.display = 'none';
     }
@@ -323,12 +968,12 @@
       cx /= n; cz /= n;
       var maxR = 0;
       pts.forEach(function(p) {
-        maxR = Math.max(maxR, Math.sqrt((p.x-cx)*(p.x-cx) + (p.z-cz)*(p.z-cz)));
+        maxR = Math.max(maxR, Math.sqrt((p.x - cx) * (p.x - cx) + (p.z - cz) * (p.z - cz)));
       });
-      var d = maxR * 1.8 + 2;
+      var camD = maxR * 1.8 + 2;
       var H = lastData.wallHeightM || 2.4;
       controls.target.set(0, H / 2, 0);
-      controls.setPosition(d, d * 0.75, d);
+      controls.setPosition(camD, camD * 0.75, camD);
     };
 
     window.captureScreenshot = function() {
@@ -342,26 +987,24 @@
     window.highlightWall = function(index) {
       roomGroup.children.forEach(function(obj) {
         if (obj.userData.wallIndex !== undefined) {
-          obj.material.color.set(
-            obj.userData.wallIndex === index ? 0x4A90D9 : 0xE0DDD5);
+          obj.material.color.set(obj.userData.wallIndex === index ? 0x4A90D9 : 0xE0DDD5);
         }
       });
     };
 
-    // ── Tap detection via touchend (click is suppressed by OrbitControls) ──────
-    // Track movement so orbit drags don't trigger a tap.
+    // ── Tap detection ─────────────────────────────────────────────────────────
     var raycaster   = new THREE.Raycaster();
     var mouse2      = new THREE.Vector2();
     var _tapOrigin  = null;
     var _tapDragged = false;
-    var TAP_SLOP    = 12; // pixels — movement beyond this = drag, not tap
+    var TAP_SLOP    = 12;
 
     renderer.domElement.addEventListener('touchstart', function(e) {
       if (e.touches.length === 1) {
         _tapOrigin  = { x: e.touches[0].clientX, y: e.touches[0].clientY };
         _tapDragged = false;
       } else {
-        _tapOrigin = null; // multi-touch (pinch) — not a tap
+        _tapOrigin = null;
       }
     }, { passive: true });
 
@@ -384,13 +1027,21 @@
       raycaster.setFromCamera(mouse2, camera);
       var hits = raycaster.intersectObjects(roomGroup.children, true);
       if (!hits.length || !window.FlutterBridge) return;
-      var obj = hits[0].object;
-      if (obj.userData.wallIndex !== undefined) {
-        window.FlutterBridge.postMessage(
-          JSON.stringify({ type: 'wallTap', index: obj.userData.wallIndex }));
-      } else if (obj.userData.furnitureType) {
-        window.FlutterBridge.postMessage(
-          JSON.stringify({ type: 'furnitureTap', furnitureType: obj.userData.furnitureType }));
+
+      // Walk up parent chain — furniture is a Group; walls are direct meshes
+      var cur = hits[0].object;
+      while (cur) {
+        if (cur.userData.wallIndex !== undefined) {
+          window.FlutterBridge.postMessage(
+            JSON.stringify({ type: 'wallTap', index: cur.userData.wallIndex }));
+          break;
+        }
+        if (cur.userData.furnitureType) {
+          window.FlutterBridge.postMessage(
+            JSON.stringify({ type: 'furnitureTap', furnitureType: cur.userData.furnitureType }));
+          break;
+        }
+        cur = cur.parent;
       }
     }, { passive: true });
 
