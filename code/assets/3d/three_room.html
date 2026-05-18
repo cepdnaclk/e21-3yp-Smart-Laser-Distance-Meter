@@ -120,6 +120,12 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Phase 3D-4: sRGB output space makes colours look correct under PBR lighting
+    if (THREE.SRGBColorSpace !== undefined) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+    } else if (THREE.sRGBEncoding !== undefined) {
+      renderer.outputEncoding = THREE.sRGBEncoding; // Three.js < r152 fallback
+    }
     document.body.appendChild(renderer.domElement);
 
     // ── Scene ─────────────────────────────────────────────────────────────────
@@ -138,9 +144,11 @@
     controls.target.set(0, 1.2, 0);
     controls.setPosition(6, 5, 6);
 
-    // ── Lights ────────────────────────────────────────────────────────────────
-    scene.add(new THREE.HemisphereLight(0xC8D8FF, 0x442200, 0.7));
-    var sun = new THREE.DirectionalLight(0xFFF8EE, 1.4);
+    // ── Lights (Phase 3D-4: PBR-balanced — lower intensities, scene stays readable) ──
+    // Soft ambient sky from above, warm ground bounce
+    scene.add(new THREE.HemisphereLight(0xC8D8FF, 0x5A3D1A, 0.45));
+    // Primary directional "sun" — moderate, casts soft shadows
+    var sun = new THREE.DirectionalLight(0xFFF4E0, 1.0);
     sun.position.set(10, 18, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.width  = 2048;
@@ -149,14 +157,19 @@
     sun.shadow.camera.far  = 100;
     sun.shadow.camera.left = sun.shadow.camera.bottom = -25;
     sun.shadow.camera.right = sun.shadow.camera.top   =  25;
-    sun.shadow.bias = -0.0004;
+    sun.shadow.bias = -0.0003;
     scene.add(sun);
+    // Gentle fill from opposite side — lifts deep shadows without washing out
+    var fill = new THREE.DirectionalLight(0xC0D8FF, 0.25);
+    fill.position.set(-8, 10, -8);
+    scene.add(fill);
 
     // ── Room group ────────────────────────────────────────────────────────────
     var roomGroup = new THREE.Group();
     scene.add(roomGroup);
 
     var lastData = null;
+    var _woodTex = null;  // created once on first buildRoom call; null forces regeneration on reload
 
     function disposeGroup(group) {
       var kids = group.children.slice();
@@ -189,10 +202,16 @@
               Math.min(255, Math.floor( (hex        & 0xFF) * f));
     }
 
-    function mkBox(w, h, d, color) {
+    // Phase 3D-4: PBR material — roughness/metalness give realistic light response
+    function mkBox(w, h, d, color, opts) {
+      opts = opts || {};
       var m = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, d),
-        new THREE.MeshLambertMaterial({ color: color })
+        new THREE.MeshStandardMaterial({
+          color:     color,
+          roughness: opts.roughness !== undefined ? opts.roughness : 0.75,
+          metalness: opts.metalness !== undefined ? opts.metalness : 0.05,
+        })
       );
       m.castShadow = m.receiveShadow = true;
       return m;
@@ -358,7 +377,7 @@
 
       var top = new THREE.Mesh(
         new THREE.CylinderGeometry(r, r, topT, 28),
-        new THREE.MeshLambertMaterial({ color: col })
+        new THREE.MeshStandardMaterial({ color: col, roughness: 0.6, metalness: 0.0 })
       );
       top.castShadow = top.receiveShadow = true;
       top.position.set(0, h - topT / 2, 0);
@@ -366,7 +385,7 @@
 
       var post = new THREE.Mesh(
         new THREE.CylinderGeometry(legR, legR * 1.3, legH, 10),
-        new THREE.MeshLambertMaterial({ color: dark })
+        new THREE.MeshStandardMaterial({ color: dark, roughness: 0.5, metalness: 0.3 })
       );
       post.castShadow = true;
       post.position.set(0, legH / 2, 0);
@@ -471,7 +490,7 @@
       // Weighted base
       var base = new THREE.Mesh(
         new THREE.CylinderGeometry(r * 0.75, r * 0.90, baseH, 16),
-        new THREE.MeshLambertMaterial({ color: dark })
+        new THREE.MeshStandardMaterial({ color: dark, roughness: 0.3, metalness: 0.6 })
       );
       base.castShadow = true;
       base.position.set(0, baseH / 2, 0);
@@ -480,7 +499,7 @@
       // Thin pole
       var pole = new THREE.Mesh(
         new THREE.CylinderGeometry(poleR, poleR, poleH, 8),
-        new THREE.MeshLambertMaterial({ color: dark })
+        new THREE.MeshStandardMaterial({ color: dark, roughness: 0.25, metalness: 0.7 })
       );
       pole.castShadow = true;
       pole.position.set(0, baseH + poleH / 2, 0);
@@ -489,7 +508,7 @@
       // Tapered shade (wide at bottom, narrow at top)
       var shade = new THREE.Mesh(
         new THREE.CylinderGeometry(r * 0.55, r, shadeH, 16),
-        new THREE.MeshLambertMaterial({ color: col })
+        new THREE.MeshStandardMaterial({ color: col, roughness: 0.8, metalness: 0.0 })
       );
       shade.castShadow = true;
       shade.position.set(0, baseH + poleH + shadeH / 2, 0);
@@ -593,8 +612,8 @@
       tray.position.set(0, trayH / 2, 0);
       g.add(tray);
 
-      var glassMat = new THREE.MeshLambertMaterial({
-        color: 0xCCEEFF, transparent: true, opacity: 0.22
+      var glassMat = new THREE.MeshStandardMaterial({
+        color: 0xCCEEFF, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.1
       });
       var frameY = trayH + h / 2;
 
@@ -622,7 +641,7 @@
       // Shower rose (flat disc)
       var rose = new THREE.Mesh(
         new THREE.CylinderGeometry(w * 0.18, w * 0.18, 0.018, 16),
-        new THREE.MeshLambertMaterial({ color: dark })
+        new THREE.MeshStandardMaterial({ color: dark, roughness: 0.2, metalness: 0.8 })
       );
       rose.position.set(0, armY - 0.05, -(d / 2 - w * 0.28 - wallT));
       g.add(rose);
@@ -643,7 +662,7 @@
       var doorR = Math.min(w, h) * 0.30;
       var porthole = new THREE.Mesh(
         new THREE.CylinderGeometry(doorR, doorR, 0.032, 24),
-        new THREE.MeshLambertMaterial({ color: 0x112233 })
+        new THREE.MeshStandardMaterial({ color: 0x112233, roughness: 0.1, metalness: 0.2 })
       );
       porthole.rotation.x = Math.PI / 2;
       porthole.castShadow = true;
@@ -653,7 +672,7 @@
       // Chrome ring around porthole
       var ring = new THREE.Mesh(
         new THREE.CylinderGeometry(doorR + 0.022, doorR + 0.022, 0.018, 24),
-        new THREE.MeshLambertMaterial({ color: 0xCCCCCC })
+        new THREE.MeshStandardMaterial({ color: 0xCCCCCC, roughness: 0.15, metalness: 0.9 })
       );
       ring.rotation.x = Math.PI / 2;
       ring.position.set(0, h * 0.45, d / 2 + 0.009);
@@ -815,8 +834,8 @@
       g.add(fb);
 
       // Glass pane (centered in wall)
-      var glassMat = new THREE.MeshLambertMaterial({
-        color: 0xB8D8F5, transparent: true, opacity: 0.28
+      var glassMat = new THREE.MeshStandardMaterial({
+        color: 0xB8D8F5, transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0.1
       });
       var glass = new THREE.Mesh(new THREE.BoxGeometry(innerW, innerH, gT), glassMat);
       glass.position.set(0, cy, 0);
@@ -839,6 +858,139 @@
       g.add(sill);
     }
 
+    // ── Floor shape helper ────────────────────────────────────────────────────
+    // Root cause of the L-shape bug:
+    //   ShapeGeometry places vertices with shape.y → world -Z after rotateX(-π/2).
+    //   Walls sit at world Z = +lz.  Using +lz as shape.y gives a floor mirrored
+    //   in Z — invisible for symmetric rectangles, clearly wrong for L-shapes.
+    // Fix: use -lz as shape.y so world Z = +lz after rotation, matching walls.
+    //   Negating Y reverses winding, so we re-check and reverse if needed.
+    // The old miter-inset is removed — it broke concave (L-shape) corners.
+    function buildFloorShape(rawPts, lxFn, lzFn) {
+      var n = rawPts.length;
+      // Signed area in original (lx, lz) space.
+      // After negating lz the sign flips: CCW→CW, CW→CCW.
+      // We need CCW in (lx, -lz) space for ShapeGeometry to fill the interior.
+      // So: if original area > 0 (CCW in lz) → after negate → CW → must reverse.
+      //     if original area < 0 (CW  in lz) → after negate → CCW → keep as-is.
+      var area = 0;
+      for (var i = 0; i < n; i++) {
+        var j = (i + 1) % n;
+        area += lxFn(rawPts[i]) * lzFn(rawPts[j]) - lxFn(rawPts[j]) * lzFn(rawPts[i]);
+      }
+      var pts2 = area > 0 ? rawPts.slice().reverse() : rawPts;
+      var shape = new THREE.Shape();
+      pts2.forEach(function(p, i) {
+        // Use -lzFn so that after rotateX(-π/2): world Z = -(-lz) = +lz ✓
+        if (i === 0) shape.moveTo(lxFn(p), -lzFn(p));
+        else         shape.lineTo(lxFn(p), -lzFn(p));
+      });
+      shape.closePath();
+      return shape;
+    }
+
+    // ── Phase 3D-4 Step 2: Procedural wood-grain floor texture ────────────────
+    // Drawn entirely on a canvas — no asset file, no network request, no CORS.
+    function makeWoodTexture() {
+      // Vertical planks: each board runs top→bottom in the texture (V direction).
+      // UV.x → world X (plank width), UV.y → world Z (plank length along room depth).
+      // This makes planks run along the room's depth axis — the natural direction.
+      var W = 512, H = 512;
+      var cv  = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d');
+
+      var NUM_PLANKS = 6;           // boards side-by-side in U (world X) direction
+      var plankW     = W / NUM_PLANKS;
+
+      var BASE  = [186, 148, 90];
+      var DARK  = [130,  88, 35];
+      var LIGHT = [215, 178, 118];
+
+      function rgba(c, a) {
+        return 'rgba(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' +
+               Math.round(c[2]) + ',' + a.toFixed(3) + ')';
+      }
+      function rnd(lo, hi) { return lo + Math.random() * (hi - lo); }
+      function mix(c, t, f) {
+        return [c[0] + (t[0] - c[0]) * f, c[1] + (t[1] - c[1]) * f, c[2] + (t[2] - c[2]) * f];
+      }
+
+      for (var p = 0; p < NUM_PLANKS; p++) {
+        var x0 = p * plankW;
+
+        var shift    = rnd(-18, 18);
+        var plankCol = [BASE[0] + shift, BASE[1] + shift * 0.6, BASE[2] + shift * 0.3];
+
+        // Top-to-bottom gradient (simulates subtle shading along the board length)
+        var grad = ctx.createLinearGradient(x0, 0, x0, H);
+        grad.addColorStop(0,    rgba(mix(plankCol, LIGHT, 0.15), 1));
+        grad.addColorStop(0.35, rgba(mix(plankCol, LIGHT, 0.22), 1));
+        grad.addColorStop(0.75, rgba(plankCol, 1));
+        grad.addColorStop(1,    rgba(mix(plankCol, DARK, 0.08), 1));
+        ctx.fillStyle = grad;
+        ctx.fillRect(x0, 0, plankW, H);
+
+        // Vertical grain lines (wavy, running top-to-bottom)
+        var numGrain = Math.round(rnd(28, 42));
+        for (var g = 0; g < numGrain; g++) {
+          var gx    = x0 + rnd(1, plankW - 1);
+          var alpha = rnd(0.04, 0.22);
+          var col   = Math.random() > 0.45 ? DARK : LIGHT;
+          var s1 = rnd(0, 10), s2 = rnd(0, 10), s3 = rnd(0, 10);
+
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          for (var y = 0; y <= H; y += 4) {
+            var wave = Math.sin(y * 0.013 + s1) * 2.8
+                     + Math.sin(y * 0.034 + s2) * 1.3
+                     + Math.sin(y * 0.006 + s3) * 1.1;
+            ctx.lineTo(gx + wave, y);
+          }
+          ctx.strokeStyle = rgba(col, alpha);
+          ctx.lineWidth   = rnd(0.4, 1.4);
+          ctx.stroke();
+        }
+
+        // Knot
+        if (Math.random() > 0.45) {
+          var kx = x0 + rnd(plankW * 0.18, plankW * 0.82);
+          var ky = rnd(H * 0.12, H * 0.88);
+          var kr = rnd(9, 22);
+          var ka = rnd(-0.4, 0.4);
+          for (var r = 5; r >= 0; r--) {
+            ctx.beginPath();
+            ctx.ellipse(kx, ky, kr * (0.18 + r * 0.18), kr * (0.10 + r * 0.10), ka, 0, Math.PI * 2);
+            ctx.strokeStyle = rgba(DARK, 0.08 + r * 0.05);
+            ctx.lineWidth   = rnd(0.8, 1.8);
+            ctx.stroke();
+          }
+          ctx.beginPath();
+          ctx.ellipse(kx, ky, kr * 0.28, kr * 0.16, ka, 0, Math.PI * 2);
+          ctx.fillStyle = rgba([DARK[0] - 25, DARK[1] - 15, DARK[2] - 8], 0.55);
+          ctx.fill();
+        }
+
+        // Vertical plank joint line (right edge of each board, except last)
+        if (p > 0) {
+          ctx.strokeStyle = rgba(DARK, 0.65);
+          ctx.lineWidth   = 1.5;
+          ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x0, H); ctx.stroke();
+
+          // Shadow gradient to the right of the joint
+          var jg = ctx.createLinearGradient(x0, 0, x0 + 5, 0);
+          jg.addColorStop(0, rgba(DARK, 0.28));
+          jg.addColorStop(1, rgba(DARK, 0));
+          ctx.fillStyle = jg;
+          ctx.fillRect(x0, 0, 5, H);
+        }
+      }
+
+      var tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
     // ── Build scene from room JSON ─────────────────────────────────────────────
     function buildRoom(data) {
       lastData = data;
@@ -858,16 +1010,33 @@
       function lz(p) { return p.z - cz; }
 
       // ── Floor ──────────────────────────────────────────────────────────────
-      var shape = new THREE.Shape();
-      pts.forEach(function(p, i) {
-        if (i === 0) shape.moveTo(lx(p), lz(p));
-        else         shape.lineTo(lx(p), lz(p));
-      });
-      shape.closePath();
+      var shape = buildFloorShape(pts, lx, lz);
 
       var floorGeo = new THREE.ShapeGeometry(shape);
       floorGeo.rotateX(-Math.PI / 2);
-      var floor = new THREE.Mesh(floorGeo, new THREE.MeshLambertMaterial({ color: 0xB8C0A8 }));
+
+      // Phase 3D-4 Step 2: wood-grain texture — create once, reuse every rebuild
+      if (!_woodTex) _woodTex = makeWoodTexture();
+
+      // Compute room bounding box for texture repeat.
+      // Planks are now VERTICAL in the texture (run in V = world-Z direction).
+      // 6 planks side-by-side in U (world X): rptX tiles → rptX×6 boards across X.
+      // Each board is plankWidthM wide; rptZ tiles the board length in Z (~1.5 m/board).
+      var minBX = Infinity, maxBX = -Infinity, minBZ = Infinity, maxBZ = -Infinity;
+      pts.forEach(function(p) {
+        var px = lx(p), pz = lz(p);
+        if (px < minBX) minBX = px; if (px > maxBX) maxBX = px;
+        if (pz < minBZ) minBZ = pz; if (pz > maxBZ) maxBZ = pz;
+      });
+      var floorW = maxBX - minBX;
+      var floorD = maxBZ - minBZ;
+      var rptX = Math.max(2, Math.round(floorW / (0.12 * 6))); // ~0.12 m wide planks
+      var rptZ = Math.max(1, Math.round(floorD / 1.5));         // ~1.5 m long boards
+      _woodTex.repeat.set(rptX, rptZ);
+
+      var floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({
+        map: _woodTex, roughness: 0.55, metalness: 0.0
+      }));
       floor.receiveShadow = true;
       floor.position.y = 0.001;
       roomGroup.add(floor);
@@ -875,8 +1044,9 @@
       // ── Ceiling ────────────────────────────────────────────────────────────
       var ceilGeo = new THREE.ShapeGeometry(shape.clone());
       ceilGeo.rotateX(-Math.PI / 2);
+      // Phase 3D-4: ceiling — slightly off-white plaster
       var ceil = new THREE.Mesh(ceilGeo,
-        new THREE.MeshLambertMaterial({ color: 0xF0EEE8, side: THREE.BackSide }));
+        new THREE.MeshStandardMaterial({ color: 0xDDDAD4, roughness: 0.95, metalness: 0.0, side: THREE.BackSide }));
       ceil.position.y = H;
       roomGroup.add(ceil);
 
@@ -889,7 +1059,10 @@
         if (len < 0.01) continue;
 
         var wallGeo = new THREE.BoxGeometry(len + T, H, T);
-        var wall    = new THREE.Mesh(wallGeo, new THREE.MeshLambertMaterial({ color: 0xE0DDD5 }));
+        // Phase 3D-4: walls — warm off-white plaster, matte
+        var wall    = new THREE.Mesh(wallGeo, new THREE.MeshStandardMaterial({
+          color: 0xCDC8BC, roughness: 0.90, metalness: 0.0
+        }));
         wall.castShadow = wall.receiveShadow = true;
         wall.position.set((ax + bx) / 2, H / 2, (az + bz) / 2);
         wall.rotation.y = -Math.atan2(dz, dx);
@@ -931,8 +1104,8 @@
         roomGroup.add(group);
       });
 
-      // ── Ceiling point light ────────────────────────────────────────────────
-      var ptLight = new THREE.PointLight(0xFFF5E0, 0.5, H * 5);
+      // ── Ceiling point light (simulates indoor fixture) ─────────────────────
+      var ptLight = new THREE.PointLight(0xFFF0CC, 0.4, H * 5);
       ptLight.position.set(0, H * 0.95, 0);
       roomGroup.add(ptLight);
 
@@ -987,7 +1160,7 @@
     window.highlightWall = function(index) {
       roomGroup.children.forEach(function(obj) {
         if (obj.userData.wallIndex !== undefined) {
-          obj.material.color.set(obj.userData.wallIndex === index ? 0x4A90D9 : 0xE0DDD5);
+          obj.material.color.set(obj.userData.wallIndex === index ? 0x4A90D9 : 0xCDC8BC);
         }
       });
     };
