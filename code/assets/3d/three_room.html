@@ -168,8 +168,10 @@
     var roomGroup = new THREE.Group();
     scene.add(roomGroup);
 
-    var lastData = null;
-    var _woodTex = null;  // created once on first buildRoom call; null forces regeneration on reload
+    var lastData    = null;
+    var _woodTex    = null;
+    var _plasterTex = null;
+    var _shadowTex  = null;
 
     function disposeGroup(group) {
       var kids = group.children.slice();
@@ -991,6 +993,96 @@
       return tex;
     }
 
+    // ── Phase 3D-4 Step 3: Procedural plaster/paint wall texture ─────────────
+    // Near-white neutral base so the material's `color` still controls wall tint.
+    // Three layers: coarse trowel sweeps → medium grain → fine dust — all low
+    // opacity so the result is a subtle matte texture, not a distracting pattern.
+    function makePlasterTexture() {
+      var W = 512, H = 512;
+      var cv  = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d');
+
+      function rnd(lo, hi) { return lo + Math.random() * (hi - lo); }
+
+      // Near-white warm base (matches the wall colour when multiplied with 0xCDC8BC)
+      ctx.fillStyle = 'rgb(240, 238, 234)';
+      ctx.fillRect(0, 0, W, H);
+
+      // Layer 1: coarse trowel sweeps — long thin ellipses at near-horizontal angles
+      for (var i = 0; i < 160; i++) {
+        var sx  = rnd(0, W),  sy  = rnd(0, H);
+        var sw  = rnd(25, 110), sh = rnd(2, 7);
+        var ang = rnd(-0.25, 0.25); // nearly horizontal
+        var brighter = Math.random() > 0.5;
+        var alpha = rnd(0.018, 0.055);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+        ctx.fillStyle = brighter
+          ? 'rgba(255,255,255,' + alpha.toFixed(3) + ')'
+          : 'rgba(168,158,142,' + alpha.toFixed(3) + ')';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Layer 2: medium grain — small irregular blobs (dried plaster granules)
+      for (var j = 0; j < 900; j++) {
+        var mx = rnd(0, W), my = rnd(0, H);
+        var mr = rnd(0.7, 3.2);
+        var ma = rnd(0.025, 0.08);
+        var ml = Math.random() > 0.55;
+        ctx.beginPath();
+        ctx.arc(mx, my, mr, 0, Math.PI * 2);
+        ctx.fillStyle = ml
+          ? 'rgba(255,255,255,' + ma.toFixed(3) + ')'
+          : 'rgba(155,145,130,' + ma.toFixed(3) + ')';
+        ctx.fill();
+      }
+
+      // Layer 3: fine dust — single pixel flecks for micro-roughness
+      for (var k = 0; k < 5000; k++) {
+        var fa = rnd(0.008, 0.035);
+        var fl = Math.random() > 0.5;
+        ctx.fillStyle = fl
+          ? 'rgba(255,255,255,' + fa.toFixed(3) + ')'
+          : 'rgba(145,135,120,' + fa.toFixed(3) + ')';
+        ctx.fillRect(Math.floor(rnd(0, W)), Math.floor(rnd(0, H)), 1, 1);
+      }
+
+      // The texture represents ~1 m² of plaster wall at 512 px.
+      // repeat is set dynamically per wall in buildRoom.
+      var tex = new THREE.CanvasTexture(cv);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    // ── Phase 3D-4 Step 4: Contact shadow texture ─────────────────────────────
+    // A radial gradient drawn on a canvas — dark at centre, fully transparent at
+    // the rim.  One shared texture; each furniture item gets its own PlaneGeometry
+    // scaled to its footprint, placed just above the floor.  depthWrite:false
+    // prevents z-fighting with the wood floor beneath.
+    function makeContactShadowTex() {
+      var S = 256;
+      var cv = document.createElement('canvas');
+      cv.width = S; cv.height = S;
+      var ctx = cv.getContext('2d');
+      var cx  = S / 2, cy = S / 2, r = S / 2;
+      // Gaussian-style falloff — feels physically accurate without being too harsh
+      var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0.00, 'rgba(0,0,0,0.55)');
+      grad.addColorStop(0.25, 'rgba(0,0,0,0.32)');
+      grad.addColorStop(0.55, 'rgba(0,0,0,0.12)');
+      grad.addColorStop(0.80, 'rgba(0,0,0,0.03)');
+      grad.addColorStop(1.00, 'rgba(0,0,0,0.00)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, S, S);
+      var tex = new THREE.CanvasTexture(cv);
+      return tex;
+    }
+
     // ── Build scene from room JSON ─────────────────────────────────────────────
     function buildRoom(data) {
       lastData = data;
@@ -1050,7 +1142,9 @@
       ceil.position.y = H;
       roomGroup.add(ceil);
 
-      // ── Walls ──────────────────────────────────────────────────────────────
+      // ── Walls (Phase 3D-4 Step 3: plaster texture) ────────────────────────
+      if (!_plasterTex) _plasterTex = makePlasterTexture();
+
       for (var i = 0; i < n; i++) {
         var a = pts[i], b = pts[(i + 1) % n];
         var ax = lx(a), az = lz(a), bx = lx(b), bz = lz(b);
@@ -1058,10 +1152,20 @@
         var len = Math.sqrt(dx * dx + dz * dz);
         if (len < 0.01) continue;
 
+        // Clone the texture so each wall can have its own repeat without
+        // affecting the other walls. clone() shares the image data on the GPU
+        // so the extra memory is negligible.
+        var wt = _plasterTex.clone();
+        wt.needsUpdate = true;
+        // 1 texture tile ≈ 1 m of wall. Round to nearest integer tile.
+        wt.repeat.set(Math.max(1, Math.round(len)), Math.max(1, Math.round(H)));
+
         var wallGeo = new THREE.BoxGeometry(len + T, H, T);
-        // Phase 3D-4: walls — warm off-white plaster, matte
         var wall    = new THREE.Mesh(wallGeo, new THREE.MeshStandardMaterial({
-          color: 0xCDC8BC, roughness: 0.90, metalness: 0.0
+          map:       wt,
+          color:     0xFFFFFF,  // white — texture provides full plaster colour
+          roughness: 0.90,
+          metalness: 0.0,
         }));
         wall.castShadow = wall.receiveShadow = true;
         wall.position.set((ax + bx) / 2, H / 2, (az + bz) / 2);
@@ -1095,10 +1199,33 @@
         roomGroup.add(og);
       });
 
-      // ── Furniture — procedural shapes (Phase 3D-3) ────────────────────────
+      // ── Furniture — procedural shapes + contact shadows (3D-3 / 3D-4) ───────
+      if (!_shadowTex) _shadowTex = makeContactShadowTex();
+
+      // Shared material — all shadow planes use the same texture and settings
+      var shadowMat = new THREE.MeshBasicMaterial({
+        map:         _shadowTex,
+        transparent: true,
+        depthWrite:  false,   // never blocks the wood floor beneath
+        opacity:     1.0,     // alpha comes entirely from the texture
+      });
+
       (data.furnitureItems || []).forEach(function(item) {
         var color = parseInt(item.colorHex.replace('#', ''), 16);
         var group = createFurnitureGroup(item, color);
+
+        // Contact shadow — flat plane just above floor, sized to furniture footprint
+        // Expand by 30 % on each axis so the feathered edge extends past the base.
+        var sw = item.widthM * 1.30;
+        var sd = item.depthM * 1.30;
+        var shadowPlane = new THREE.Mesh(
+          new THREE.PlaneGeometry(sw, sd),
+          shadowMat
+        );
+        shadowPlane.rotation.x = -Math.PI / 2;
+        shadowPlane.position.y = 0.003; // 3 mm above floor, above wood texture
+        group.add(shadowPlane);
+
         group.position.set(item.x - cx, 0, item.z - cz);
         group.rotation.y = -item.rotationDeg * Math.PI / 180;
         roomGroup.add(group);
@@ -1160,7 +1287,10 @@
     window.highlightWall = function(index) {
       roomGroup.children.forEach(function(obj) {
         if (obj.userData.wallIndex !== undefined) {
-          obj.material.color.set(obj.userData.wallIndex === index ? 0x4A90D9 : 0xCDC8BC);
+          // Wall material colour is white (texture provides the plaster colour).
+          // Highlight multiplies white → blue tint visible over texture.
+          // Restore → white × texture = natural plaster appearance.
+          obj.material.color.set(obj.userData.wallIndex === index ? 0x6AABEE : 0xFFFFFF);
         }
       });
     };
