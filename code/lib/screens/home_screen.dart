@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import '../screens/login_screen.dart';
 import '../database/project_list_screen.dart';
 import '../database/collaboration_screen.dart';
+import '../ar/ar_scan_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -142,6 +143,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   );
                 }
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            // AR scan button
+            ElevatedButton.icon(
+              icon: const Icon(Icons.view_in_ar),
+              label: const Text('Scan Room with AR'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 32, vertical: 16),
+                textStyle: const TextStyle(fontSize: 18),
+                backgroundColor: const Color(0xFF00AA66),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ARScanScreen()),
+                );
               },
             ),
 
