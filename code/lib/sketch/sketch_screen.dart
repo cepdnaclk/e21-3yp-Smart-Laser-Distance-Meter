@@ -29,6 +29,7 @@ class SketchScreen extends StatefulWidget {
   final List<double>? initialWallAngles;
   final List<double>? initialWallLengths;
   final int? cloudProjectId;
+  final int? initialLocalProjectId;
   final bool canEdit;
 
   const SketchScreen({
@@ -38,6 +39,7 @@ class SketchScreen extends StatefulWidget {
     this.initialWallAngles,
     this.initialWallLengths,
     this.cloudProjectId,
+    this.initialLocalProjectId,
     this.canEdit = true,
   });
 
@@ -50,6 +52,8 @@ class _SketchScreenState extends State<SketchScreen>
 
   // ── State fields ─────────────────────────────────────────────────────────
   int? _localProjectId;
+  String _localProjectName = '';
+  bool _isDirty = false;
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
@@ -186,6 +190,10 @@ class _SketchScreenState extends State<SketchScreen>
         ..clear()
         ..addAll(widget.initialWallLengths!);
     }
+    if (widget.initialLocalProjectId != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _loadProjectById(widget.initialLocalProjectId!));
+    }
     widget.bleManager?.packetStream.listen((BlePacket packet) {
       // Skip capturing packets (laser-on signal) and zero readings
       if (packet.isCapturing || packet.distanceMm <= 0) return;
@@ -304,6 +312,150 @@ class _SketchScreenState extends State<SketchScreen>
     });
   }
 
+  Future<void> _handleBackPressed() async {
+    if (!_isDirty) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+
+    if (_localProjectId != null) {
+      // Project exists — ask to save changes, allow renaming
+      // Track name changes without a TextEditingController (avoids disposal timing issues)
+      String pendingName = _localProjectName;
+      final result = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A2A3A),
+          scrollable: true,
+          title: const Text('Save Changes',
+              style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Project name:',
+                  style: TextStyle(color: Color(0xFF778899), fontSize: 12)),
+              const SizedBox(height: 6),
+              TextFormField(
+                initialValue: _localProjectName,
+                onChanged: (v) => pendingName = v,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  hintText: 'Enter project name',
+                  hintStyle: TextStyle(color: Color(0xFF445566)),
+                  enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF334466))),
+                  focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF00AAFF))),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Cancel',
+                  style: TextStyle(color: Color(0xFF556677))),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'discard'),
+              child: const Text('Discard',
+                  style: TextStyle(color: Colors.redAccent)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00AA44)),
+              onPressed: () => Navigator.pop(ctx, pendingName.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+      if (result != null && result != 'cancel' && result != 'discard') {
+        final name = result.isEmpty ? 'My Project' : result;
+        int? newId;
+        try {
+          newId = await DatabaseHelper.instance.saveProject(
+            name: name,
+            shapes: shapes,
+            roomObjects: activeShape.roomObjects,
+            wallAngles: _wallAngles,
+            wallDrawnLengths: _wallDrawnLengths,
+          );
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Save failed: $e'),
+                  backgroundColor: Colors.red),
+            );
+          }
+          return; // save failed — stay on screen
+        }
+        // Save succeeded — clean up old record best-effort, then navigate
+        final oldId = _localProjectId!;
+        try {
+          await DatabaseHelper.instance.deleteProject(oldId);
+        } catch (_) {} // ignore delete errors; the new save already succeeded
+        if (mounted) setState(() {
+          _localProjectId = newId;
+          _localProjectName = name;
+          _isDirty = false;
+        });
+        if (mounted) Navigator.of(context).pop();
+      } else if (result == 'discard') {
+        if (mounted) Navigator.of(context).pop();
+      }
+      // 'cancel' → stay
+    } else {
+      // Never saved — ask to save locally
+      final hasContent = shapes.any((s) => s.points.length >= 2);
+      if (!hasContent) {
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      final result = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1A2A3A),
+          title: const Text('Unsaved Project',
+              style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Save this project locally before leaving?',
+            style: TextStyle(color: Color(0xFFCCDDEE)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Cancel',
+                  style: TextStyle(color: Color(0xFF556677))),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'discard'),
+              child: const Text('Discard',
+                  style: TextStyle(color: Colors.redAccent)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00AA44)),
+              onPressed: () => Navigator.pop(ctx, 'save'),
+              child: const Text('Save Locally'),
+            ),
+          ],
+        ),
+      );
+      if (result == 'save') {
+        await _saveProject();
+        // Only pop if _saveProject actually succeeded (cleared _isDirty)
+        if (!_isDirty && mounted) Navigator.of(context).pop();
+      } else if (result == 'discard') {
+        if (mounted) Navigator.of(context).pop();
+      }
+      // 'cancel' → stay
+    }
+  }
+
   Future<void> _saveProject() async {
     final nameController = TextEditingController(text: 'Room Project');
     final name = await showDialog<String>(
@@ -348,7 +500,11 @@ class _SketchScreenState extends State<SketchScreen>
         wallAngles: _wallAngles,
         wallDrawnLengths: _wallDrawnLengths,
       );
-      setState(() => _localProjectId = savedId);
+      setState(() {
+        _localProjectId = savedId;
+        _localProjectName = name;
+        _isDirty = false;
+      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -460,7 +616,10 @@ class _SketchScreenState extends State<SketchScreen>
         wallAngles: _wallAngles,
         wallDrawnLengths: _wallDrawnLengths,
       );
-      setState(() => _localProjectId = savedId);
+      setState(() {
+        _localProjectId = savedId;
+        _localProjectName = 'Auto Save';
+      });
     }
 
     final payload = _buildProjectPayload(
@@ -586,12 +745,16 @@ class _SketchScreenState extends State<SketchScreen>
     );
 
     if (projectId == null) return;
+    await _loadProjectById(projectId);
+  }
 
+  Future<void> _loadProjectById(int projectId) async {
     final data = await DatabaseHelper.instance.loadProject(projectId);
     if (data == null) return;
 
     final shapesData = data['shapes'] as List<Map<String, dynamic>>;
     final objectsData = data['room_objects'] as List<Map<String, dynamic>>;
+    final furnitureData = data['furniture_items'] as List<Map<String, dynamic>>? ?? [];
 
     setState(() {
       shapes.clear();
@@ -611,6 +774,26 @@ class _SketchScreenState extends State<SketchScreen>
         }
 
         shapes.add(shape);
+      }
+
+      // Restore furniture items into the correct shape
+      for (final f in furnitureData) {
+        final si = f['shape_index'] as int;
+        if (si < shapes.length) {
+          final typeName = f['type'] as String;
+          final type = FurnitureType.values.firstWhere(
+            (t) => t.name == typeName,
+            orElse: () => FurnitureType.sofa,
+          );
+          shapes[si].furnitureItems.add(FurnitureItem(
+            id: f['furniture_id'] as String,
+            type: type,
+            position: Offset(f['position_x'] as double, f['position_y'] as double),
+            rotationDeg: f['rotation_deg'] as double,
+            widthMm: f['width_mm'] as double,
+            depthMm: f['depth_mm'] as double,
+          ));
+        }
       }
 
       if (shapes.isNotEmpty) {
@@ -641,6 +824,9 @@ class _SketchScreenState extends State<SketchScreen>
       }
 
       activeIndex = 0;
+      _localProjectId = projectId;
+      _localProjectName = (data['project'] as Map<String, dynamic>)['name'] as String? ?? '';
+      _isDirty = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _fitShapesToView());
   }
@@ -649,6 +835,7 @@ class _SketchScreenState extends State<SketchScreen>
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
   void _saveUndo() {
+    _isDirty = true;
     _undoAllPointsStack.add(shapes.map((s) => List<Offset>.of(s.points)).toList());
     _undoAllClosedStack.add(shapes.map((s) => s.isClosed).toList());
     _undoAllObjectsStack
@@ -2821,7 +3008,12 @@ class _SketchScreenState extends State<SketchScreen>
 
     _labelHitRects.clear();
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBackPressed();
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFFFFFFFF),
       body: Stack(
         children: [
@@ -3272,7 +3464,7 @@ class _SketchScreenState extends State<SketchScreen>
                     IconButton(
                       icon: const Icon(Icons.arrow_back,
                           color: Color(0xFFAAAAAA), size: 18),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: _handleBackPressed,
                     ),
                   ],
                 ),
@@ -3647,6 +3839,7 @@ class _SketchScreenState extends State<SketchScreen>
           ),
         ],
       ),
+    ),
     );
   }
 
