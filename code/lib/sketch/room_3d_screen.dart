@@ -87,12 +87,59 @@ class _Room3DScreenState extends State<Room3DScreen> {
   // blocks via CORS even for same-directory assets.
   Future<void> _loadInlinedHtml() async {
     final threeJs = await rootBundle.loadString('assets/3d/three.min.js');
+    final gltfLoader = await rootBundle.loadString('assets/3d/gltf_loader.js');
     final template = await rootBundle.loadString('assets/3d/three_room.html');
     final html = template.replaceFirst(
       '<!--THREE_JS-->',
-      '<script>$threeJs</script>',
+      '<script>$threeJs</script><script>$gltfLoader</script>',
     );
     await _webController.loadHtmlString(html);
+  }
+
+  // Loads all furniture .glb files and converts them to base64
+  Future<Map<String, String>> _loadFurnitureModels(
+      List<FurnitureItem> items) async {
+    final Map<String, String> models = {};
+    
+    // Get unique furniture types from the items in this room
+    final Set<String> types = items.map((i) => i.type.name).toSet();
+    
+    for (final typeName in types) {
+      final path = _modelPathForType(typeName);
+      if (path == null) continue;
+      
+      try {
+        final bytes = await rootBundle.load(path);
+        final base64Str = base64Encode(bytes.buffer.asUint8List());
+        models[typeName] = base64Str;
+      } catch (e) {
+        // Model file not found — skip it, will use box fallback
+        debugPrint('Model not found for $typeName: $path');
+      }
+    }
+    
+    return models;
+  }
+
+  // Maps furniture type name to its asset path
+  String? _modelPathForType(String typeName) {
+    const map = {
+      'sofa':             'assets/models/Sofa.glb',
+      'toilet':             'assets/models/toilet.glb',
+      'armchair':         'assets/models/armchair.gltf',
+      'bookshelf':        'assets/models/bookshelf.glb',
+      'coffeeTable':        'assets/models/coffeetable.glb',
+      'tvUnit':         'assets/models/tv_unit.glb',
+      'bathtub':             'assets/models/bathtub.glb',
+      'wardrobe':         'assets/models/cupboard.glb',
+      'diningTable':        'assets/models/Diningtable.glb',
+      'doubleBed':        'assets/models/doublebed.glb',
+      'floorlamp':         'assets/models/floorlamp.glb',
+      'chair':            'assets/models/chair.glb',
+      'washingMachine':         'assets/models/Washingmachine.glb',
+      
+    };
+    return map[typeName];
   }
 
   // ── JSON contract: sketch world-units → Three.js metres ───────────────────
@@ -135,8 +182,18 @@ class _Room3DScreenState extends State<Room3DScreen> {
 
   void _sendRoomData() {
     if (!_webLoaded) return;
+    _sendRoomDataAsync();
+  }
+
+  Future<void> _sendRoomDataAsync() async {
     final data = _buildRoomJson();
-    // Embed the JSON literal directly as a JS argument — no string escaping needed.
+    
+    // Load 3D model files as base64
+    final models = await _loadFurnitureModels(widget.furnitureItems);
+    
+    // Add models to the data
+    data['furnitureModels'] = models;
+    
     _webController.runJavaScript('window.initRoom(${jsonEncode(data)})');
   }
 
