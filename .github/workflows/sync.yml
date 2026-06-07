@@ -1,0 +1,23 @@
+name: Sync from Upstream
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: backend-host-azure
+
+      - name: Sync from upstream
+        run: |
+          git remote add upstream https://github.com/cepdnaclk/e21-3yp-Smart-Laser-Distance-Meter.git
+          git fetch upstream backend-host-azure
+          git reset --hard upstream/backend-host-azure
+          git push origin backend-host-azure --force
