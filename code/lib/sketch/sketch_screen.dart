@@ -3768,9 +3768,7 @@ class _SketchScreenState extends State<SketchScreen>
                               ? () => exportSketchPdf(
                                     context: context,
                                     shapes: shapes,
-                                    totalPerimeter: _totalPerimeter(),
-                                    totalArea: _totalArea(),
-                                    roomObjects: activeShape.roomObjects,
+                                    projectName: _localProjectName,
                                   )
                               : null,
                           color: const Color(0xFFFF4488),
