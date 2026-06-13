@@ -237,27 +237,38 @@ class DxfExporter {
       double sx, double sy, double ex, double ey, double widthMm,
       double wux, double wuy, double iux, double iuy) {
     // Hinge = start point; door leaf swings inward
-    final ltx = sx + iux * widthMm; // leaf tip X
-    final lty = sy + iuy * widthMm; // leaf tip Y
+    final ltx = sx + iux * widthMm;
+    final lty = sy + iuy * widthMm;
 
-    _line(buf, 'DOORS', 1, sx, sy, ltx, lty);      // door leaf
-    _line(buf, 'DOORS', 1, sx, sy, ex, ey);         // door stop (along wall)
+    _line(buf, 'DOORS', 1, sx, sy, ltx, lty);  // door leaf
+    _line(buf, 'DOORS', 1, sx, sy, ex, ey);     // door stop along wall
 
-    // Arc from wall-direction angle to inward-direction angle (CCW in DXF)
+    // Arc (quarter-circle swing)
     final wallAng   = math.atan2(wuy, wux) * 180 / math.pi;
     final inwardAng = math.atan2(iuy, iux) * 180 / math.pi;
     final cross = wux * iuy - wuy * iux;
     final arcStart = cross > 0 ? wallAng   : inwardAng;
     final arcEnd   = cross > 0 ? inwardAng : wallAng;
-
     _arc(buf, 'DOORS', 1, sx, sy, widthMm, arcStart, arcEnd);
+
+    // Dimension annotation — outside room (outward = -inward), same style as walls
+    const double dimOff = 50.0, gap = 5.0, ovr = 15.0;
+    final ox = -iux, oy = -iuy;
+    final midX = (sx + ex) / 2, midY = (sy + ey) / 2;
+    final tx = midX + ox * dimOff, ty = midY + oy * dimOff;
+    double ang = math.atan2(wuy, wux) * 180 / math.pi;
+    if (ang > 90 || ang < -90) ang += 180;
+    _line(buf, 'DOORS', 1, sx+ox*gap, sy+oy*gap, sx+ox*(dimOff+ovr), sy+oy*(dimOff+ovr));
+    _line(buf, 'DOORS', 1, ex+ox*gap, ey+oy*gap, ex+ox*(dimOff+ovr), ey+oy*(dimOff+ovr));
+    _line(buf, 'DOORS', 1, sx+ox*dimOff, sy+oy*dimOff, ex+ox*dimOff, ey+oy*dimOff);
+    _writeText(buf, 'DOORS', 1, tx, ty, ang, 40.0, _fmtMm(widthMm));
   }
 
   static void _writeWindow(StringBuffer buf,
       double sx, double sy, double ex, double ey, double widthMm,
       double wux, double wuy, double iux, double iuy) {
-    const double sp = 55.0; // spacing between glazing lines (mm)
-    const double jl = 130.0; // jamb line half-length (mm)
+    const double sp = 55.0;   // glazing line spacing (mm)
+    const double jl = 130.0;  // jamb line half-length (mm)
 
     // Three glazing lines parallel to wall
     for (final t in [-sp, 0.0, sp]) {
@@ -268,6 +279,18 @@ class DxfExporter {
     // Jamb lines perpendicular at each end
     _line(buf, 'WINDOWS', 4, sx - iux*jl, sy - iuy*jl, sx + iux*jl, sy + iuy*jl);
     _line(buf, 'WINDOWS', 4, ex - iux*jl, ey - iuy*jl, ex + iux*jl, ey + iuy*jl);
+
+    // Dimension annotation — outside room, same style as walls
+    const double dimOff = 50.0, gap = 5.0, ovr = 15.0;
+    final ox = -iux, oy = -iuy;
+    final midX = (sx + ex) / 2, midY = (sy + ey) / 2;
+    final tx = midX + ox * dimOff, ty = midY + oy * dimOff;
+    double ang = math.atan2(wuy, wux) * 180 / math.pi;
+    if (ang > 90 || ang < -90) ang += 180;
+    _line(buf, 'WINDOWS', 4, sx+ox*gap, sy+oy*gap, sx+ox*(dimOff+ovr), sy+oy*(dimOff+ovr));
+    _line(buf, 'WINDOWS', 4, ex+ox*gap, ey+oy*gap, ex+ox*(dimOff+ovr), ey+oy*(dimOff+ovr));
+    _line(buf, 'WINDOWS', 4, sx+ox*dimOff, sy+oy*dimOff, ex+ox*dimOff, ey+oy*dimOff);
+    _writeText(buf, 'WINDOWS', 4, tx, ty, ang, 40.0, _fmtMm(widthMm));
   }
 
   // ── Furniture ─────────────────────────────────────────────────
