@@ -70,6 +70,8 @@ class _DxfPreviewScreenState extends State<DxfPreviewScreen> {
           points: _shape.points,
           isClosed: _shape.isClosed,
           wallRealMm: _shape.wallRealMm,
+          roomObjects: _shape.roomObjects,
+          furnitureItems: _shape.furnitureItems,
           projectName: widget.projectName,
         );
       } else {
