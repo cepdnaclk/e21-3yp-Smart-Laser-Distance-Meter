@@ -4,7 +4,6 @@
 #include <SD.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <VL53L0X.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -26,31 +25,35 @@
 #define BUZZER    26
 #define LASER_PIN 4
 
+// TF-Luna on UART2 — GPIO16=RX2, GPIO17=TX2
+#define TF_RX 16
+#define TF_TX 17
+
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-VL53L0X sensor;
+HardwareSerial   tfSerial(2);
 
 bool  sdReady     = false;
 int   recordCount = 0;
 float lastMm      = 0;
 
-BLEServer*         bleServer    = nullptr;
-BLECharacteristic* bleChar      = nullptr;
-bool               bleConnected = false;
-int                bleMeasureCount = 0;
+BLEServer*         bleServer        = nullptr;
+BLECharacteristic* bleChar          = nullptr;
+bool               bleConnected     = false;
+int                bleMeasureCount  = 0;
 
 int    historyOffset = 0;
 int    historyTotal  = 0;
 String historyLines[100];
 
 struct Button {
-  int pin;
-  bool lastReading;
-  bool stable;
+  int           pin;
+  bool          lastReading;
+  bool          stable;
   unsigned long lastChangeTime;
-  bool triggered;
+  bool          triggered;
 };
 
 Button btnPwr  = {BTN_PWR,  true, true, 0, false};
@@ -89,8 +92,7 @@ int selectedMode = 0;
 enum NormalState { IDLE, LASER_ON, MEASURED, HISTORY };
 NormalState normalState = IDLE;
 
-enum BleState { BLE_IDLE, BLE_LASER_ON, BLE_SENT };
-BleState bleState = BLE_IDLE;
+// ── Display functions ────────────────────────────────────────
 
 void drawHeader(String mode) {
   display.setTextColor(SSD1306_WHITE);
@@ -158,8 +160,8 @@ void showResult(float mm) {
   display.setCursor(0, 14); display.println("Result:");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52); display.println("MEAS=save PWR=cancel");
   display.display();
@@ -171,8 +173,8 @@ void showSaved(float mm) {
   display.setCursor(28, 14); display.println(">> SAVED! <<");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52);
   display.print("Total: "); display.print(recordCount);
@@ -191,16 +193,6 @@ void showBleReady() {
   display.display();
 }
 
-void showBleLaserOn() {
-  display.clearDisplay();
-  drawHeader("BLE");
-  display.setTextSize(1);
-  display.setCursor(0, 14); display.println(">> TAKE MEASUREMENT <<");
-  display.setCursor(0, 28); display.println("Laser ON - aim at wall");
-  display.setCursor(0, 42); display.println("Press MEAS to capture");
-  display.display();
-}
-
 void showBleSent(float mm) {
   display.clearDisplay();
   drawHeader("BLE");
@@ -208,12 +200,14 @@ void showBleSent(float mm) {
   display.setCursor(0, 14); display.println(">> WALL UPDATED <<");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52); display.println("Select next wall");
   display.display();
 }
+
+// ── SD helpers ───────────────────────────────────────────────
 
 void loadHistory() {
   historyTotal = 0;
@@ -287,18 +281,68 @@ bool saveToSD(float mm) {
   return true;
 }
 
+// ── TF-Luna measurement ──────────────────────────────────────
+
 float doMeasure() {
+  // Blink the alignment laser to signal the user to hold steady
   for (int i = 0; i < 3; i++) {
     digitalWrite(LASER_PIN, LOW);  delay(150);
     digitalWrite(LASER_PIN, HIGH); delay(150);
   }
   digitalWrite(LASER_PIN, LOW);
   showMeasuring();
-  delay(100);
-  uint16_t mm = sensor.readRangeContinuousMillimeters();
-  if (sensor.timeoutOccurred() || mm >= 2000) return -1;
-  return (float)mm;
+
+  // Flush any stale frames that built up while the user was aiming
+  while (tfSerial.available()) tfSerial.read();
+  delay(20); // allow one fresh frame to arrive (TF-Luna default 100 Hz = 10 ms/frame)
+
+  unsigned long start = millis();
+  while (millis() - start < 500) {
+
+    if (tfSerial.available() < 9) continue;
+
+    // Sync to the two-byte header 0x59 0x59
+    if (tfSerial.read() != 0x59) continue;
+    if (tfSerial.available() < 8) continue;
+    if (tfSerial.peek()    != 0x59) continue;
+    tfSerial.read(); // consume second header byte
+
+    uint8_t buf[7];
+    tfSerial.readBytes(buf, 7);
+
+    // Verify checksum: sum of all 9 bytes (including both headers) & 0xFF
+    uint8_t checksum = 0x59 + 0x59;
+    for (int i = 0; i < 6; i++) checksum += buf[i];
+    if ((checksum & 0xFF) != buf[6]) {
+      Serial.println("TF-Luna: bad checksum, retrying");
+      continue;
+    }
+
+    uint16_t cm   = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+    uint16_t flux = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+
+    Serial.print("TF-Luna raw: "); Serial.print(cm);
+    Serial.print(" cm  flux: ");   Serial.println(flux);
+
+    // flux == 65535 means sensor is saturated (target too close / too reflective)
+    // flux < 100    means signal too weak (dark target, out of range, fog)
+    if (flux < 100 || flux == 65535) {
+      Serial.println("TF-Luna: signal quality fail");
+      return -1;
+    }
+    if (cm < 20 || cm > 800) { // 0.2 m minimum, 8 m maximum
+      Serial.println("TF-Luna: out of range");
+      return -1;
+    }
+
+    return (float)(cm * 10); // cm → mm
+  }
+
+  Serial.println("TF-Luna: read timeout");
+  return -1;
 }
+
+// ── BLE helpers ──────────────────────────────────────────────
 
 void bleSend(float mm, bool capturing) {
   if (!bleConnected || bleChar == nullptr) return;
@@ -306,7 +350,7 @@ void bleSend(float mm, bool capturing) {
   uint8_t packet[4];
   packet[0] = (dist >> 8) & 0xFF;
   packet[1] =  dist       & 0xFF;
-  packet[2] = 80;
+  packet[2] = 80;           // placeholder — replace with real IMU angle when available
   packet[3] = capturing ? 0x01 : 0x00;
   bleChar->setValue(packet, 4);
   bleChar->notify();
@@ -314,7 +358,7 @@ void bleSend(float mm, bool capturing) {
 
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* s) override {
-    bleConnected = true;
+    bleConnected    = true;
     bleMeasureCount = 0;
     beep(2);
     Serial.println("BLE connected");
@@ -335,9 +379,11 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
 };
 
+// ── Setup ────────────────────────────────────────────────────
+
 void setup() {
   Serial.begin(115200);
-  Wire.begin(21, 22);
+  Wire.begin(21, 22); // I2C for OLED
 
   pinMode(BTN_PWR,   INPUT_PULLUP);
   pinMode(BTN_SEL,   INPUT_PULLUP);
@@ -348,15 +394,17 @@ void setup() {
   digitalWrite(BUZZER,    LOW);
   digitalWrite(LASER_PIN, LOW);
 
+  // OLED
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS);
   display.setTextColor(SSD1306_WHITE);
   display.clearDisplay();
   display.display();
 
-  sensor.setTimeout(500);
-  sensor.init();
-  sensor.startContinuous();
+  // TF-Luna on UART2
+  tfSerial.begin(115200, SERIAL_8N1, TF_RX, TF_TX);
+  delay(100); // allow sensor to start streaming
 
+  // SD card
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   delay(200);
   if (SD.begin(SD_CS, SPI, 4000000)) {
@@ -367,6 +415,7 @@ void setup() {
     }
   }
 
+  // BLE
   BLEDevice::init("SmartMeasure Pro");
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new MyServerCallbacks());
@@ -380,6 +429,8 @@ void setup() {
 
   Serial.println("Ready - press PWR to start");
 }
+
+// ── Main loop ────────────────────────────────────────────────
 
 void loop() {
   updateButton(btnPwr);
@@ -468,7 +519,7 @@ void loop() {
           display.clearDisplay();
           drawHeader("NRM");
           display.setCursor(0, 20); display.println("Out of range!");
-          display.setCursor(0, 32); display.println("Move closer");
+          display.setCursor(0, 32); display.println("Check target surface");
           display.setCursor(0, 44); display.println("Press MEAS again");
           display.display();
           delay(1500);
@@ -565,13 +616,14 @@ void loop() {
           display.clearDisplay();
           drawHeader("BLE");
           display.setCursor(0, 20); display.println("Out of range!");
-          display.setCursor(0, 32); display.println("Move closer");
+          display.setCursor(0, 32); display.println("Check target surface");
           display.display();
           delay(1500);
           digitalWrite(LASER_PIN, HIGH);
           showLaserOn();
         } else {
           lastMm = mm;
+          bleMeasureCount++;
           beep(1);
           bleSend(lastMm, false);
           showResult(lastMm);
@@ -623,6 +675,16 @@ void loop() {
         normalState = IDLE;
       }
     }
+  }
+
+  // Debug: print raw GPIO readings every 500 ms so we can verify button wiring
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 500) {
+    Serial.print("BTN_PWR(25):"); Serial.print(digitalRead(BTN_PWR));
+    Serial.print("  BTN_SEL(27):"); Serial.print(digitalRead(BTN_SEL));
+    Serial.print("  BTN_DOWN(33):"); Serial.print(digitalRead(BTN_DOWN));
+    Serial.print("  BTN_MEAS(32):"); Serial.println(digitalRead(BTN_MEAS));
+    lastDebug = millis();
   }
 
   delay(10);
