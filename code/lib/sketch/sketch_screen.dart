@@ -3786,9 +3786,6 @@ class _SketchScreenState extends State<SketchScreen>
                             MaterialPageRoute(
                               builder: (_) => DxfPreviewScreen(
                                 shapes: shapes,
-                                totalPerimeter: _totalPerimeter(),
-                                totalArea: _totalArea(),
-                                roomObjects: activeShape.roomObjects,
                                 projectName: _localProjectName.isNotEmpty
                                     ? _localProjectName
                                     : 'SmartMeasure_Room',

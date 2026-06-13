@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../sketch/sketch_model.dart';
 import '../sketch/room_object.dart';
 import '../sketch/furniture_item.dart';
 
@@ -16,22 +17,13 @@ class DxfExporter {
   static const double _mm = 5.0; // world units → mm
 
   static Future<void> export({
-    required List<Offset> points,
-    required bool isClosed,
-    required Map<int, double> wallRealMm,
-    List<RoomObject> roomObjects = const [],
-    List<FurnitureItem> furnitureItems = const [],
+    required List<SketchShape> shapes,
     String projectName = 'SmartMeasure_Room',
   }) async {
-    if (points.length < 2) throw Exception('Need at least 2 points');
-    if (!isClosed) throw Exception('Close the room before exporting');
+    final closed = shapes.where((s) => s.isClosed && s.points.length >= 3).toList();
+    if (closed.isEmpty) throw Exception('No closed rooms to export');
 
-    final content = _buildDxf(
-      points: points,
-      wallRealMm: wallRealMm,
-      roomObjects: roomObjects,
-      furnitureItems: furnitureItems,
-    );
+    final content = _buildDxf(shapes: closed);
 
     final tmp = await getTemporaryDirectory();
     final safe = projectName.replaceAll(RegExp(r'[^\w\-]'), '_');
@@ -50,16 +42,10 @@ class DxfExporter {
   static String _f(double v) => v.toStringAsFixed(4);
 
   // ── DXF builder ───────────────────────────────────────────────
-  static String _buildDxf({
-    required List<Offset> points,
-    required Map<int, double> wallRealMm,
-    required List<RoomObject> roomObjects,
-    required List<FurnitureItem> furnitureItems,
-  }) {
+  static String _buildDxf({required List<SketchShape> shapes}) {
     final buf = StringBuffer();
-    final int n = points.length;
 
-    // Bounding box from walls + furniture
+    // Global bounding box from all shapes + furniture
     double minX = double.infinity, minY = double.infinity;
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
     void expandBounds(double x, double y) {
@@ -68,8 +54,10 @@ class DxfExporter {
       if (x > maxX) maxX = x;
       if (y > maxY) maxY = y;
     }
-    for (final p in points) { expandBounds(_wx(p.dx), _wy(p.dy)); }
-    for (final f in furnitureItems) { expandBounds(_wx(f.position.dx), _wy(f.position.dy)); }
+    for (final s in shapes) {
+      for (final p in s.points) { expandBounds(_wx(p.dx), _wy(p.dy)); }
+      for (final f in s.furnitureItems) { expandBounds(_wx(f.position.dx), _wy(f.position.dy)); }
+    }
     final px = (maxX - minX) * 0.15 + 300;
     final py = (maxY - minY) * 0.15 + 300;
     minX -= px; minY -= py; maxX += px; maxY += py;
@@ -97,11 +85,11 @@ class DxfExporter {
     _w(buf, 72, '65'); _w(buf, 73, '0'); _w(buf, 40, '0.0');
     _w(buf, 0, 'ENDTAB');
 
-    // LAYER: 0 / WALLS / DOORS / WINDOWS / FURNITURE
-    _w(buf, 0, 'TABLE'); _w(buf, 2, 'LAYER'); _w(buf, 70, '5');
+    // LAYER: 0 / WALLS / DOORS / WINDOWS / FURNITURE / ROOM_NAMES
+    _w(buf, 0, 'TABLE'); _w(buf, 2, 'LAYER'); _w(buf, 70, '6');
     for (final r in [
       ('0', '7'), ('WALLS', '5'), ('DOORS', '1'),
-      ('WINDOWS', '4'), ('FURNITURE', '3'),
+      ('WINDOWS', '4'), ('FURNITURE', '3'), ('ROOM_NAMES', '2'),
     ]) {
       _w(buf, 0, 'LAYER'); _w(buf, 2, r.$1);
       _w(buf, 70, '0'); _w(buf, 62, r.$2); _w(buf, 6, 'CONTINUOUS');
@@ -118,14 +106,18 @@ class DxfExporter {
 
     _w(buf, 0, 'ENDSEC');
 
-    // ── ENTITIES ───────────────────────────────────────────────
+    // ── ENTITIES — iterate every closed room ───────────────────
     _w(buf, 0, 'SECTION');
     _w(buf, 2, 'ENTITIES');
 
-    _writeWalls(buf, points, n);
-    _writeWallDims(buf, points, wallRealMm, n);
-    _writeRoomObjects(buf, points, n, roomObjects);
-    _writeFurniture(buf, furnitureItems);
+    for (final s in shapes) {
+      final n = s.points.length;
+      _writeWalls(buf, s.points, n);
+      _writeWallDims(buf, s.points, s.wallRealMm, n);
+      _writeRoomObjects(buf, s.points, n, s.roomObjects);
+      _writeFurniture(buf, s.furnitureItems);
+      if (s.label.isNotEmpty) _writeRoomLabel(buf, s.points, n, s.label);
+    }
 
     _w(buf, 0, 'ENDSEC');
     _w(buf, 0, 'EOF');
@@ -149,7 +141,6 @@ class DxfExporter {
   // ── Wall dimension labels ─────────────────────────────────────
   static void _writeWallDims(StringBuffer buf, List<Offset> points,
       Map<int, double> wallRealMm, int n) {
-    // Centroid in DXF space (for normal direction)
     double cx = 0, cy = 0;
     for (final p in points) { cx += _wx(p.dx); cy += _wy(p.dy); }
     cx /= n; cy /= n;
@@ -189,7 +180,6 @@ class DxfExporter {
       int n, List<RoomObject> roomObjects) {
     if (roomObjects.isEmpty) return;
 
-    // Room centroid in world units (to determine inward direction)
     Offset cent = points.fold(Offset.zero, (s, p) => s + p);
     cent = Offset(cent.dx / n, cent.dy / n);
 
@@ -201,16 +191,12 @@ class DxfExporter {
       final wallLen = wallVec.distance;
       if (wallLen < 1) continue;
 
-      // Wall unit direction (world)
       final wallDir = Offset(wallVec.dx / wallLen, wallVec.dy / wallLen);
       final halfW = (obj.widthMm / _mm) / 2;
-
-      // Door/window endpoints along wall (world)
       final tCenter = obj.positionAlong * wallLen;
       final startW = wA + Offset(wallDir.dx * (tCenter - halfW), wallDir.dy * (tCenter - halfW));
       final endW   = wA + Offset(wallDir.dx * (tCenter + halfW), wallDir.dy * (tCenter + halfW));
 
-      // Inward normal (world) — points toward centroid
       Offset inW = Offset(-wallDir.dy, wallDir.dx);
       final wallMid = Offset((wA.dx + wB.dx) / 2, (wA.dy + wB.dy) / 2);
       if ((cent.dx - wallMid.dx) * inW.dx + (cent.dy - wallMid.dy) * inW.dy < 0) {
@@ -218,10 +204,8 @@ class DxfExporter {
       }
       if (obj.swingFlipped) inW = Offset(-inW.dx, -inW.dy);
 
-      // Convert to DXF mm
       final sx = _wx(startW.dx), sy = _wy(startW.dy);
       final ex = _wx(endW.dx),   ey = _wy(endW.dy);
-      // Unit direction in DXF (Y flipped)
       final wux = wallDir.dx, wuy = -wallDir.dy;
       final iux = inW.dx,     iuy = -inW.dy;
 
@@ -236,14 +220,12 @@ class DxfExporter {
   static void _writeDoor(StringBuffer buf,
       double sx, double sy, double ex, double ey, double widthMm,
       double wux, double wuy, double iux, double iuy) {
-    // Hinge = start point; door leaf swings inward
     final ltx = sx + iux * widthMm;
     final lty = sy + iuy * widthMm;
 
-    _line(buf, 'DOORS', 1, sx, sy, ltx, lty);  // door leaf
-    _line(buf, 'DOORS', 1, sx, sy, ex, ey);     // door stop along wall
+    _line(buf, 'DOORS', 1, sx, sy, ltx, lty);
+    _line(buf, 'DOORS', 1, sx, sy, ex, ey);
 
-    // Arc (quarter-circle swing)
     final wallAng   = math.atan2(wuy, wux) * 180 / math.pi;
     final inwardAng = math.atan2(iuy, iux) * 180 / math.pi;
     final cross = wux * iuy - wuy * iux;
@@ -251,7 +233,6 @@ class DxfExporter {
     final arcEnd   = cross > 0 ? inwardAng : wallAng;
     _arc(buf, 'DOORS', 1, sx, sy, widthMm, arcStart, arcEnd);
 
-    // Dimension annotation — outside room (outward = -inward), same style as walls
     const double dimOff = 50.0, gap = 5.0, ovr = 15.0;
     final ox = -iux, oy = -iuy;
     final midX = (sx + ex) / 2, midY = (sy + ey) / 2;
@@ -267,20 +248,17 @@ class DxfExporter {
   static void _writeWindow(StringBuffer buf,
       double sx, double sy, double ex, double ey, double widthMm,
       double wux, double wuy, double iux, double iuy) {
-    const double sp = 55.0;   // glazing line spacing (mm)
-    const double jl = 130.0;  // jamb line half-length (mm)
+    const double sp = 55.0;
+    const double jl = 130.0;
 
-    // Three glazing lines parallel to wall
     for (final t in [-sp, 0.0, sp]) {
       _line(buf, 'WINDOWS', 4,
           sx + iux * t, sy + iuy * t,
           ex + iux * t, ey + iuy * t);
     }
-    // Jamb lines perpendicular at each end
     _line(buf, 'WINDOWS', 4, sx - iux*jl, sy - iuy*jl, sx + iux*jl, sy + iuy*jl);
     _line(buf, 'WINDOWS', 4, ex - iux*jl, ey - iuy*jl, ex + iux*jl, ey + iuy*jl);
 
-    // Dimension annotation — outside room, same style as walls
     const double dimOff = 50.0, gap = 5.0, ovr = 15.0;
     final ox = -iux, oy = -iuy;
     final midX = (sx + ex) / 2, midY = (sy + ey) / 2;
@@ -300,14 +278,12 @@ class DxfExporter {
       final cy = _wy(item.position.dy);
       final rad = item.rotationDeg * math.pi / 180;
 
-      // Width and depth unit vectors in DXF space (Y-flipped)
-      final ux = math.cos(rad),  uy = -math.sin(rad); // width direction
-      final vx = math.sin(rad),  vy =  math.cos(rad); // depth direction
+      final ux = math.cos(rad),  uy = -math.sin(rad);
+      final vx = math.sin(rad),  vy =  math.cos(rad);
 
       final hw = item.widthMm / 2;
       final hd = item.depthMm / 2;
 
-      // 4 corners
       final c = [
         (cx + ux*hw + vx*hd, cy + uy*hw + vy*hd),
         (cx - ux*hw + vx*hd, cy - uy*hw + vy*hd),
@@ -315,19 +291,22 @@ class DxfExporter {
         (cx + ux*hw - vx*hd, cy + uy*hw - vy*hd),
       ];
 
-      // 4 sides
       for (int k = 0; k < 4; k++) {
         final a = c[k], b = c[(k + 1) % 4];
         _line(buf, 'FURNITURE', 3, a.$1, a.$2, b.$1, b.$2);
       }
-
-      // Diagonal cross (makes furniture easy to identify)
       _line(buf, 'FURNITURE', 8, c[0].$1, c[0].$2, c[2].$1, c[2].$2);
       _line(buf, 'FURNITURE', 8, c[1].$1, c[1].$2, c[3].$1, c[3].$2);
-
-      // Label at center
       _writeText(buf, 'FURNITURE', 3, cx, cy, 0, 40.0, item.type.displayName);
     }
+  }
+
+  // ── Room name label ───────────────────────────────────────────
+  static void _writeRoomLabel(StringBuffer buf, List<Offset> points, int n, String label) {
+    double cx = 0, cy = 0;
+    for (final p in points) { cx += _wx(p.dx); cy += _wy(p.dy); }
+    cx /= n; cy /= n;
+    _writeText(buf, 'ROOM_NAMES', 2, cx, cy, 0, 80.0, label);
   }
 
   // ── Primitive writers ─────────────────────────────────────────
