@@ -243,6 +243,21 @@ pw.Page _overviewPage(
                     g.lineTo(b.x, b.y);
                     g.strokePath();
                   }
+
+                  // Furniture
+                  for (final item in s.furnitureItems) {
+                    _paintFurniture(g, item, tx);
+                  }
+
+                  // Doors & windows
+                  if (s.isClosed && s.roomObjects.isNotEmpty) {
+                    Offset centroid = Offset.zero;
+                    for (final p in s.points) {
+                      centroid = Offset(centroid.dx + p.dx, centroid.dy + p.dy);
+                    }
+                    centroid = Offset(centroid.dx / n, centroid.dy / n);
+                    _paintRoomObjects(g, s.points, n, wc, s.roomObjects, tx, centroid);
+                  }
                 }
               },
             ),
