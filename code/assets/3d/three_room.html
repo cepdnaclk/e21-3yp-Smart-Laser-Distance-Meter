@@ -289,6 +289,14 @@
         });
       }
       var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      var m = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({
+          color:     color,
+          roughness: opts.roughness !== undefined ? opts.roughness : 0.75,
+          metalness: opts.metalness !== undefined ? opts.metalness : 0.05,
+        })
+      );
       m.castShadow = m.receiveShadow = true;
       return m;
     }
@@ -370,6 +378,11 @@
       g.add(base);
 
       var back = mkBox(w, h - seatH, backT, dark, { material: darkMat });
+      var base = mkBox(w, seatH, d, dark);
+      base.position.set(0, seatH / 2, 0);
+      g.add(base);
+
+      var back = mkBox(w, h - seatH, backT, dark);
       back.position.set(0, seatH + (h - seatH) / 2, backCZ);
       g.add(back);
 
@@ -378,6 +391,7 @@
       for (var ci = 0; ci < nC; ci++) {
         var cX = -(innerW / 2) + (ci + 0.5) * segW;
         var cush = mkBox(segW - 0.025, seatT, seatD * 0.87, col, { material: fabricMat });
+        var cush = mkBox(segW - 0.025, seatT, seatD * 0.87, col);
         cush.position.set(cX, seatH + seatT / 2, seatCZ);
         g.add(cush);
       }
@@ -387,6 +401,11 @@
       g.add(larm);
 
       var rarm = mkBox(armW, armH, seatD, col, { material: fabricMat });
+      var larm = mkBox(armW, armH, seatD, col);
+      larm.position.set(-(innerW / 2 + armW / 2), armH / 2, seatCZ);
+      g.add(larm);
+
+      var rarm = mkBox(armW, armH, seatD, col);
       rarm.position.set(innerW / 2 + armW / 2, armH / 2, seatCZ);
       g.add(rarm);
     }
@@ -406,12 +425,18 @@
       g.add(head);
 
       var frame = mkBox(w, frameH, d, dark, { material: woodMat });
+      var head = mkBox(w, headH, headT, dark);
+      head.position.set(0, headH / 2, -(d / 2 - headT / 2));
+      g.add(head);
+
+      var frame = mkBox(w, frameH, d, dark);
       frame.position.set(0, frameH / 2, 0);
       g.add(frame);
 
       var mattD = d - headT;
       var mattZ = -(d / 2) + headT + mattD / 2;
       var matt = mkBox(w * 0.93, mattH, mattD, lite, { material: mattMat });
+      var matt = mkBox(w * 0.93, mattH, mattD, lite);
       matt.position.set(0, frameH + mattH / 2, mattZ);
       g.add(matt);
 
@@ -422,15 +447,39 @@
       if (w > 1.3) {
         [-(w * 0.2), w * 0.2].forEach(function(px) {
           var p = mkBox(w * 0.35, pilH, pilD, 0xF5F0EB, { material: pilMat });
+      if (w > 1.3) {
+        [-(w * 0.2), w * 0.2].forEach(function(px) {
+          var p = mkBox(w * 0.35, pilH, pilD, 0xF5F0EB);
           p.position.set(px, pilY, pilZ);
           g.add(p);
         });
       } else {
         var ps = mkBox(w * 0.70, pilH, pilD, 0xF5F0EB, { material: pilMat });
+        var ps = mkBox(w * 0.70, pilH, pilD, 0xF5F0EB);
         ps.position.set(0, pilY, pilZ);
         g.add(ps);
       }
     }
+
+    // ── Rectangular table (dining, coffee, desk, counter) ────────────────────
+    function buildTable(g, w, d, h, col, dark) {
+      var topT = h * 0.06;
+      var legT = Math.min(w * 0.05, 0.06);
+      var legH = h - topT;
+      var lx = w / 2 - legT * 0.8;
+      var lz = d / 2 - legT * 0.8;
+
+      var top = mkBox(w, topT, d, col);
+      top.position.set(0, h - topT / 2, 0);
+      g.add(top);
+
+      [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]].forEach(function(p) {
+        var leg = mkBox(legT, legH, legT, dark);
+        leg.position.set(p[0], legH / 2, p[1]);
+        g.add(leg);
+      });
+    }
+
     // ── Round dining table ────────────────────────────────────────────────────
     function buildRoundTable(g, w, d, h, col, dark) {
       var topT = h * 0.06;
@@ -494,6 +543,7 @@
       var woodMat = mkMat(col, 'wood', 0.6, 0.05);
       var darkMat = mkMat(dark, 'wood', 0.7, 0.05);
       var body = mkBox(w, h, d, col, { material: woodMat });
+      var body = mkBox(w, h, d, col);
       body.position.set(0, h / 2, 0);
       g.add(body);
 
@@ -1357,6 +1407,25 @@
           group.rotation.y = -item.rotationDeg * Math.PI / 180;
           roomGroup.add(group);
         }
+      (data.furnitureItems || []).forEach(function(item) {
+        var color = parseInt(item.colorHex.replace('#', ''), 16);
+        var group = createFurnitureGroup(item, color);
+
+        // Contact shadow — flat plane just above floor, sized to furniture footprint
+        // Expand by 30 % on each axis so the feathered edge extends past the base.
+        var sw = item.widthM * 1.30;
+        var sd = item.depthM * 1.30;
+        var shadowPlane = new THREE.Mesh(
+          new THREE.PlaneGeometry(sw, sd),
+          shadowMat
+        );
+        shadowPlane.rotation.x = -Math.PI / 2;
+        shadowPlane.position.y = 0.003; // 3 mm above floor, above wood texture
+        group.add(shadowPlane);
+
+        group.position.set(item.x - cx, 0, item.z - cz);
+        group.rotation.y = -item.rotationDeg * Math.PI / 180;
+        roomGroup.add(group);
       });
 
       // ── Ceiling point light (simulates indoor fixture) ─────────────────────
