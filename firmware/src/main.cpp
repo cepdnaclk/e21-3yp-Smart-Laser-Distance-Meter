@@ -18,19 +18,21 @@
 #define SD_MISO  19
 #define SD_MOSI  23
 
-#define BTN_PWR   25
-#define BTN_SEL   27
-#define BTN_DOWN  33
-#define BTN_MEAS  32
-#define BUZZER    26
-#define LASER_PIN 4
+#define BTN_PWR    25
+#define BTN_SEL    27
+#define BTN_DOWN   33
+#define BTN_MEAS   32
+#define BTN_OFFSET 35    // NEW — top/bottom toggle, needs external 10k pull-up to 3.3V
+#define BUZZER     26
+#define LASER_PIN  4
 
-// TF-Luna on UART2 — GPIO16=RX2, GPIO17=TX2
 #define TF_RX 16
 #define TF_TX 17
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+#define DEVICE_HEIGHT_MM 146.0   // NEW — offset added when measuring from bottom
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 HardwareSerial   tfSerial(2);
@@ -38,6 +40,8 @@ HardwareSerial   tfSerial(2);
 bool  sdReady     = false;
 int   recordCount = 0;
 float lastMm      = 0;
+
+bool measureFromBottom = false;  // NEW — false = Top (T), true = Bottom (B)
 
 BLEServer*         bleServer        = nullptr;
 BLECharacteristic* bleChar          = nullptr;
@@ -56,10 +60,11 @@ struct Button {
   bool          triggered;
 };
 
-Button btnPwr  = {BTN_PWR,  true, true, 0, false};
-Button btnSel  = {BTN_SEL,  true, true, 0, false};
-Button btnDown = {BTN_DOWN, true, true, 0, false};
-Button btnMeas = {BTN_MEAS, true, true, 0, false};
+Button btnPwr    = {BTN_PWR,    true, true, 0, false};
+Button btnSel    = {BTN_SEL,    true, true, 0, false};
+Button btnDown   = {BTN_DOWN,   true, true, 0, false};
+Button btnMeas   = {BTN_MEAS,   true, true, 0, false};
+Button btnOffset = {BTN_OFFSET, true, true, 0, false}; // NEW
 
 void updateButton(Button &btn) {
   btn.triggered = false;
@@ -94,6 +99,14 @@ NormalState normalState = IDLE;
 
 // ── Display functions ────────────────────────────────────────
 
+// NEW — draws the small T/B indicator in the top-right corner
+// Placed after the mode text ("BLE"/"NRM") so it never overlaps other layout.
+void drawModeIndicator() {
+  display.setTextSize(1);
+  display.setCursor(122, 0);
+  display.print(measureFromBottom ? "B" : "T");
+}
+
 void drawHeader(String mode) {
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -102,6 +115,7 @@ void drawHeader(String mode) {
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
   display.setCursor(98, 0);
   display.print(mode);
+  drawModeIndicator(); // NEW
 }
 
 void showModeSelect() {
@@ -110,6 +124,7 @@ void showModeSelect() {
   display.setTextSize(1);
   display.setCursor(18, 0);
   display.println("SmartMeasure Pro");
+  drawModeIndicator(); // NEW
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
   display.setCursor(0, 14); display.println("Select Mode:");
   display.setCursor(0, 28);
@@ -232,6 +247,7 @@ void showHistory() {
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.println("-- History --");
+  drawModeIndicator(); // NEW
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
 
   if (!sdReady) {
@@ -284,7 +300,6 @@ bool saveToSD(float mm) {
 // ── TF-Luna measurement ──────────────────────────────────────
 
 float doMeasure() {
-  // Blink the alignment laser to signal the user to hold steady
   for (int i = 0; i < 3; i++) {
     digitalWrite(LASER_PIN, LOW);  delay(150);
     digitalWrite(LASER_PIN, HIGH); delay(150);
@@ -292,25 +307,21 @@ float doMeasure() {
   digitalWrite(LASER_PIN, LOW);
   showMeasuring();
 
-  // Flush any stale frames that built up while the user was aiming
   while (tfSerial.available()) tfSerial.read();
-  delay(20); // allow one fresh frame to arrive (TF-Luna default 100 Hz = 10 ms/frame)
+  delay(20);
 
   unsigned long start = millis();
   while (millis() - start < 500) {
 
     if (tfSerial.available() < 9) continue;
-
-    // Sync to the two-byte header 0x59 0x59
     if (tfSerial.read() != 0x59) continue;
     if (tfSerial.available() < 8) continue;
     if (tfSerial.peek()    != 0x59) continue;
-    tfSerial.read(); // consume second header byte
+    tfSerial.read();
 
     uint8_t buf[7];
     tfSerial.readBytes(buf, 7);
 
-    // Verify checksum: sum of all 9 bytes (including both headers) & 0xFF
     uint8_t checksum = 0x59 + 0x59;
     for (int i = 0; i < 6; i++) checksum += buf[i];
     if ((checksum & 0xFF) != buf[6]) {
@@ -324,18 +335,24 @@ float doMeasure() {
     Serial.print("TF-Luna raw: "); Serial.print(cm);
     Serial.print(" cm  flux: ");   Serial.println(flux);
 
-    // flux == 65535 means sensor is saturated (target too close / too reflective)
-    // flux < 100    means signal too weak (dark target, out of range, fog)
     if (flux < 100 || flux == 65535) {
       Serial.println("TF-Luna: signal quality fail");
       return -1;
     }
-    if (cm < 20 || cm > 800) { // 0.2 m minimum, 8 m maximum
+    if (cm < 20 || cm > 800) {
       Serial.println("TF-Luna: out of range");
       return -1;
     }
 
-    return (float)(cm * 10); // cm → mm
+    float resultMm = (float)(cm * 10);
+
+    // NEW — apply bottom offset AFTER validity checks on the raw reading
+    if (measureFromBottom) {
+      resultMm += DEVICE_HEIGHT_MM;
+      Serial.print("Bottom mode: +146mm -> "); Serial.println(resultMm);
+    }
+
+    return resultMm;
   }
 
   Serial.println("TF-Luna: read timeout");
@@ -350,7 +367,7 @@ void bleSend(float mm, bool capturing) {
   uint8_t packet[4];
   packet[0] = (dist >> 8) & 0xFF;
   packet[1] =  dist       & 0xFF;
-  packet[2] = 80;           // placeholder — replace with real IMU angle when available
+  packet[2] = 80;
   packet[3] = capturing ? 0x01 : 0x00;
   bleChar->setValue(packet, 4);
   bleChar->notify();
@@ -371,6 +388,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
     display.setCursor(0, 0); display.println("-- Bluetooth --");
+    drawModeIndicator(); // NEW
     display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
     display.setCursor(0, 20); display.println("App disconnected");
     display.setCursor(0, 32); display.println("Waiting for app...");
@@ -383,28 +401,26 @@ class MyServerCallbacks : public BLEServerCallbacks {
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin(21, 22); // I2C for OLED
+  Wire.begin(21, 22);
 
-  pinMode(BTN_PWR,   INPUT_PULLUP);
-  pinMode(BTN_SEL,   INPUT_PULLUP);
-  pinMode(BTN_DOWN,  INPUT_PULLUP);
-  pinMode(BTN_MEAS,  INPUT_PULLUP);
-  pinMode(BUZZER,    OUTPUT);
-  pinMode(LASER_PIN, OUTPUT);
+  pinMode(BTN_PWR,    INPUT_PULLUP);
+  pinMode(BTN_SEL,    INPUT_PULLUP);
+  pinMode(BTN_DOWN,   INPUT_PULLUP);
+  pinMode(BTN_MEAS,   INPUT_PULLUP);
+  pinMode(BTN_OFFSET, INPUT);   // NEW — GPIO35 has no internal pull-up, use external 10k
+  pinMode(BUZZER,     OUTPUT);
+  pinMode(LASER_PIN,  OUTPUT);
   digitalWrite(BUZZER,    LOW);
   digitalWrite(LASER_PIN, LOW);
 
-  // OLED
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS);
   display.setTextColor(SSD1306_WHITE);
   display.clearDisplay();
   display.display();
 
-  // TF-Luna on UART2
   tfSerial.begin(115200, SERIAL_8N1, TF_RX, TF_TX);
-  delay(100); // allow sensor to start streaming
+  delay(100);
 
-  // SD card
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   delay(200);
   if (SD.begin(SD_CS, SPI, 4000000)) {
@@ -415,7 +431,6 @@ void setup() {
     }
   }
 
-  // BLE
   BLEDevice::init("SmartMeasure Pro");
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new MyServerCallbacks());
@@ -437,6 +452,23 @@ void loop() {
   updateButton(btnSel);
   updateButton(btnDown);
   updateButton(btnMeas);
+  updateButton(btnOffset); // NEW
+
+  // ── NEW — Top/Bottom toggle works ANYTIME, in any screen/state ──
+  if (btnOffset.triggered) {
+    measureFromBottom = !measureFromBottom;
+    beep(1);
+    Serial.println(measureFromBottom ? "Mode: BOTTOM (+146mm)" : "Mode: TOP (raw)");
+
+    // Redraw whatever screen is currently active so the T/B indicator updates immediately
+    if (currentScreen == MODE_SELECT)      showModeSelect();
+    else if (currentScreen == NORMAL || currentScreen == BLE_MODE) {
+      if (normalState == IDLE)      showIdle();
+      else if (normalState == LASER_ON)  showLaserOn();
+      else if (normalState == MEASURED)  showResult(lastMm);
+      else if (normalState == HISTORY)   showHistory();
+    }
+  }
 
   // ── OFF ─────────────────────────────────────────────────
   if (currentScreen == OFF) {
@@ -472,6 +504,7 @@ void loop() {
         display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);
         display.setCursor(0, 0); display.println("-- Bluetooth --");
+        drawModeIndicator(); // NEW
         display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
         display.setCursor(0, 20); display.println("BLE Mode");
         display.setCursor(0, 32); display.println("Waiting for app...");
@@ -677,13 +710,13 @@ void loop() {
     }
   }
 
-  // Debug: print raw GPIO readings every 500 ms so we can verify button wiring
   static unsigned long lastDebug = 0;
   if (millis() - lastDebug > 500) {
     Serial.print("BTN_PWR(25):"); Serial.print(digitalRead(BTN_PWR));
     Serial.print("  BTN_SEL(27):"); Serial.print(digitalRead(BTN_SEL));
     Serial.print("  BTN_DOWN(33):"); Serial.print(digitalRead(BTN_DOWN));
-    Serial.print("  BTN_MEAS(32):"); Serial.println(digitalRead(BTN_MEAS));
+    Serial.print("  BTN_MEAS(32):"); Serial.print(digitalRead(BTN_MEAS));
+    Serial.print("  BTN_OFFSET(35):"); Serial.println(digitalRead(BTN_OFFSET));
     lastDebug = millis();
   }
 
