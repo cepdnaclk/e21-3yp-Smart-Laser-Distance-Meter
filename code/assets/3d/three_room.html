@@ -173,77 +173,6 @@
     var _plasterTex = null;
     var _shadowTex  = null;
 
-    var _textureLoader = new THREE.TextureLoader();
-
-    // Creates a simple canvas-based texture (no external files needed)
-    function makeProceduralTexture(baseColor, pattern) {
-      var canvas = document.createElement('canvas');
-      canvas.width = canvas.height = 256;
-      var ctx = canvas.getContext('2d');
-
-      if (pattern === 'fabric') {
-        ctx.fillStyle = '#' + baseColor.toString(16).padStart(6, '0');
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.globalAlpha = 0.15;
-        for (var i = 0; i < 256; i += 8) {
-          ctx.fillStyle = i % 16 === 0 ? '#ffffff' : '#000000';
-          ctx.fillRect(0, i, 256, 4);
-        }
-        for (var j = 0; j < 256; j += 8) {
-          ctx.fillStyle = j % 16 === 0 ? '#ffffff' : '#000000';
-          ctx.fillRect(j, 0, 4, 256);
-        }
-      } else if (pattern === 'wood') {
-        ctx.fillStyle = '#8B6914';
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.globalAlpha = 0.12;
-        for (var k = 0; k < 256; k += 6) {
-          ctx.strokeStyle = k % 18 === 0 ? '#5C3D0A' : '#A07830';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(0, k);
-          ctx.lineTo(256, k + 10);
-          ctx.stroke();
-        }
-      } else if (pattern === 'ceramic') {
-        ctx.fillStyle = '#F5F5F0';
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.globalAlpha = 0.08;
-        ctx.fillStyle = '#CCCCCC';
-        for (var l = 0; l < 256; l += 32) {
-          ctx.fillRect(0, l, 256, 1);
-          ctx.fillRect(l, 0, 1, 256);
-        }
-      } else if (pattern === 'metal') {
-        ctx.fillStyle = '#9AABB8';
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.globalAlpha = 0.2;
-        for (var m = 0; m < 256; m += 3) {
-          ctx.fillStyle = m % 6 === 0 ? '#FFFFFF' : '#607080';
-          ctx.fillRect(0, m, 256, 1);
-        }
-      } else {
-        ctx.fillStyle = '#' + baseColor.toString(16).padStart(6, '0');
-        ctx.fillRect(0, 0, 256, 256);
-      }
-
-      var tex = new THREE.CanvasTexture(canvas);
-      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.repeat.set(3, 3);
-      return tex;
-    }
-
-    // Creates a PBR material with texture
-    function mkMat(color, pattern, roughness, metalness) {
-      var tex = makeProceduralTexture(color, pattern);
-      return new THREE.MeshStandardMaterial({
-        map:       tex,
-        color:     0xFFFFFF,
-        roughness: roughness !== undefined ? roughness : 0.8,
-        metalness: metalness !== undefined ? metalness : 0.0,
-      });
-    }
-
     function disposeGroup(group) {
       var kids = group.children.slice();
       kids.forEach(function(obj) {
@@ -278,17 +207,6 @@
     // Phase 3D-4: PBR material — roughness/metalness give realistic light response
     function mkBox(w, h, d, color, opts) {
       opts = opts || {};
-      var mat;
-      if (opts.material) {
-        mat = opts.material;
-      } else {
-        mat = new THREE.MeshStandardMaterial({
-          color:     color,
-          roughness: opts.roughness !== undefined ? opts.roughness : 0.75,
-          metalness: opts.metalness !== undefined ? opts.metalness : 0.05,
-        });
-      }
-      var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
       var m = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, d),
         new THREE.MeshStandardMaterial({
@@ -360,9 +278,6 @@
 
     // ── Sofa ──────────────────────────────────────────────────────────────────
     function buildSofa(g, w, d, h, col, dark) {
-      var fabricMat = mkMat(col, 'fabric', 0.9, 0.0);
-      var darkMat   = mkMat(dark, 'fabric', 0.95, 0.0);
-
       var armW   = w * 0.09;
       var backT  = d * 0.20;
       var seatH  = h * 0.38;
@@ -373,11 +288,6 @@
       var backCZ = -(d / 2 - backT / 2);
       var seatCZ = -(d / 2) + backT + seatD / 2;
 
-      var base = mkBox(w, seatH, d, dark, { material: darkMat });
-      base.position.set(0, seatH / 2, 0);
-      g.add(base);
-
-      var back = mkBox(w, h - seatH, backT, dark, { material: darkMat });
       var base = mkBox(w, seatH, d, dark);
       base.position.set(0, seatH / 2, 0);
       g.add(base);
@@ -390,17 +300,11 @@
       var segW = innerW / nC;
       for (var ci = 0; ci < nC; ci++) {
         var cX = -(innerW / 2) + (ci + 0.5) * segW;
-        var cush = mkBox(segW - 0.025, seatT, seatD * 0.87, col, { material: fabricMat });
         var cush = mkBox(segW - 0.025, seatT, seatD * 0.87, col);
         cush.position.set(cX, seatH + seatT / 2, seatCZ);
         g.add(cush);
       }
 
-      var larm = mkBox(armW, armH, seatD, col, { material: fabricMat });
-      larm.position.set(-(innerW / 2 + armW / 2), armH / 2, seatCZ);
-      g.add(larm);
-
-      var rarm = mkBox(armW, armH, seatD, col, { material: fabricMat });
       var larm = mkBox(armW, armH, seatD, col);
       larm.position.set(-(innerW / 2 + armW / 2), armH / 2, seatCZ);
       g.add(larm);
@@ -412,19 +316,11 @@
 
     // ── Bed (all sizes) ───────────────────────────────────────────────────────
     function buildBed(g, w, d, h, col, dark, lite) {
-      var woodMat    = mkMat(dark, 'wood', 0.6, 0.05);
-      var mattMat    = mkMat(lite, 'fabric', 0.95, 0.0);
-
       var frameH = h * 0.28;
       var mattH  = h * 0.14;
       var headH  = h * 0.85;
       var headT  = Math.max(0.08, d * 0.07);
 
-      var head = mkBox(w, headH, headT, dark, { material: woodMat });
-      head.position.set(0, headH / 2, -(d / 2 - headT / 2));
-      g.add(head);
-
-      var frame = mkBox(w, frameH, d, dark, { material: woodMat });
       var head = mkBox(w, headH, headT, dark);
       head.position.set(0, headH / 2, -(d / 2 - headT / 2));
       g.add(head);
@@ -435,7 +331,6 @@
 
       var mattD = d - headT;
       var mattZ = -(d / 2) + headT + mattD / 2;
-      var matt = mkBox(w * 0.93, mattH, mattD, lite, { material: mattMat });
       var matt = mkBox(w * 0.93, mattH, mattD, lite);
       matt.position.set(0, frameH + mattH / 2, mattZ);
       g.add(matt);
@@ -443,10 +338,6 @@
       var pilH = h * 0.08, pilD = d * 0.14;
       var pilY = frameH + mattH + pilH / 2;
       var pilZ = -(d / 2) + headT + pilD / 2 + 0.01;
-      var pilMat = mkMat(0xF5F0EB, 'fabric', 0.95, 0.0);
-      if (w > 1.3) {
-        [-(w * 0.2), w * 0.2].forEach(function(px) {
-          var p = mkBox(w * 0.35, pilH, pilD, 0xF5F0EB, { material: pilMat });
       if (w > 1.3) {
         [-(w * 0.2), w * 0.2].forEach(function(px) {
           var p = mkBox(w * 0.35, pilH, pilD, 0xF5F0EB);
@@ -454,7 +345,6 @@
           g.add(p);
         });
       } else {
-        var ps = mkBox(w * 0.70, pilH, pilD, 0xF5F0EB, { material: pilMat });
         var ps = mkBox(w * 0.70, pilH, pilD, 0xF5F0EB);
         ps.position.set(0, pilY, pilZ);
         g.add(ps);
@@ -514,9 +404,6 @@
 
     // ── Toilet ────────────────────────────────────────────────────────────────
     function buildToilet(g, w, d, h, col, dark) {
-      var ceramicMat = mkMat(0xF5F5F0, 'ceramic', 0.2, 0.05);
-      col  = 0xF5F5F0;
-      dark = 0xE0E0DC;
       var tankH = h * 0.82;
       var tankT = d * 0.28;
       var tankW = w * 0.62;
@@ -540,9 +427,6 @@
 
     // ── Wardrobe / tall cabinet / bookshelf ───────────────────────────────────
     function buildWardrobe(g, w, d, h, col, dark) {
-      var woodMat = mkMat(col, 'wood', 0.6, 0.05);
-      var darkMat = mkMat(dark, 'wood', 0.7, 0.05);
-      var body = mkBox(w, h, d, col, { material: woodMat });
       var body = mkBox(w, h, d, col);
       body.position.set(0, h / 2, 0);
       g.add(body);
@@ -565,9 +449,6 @@
 
     // ── Bathtub ───────────────────────────────────────────────────────────────
     function buildBathtub(g, w, d, h, col, dark) {
-      var ceramicMat = mkMat(0xF5F5F0, 'ceramic', 0.2, 0.05);
-      col  = 0xF5F5F0;
-      dark = 0xE0E0DC;
       var wallT = h * 0.18;
       var innerH = h - wallT;
 
@@ -582,9 +463,6 @@
 
     // ── Sink / basin ──────────────────────────────────────────────────────────
     function buildSink(g, w, d, h, col, dark) {
-      var ceramicMat = mkMat(0xF5F5F0, 'ceramic', 0.2, 0.05);
-      col  = 0xF5F5F0;
-      dark = 0xE0E0DC;
       var pedH = h * 0.72;
       var pedW = w * 0.35;
       var pedD = d * 0.35;
@@ -1332,81 +1210,6 @@
         opacity:     1.0,     // alpha comes entirely from the texture
       });
 
-      // furnitureModels = { typeName: 'base64string', ... } passed from Flutter
-      var furnitureModels = data.furnitureModels || {};
-      var loader = new THREE.GLTFLoader();
-
-      (data.furnitureItems || []).forEach(function(item) {
-        var color = parseInt(item.colorHex.replace('#', ''), 16);
-        
-        var base64Data = furnitureModels[item.type];
-        
-        if (base64Data) {
-          // Load realistic 3D model from base64
-          var dataUrl = 'data:model/gltf-binary;base64,' + base64Data;
-          
-          loader.load(
-            dataUrl,
-            function(gltf) {
-              var model = gltf.scene;
-              
-              // Get the bounding box to scale the model correctly
-              var box = new THREE.Box3().setFromObject(model);
-              var size = new THREE.Vector3();
-              box.getSize(size);
-              
-              // Scale model to match the furniture real dimensions
-              var scaleX = item.widthM / size.x;
-              var scaleY = item.heightM / size.y;
-              var scaleZ = item.depthM / size.z;
-              model.scale.set(scaleX, scaleY, scaleZ);
-              
-              // Enable shadows on all meshes inside the model
-              model.traverse(function(child) {
-                if (child.isMesh) {
-                  child.castShadow = true;
-                  child.receiveShadow = true;
-                  child.userData.furnitureType = item.type;
-                }
-              });
-              
-              // Position and rotate
-              model.position.set(item.x - cx, 0, item.z - cz);
-              model.rotation.y = -item.rotationDeg * Math.PI / 180;
-              model.userData.furnitureType = item.type;
-              
-              roomGroup.add(model);
-            },
-            undefined,
-            function(error) {
-              // If model fails to load, fall back to box shape
-              console.log('Model load failed for ' + item.type + ', using fallback');
-              var group = createFurnitureGroup(item, color);
-              group.position.set(item.x - cx, 0, item.z - cz);
-              group.rotation.y = -item.rotationDeg * Math.PI / 180;
-              roomGroup.add(group);
-            }
-          );
-          
-        } else {
-          // No model available — use existing procedural shape
-          var group = createFurnitureGroup(item, color);
-          
-          // Contact shadow
-          var sw = item.widthM * 1.30;
-          var sd = item.depthM * 1.30;
-          var shadowPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(sw, sd),
-            shadowMat
-          );
-          shadowPlane.rotation.x = -Math.PI / 2;
-          shadowPlane.position.y = 0.003;
-          group.add(shadowPlane);
-          
-          group.position.set(item.x - cx, 0, item.z - cz);
-          group.rotation.y = -item.rotationDeg * Math.PI / 180;
-          roomGroup.add(group);
-        }
       (data.furnitureItems || []).forEach(function(item) {
         var color = parseInt(item.colorHex.replace('#', ''), 16);
         var group = createFurnitureGroup(item, color);
