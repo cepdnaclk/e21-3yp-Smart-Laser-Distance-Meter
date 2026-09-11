@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartMeasure Pro — Smart Laser Distance Meter</title>
+<meta name="description" content="SmartMeasure Pro: a handheld laser distance meter paired with a mobile app for instant floor-plan sketching, 3D visualization, and cloud collaboration." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="wrap nav__inner">
+    <a href="#top" class="nav__brand">SmartMeasure <span class="mono">PRO</span></a>
+    <button class="nav__toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav__links" id="navLinks">
+      <li><a href="#intro">Overview</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#hardware">Hardware</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#audience">Who it's for</a></li>
+      <li><a href="#guide">How it works</a></li>
+      <li><a href="#team">Team</a></li>
+      <li><a href="#download" class="nav__cta">Get the app</a></li>
+    </ul>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ 1. INTRO ============ -->
+  <section class="hero" id="intro">
+    <div class="wrap">
+      <div class="hero__grid">
+        <div>
+          <div class="hero__eyebrow">
+            <span class="crosshair"></span>
+            <span class="mono">3RD YEAR PROJECT — UNIVERSITY OF PERADENIYA</span>
+          </div>
+          <h1>Measure a room in seconds. Sketch it in real time.</h1>
+          <p class="lead">
+            SmartMeasure Pro is a small handheld device that measures distance with a laser.
+            It connects to a mobile app, so every measurement is instantly drawn on a floor
+            plan. No tape measure. No paper sketches. Just point, measure, and see your room
+            take shape on your phone.
+          </p>
+          <div class="hero__actions">
+            <a href="#features" class="btn btn--primary">Explore features</a>
+            <a href="#download" class="btn btn--outline">Download the app</a>
+          </div>
+        </div>
+
+        <div class="carousel" aria-label="Device and app photos">
+          <div class="carousel__track">
+            <div class="carousel__slide">
+              <img src="assets/images/intro-1.jpeg" alt="SmartMeasure Pro handheld device" />
+            </div>
+            <div class="carousel__slide">
+              <img src="assets/images/intro-2.jpeg" alt="SmartMeasure Pro mobile app interface" />
+            </div>
+          </div>
+          <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+          <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+          <div class="carousel__dots"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <!-- ============ WHY IT MATTERS ============ -->
+  <section class="section--navy">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Why it matters</h2>
+          <p>The old way of measuring a room, next to the SmartMeasure Pro way.</p>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-card__old">4 hrs</span>
+          <span class="stat-card__arrow">→</span>
+          <span class="stat-card__new">20 min</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__old">2 people</span>
+          <span class="stat-card__arrow">→</span>
+          <span class="stat-card__new">1 person</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__old">Hand sketch</span>
+          <span class="stat-card__arrow">→</span>
+          <span class="stat-card__new">AutoCAD DXF</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__old">Errors common</span>
+          <span class="stat-card__arrow">→</span>
+          <span class="stat-card__new">Zero errors</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <!-- ============ HARDWARE ARCHITECTURE ============ -->
+  <section class="section--surface" id="hardware">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Inside the device</h2>
+          <p>Every component that makes a single laser press turn into an instant measurement.</p>
+        </div>
+      </div>
+
+      <div class="hw-grid">
+        <div class="hw-card">
+          <div class="hw-card__media"><img src="assets/images/hw-esp32.jpg" alt="ESP32 microcontroller" /></div>
+          <span class="hw-card__name mono">ESP32 CP2102</span>
+          <p class="hw-card__desc">Main processor — handles BLE and WiFi.</p>
+        </div>
+        <div class="hw-card">
+          <div class="hw-card__media"><img src="assets/images/hw-lidar.jpg" alt="LiDAR distance sensor" /></div>
+          <span class="hw-card__name mono">DTS6012M LiDAR</span>
+          <p class="hw-card__desc">Laser distance sensor, 0–20m range.</p>
+        </div>
+        <div class="hw-card">
+          <div class="hw-card__media"><img src="assets/images/hw-oled.jpg" alt="OLED display" /></div>
+          <span class="hw-card__name mono">SSD1306 OLED</span>
+          <p class="hw-card__desc">0.96" screen — live readings on device.</p>
+        </div>
+        <div class="hw-card">
+          <div class="hw-card__media"><img src="assets/images/hw-battery.jpg" alt="18650 battery pack" /></div>
+          <span class="hw-card__name mono">2× 18650 Li-ion</span>
+          <p class="hw-card__desc">Rechargeable portable power.</p>
+        </div>
+      </div>
+
+      <div class="hw-spec-strip">
+        <div class="hw-spec"><span class="hw-spec__label mono">LASER</span> 5mW green ×2, visual alignment</div>
+        <div class="hw-spec"><span class="hw-spec__label mono">CHARGING</span> TP4056 + boost, USB-C, 5V</div>
+        <div class="hw-spec"><span class="hw-spec__label mono">FEEDBACK</span> Buzzer + vibration motor</div>
+        <div class="hw-spec"><span class="hw-spec__label mono">STORAGE</span> SD card, CSV logging (SPI)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. FEATURES ============ -->
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Key features</h2>
+          <p>From a single laser reading to a finished, exportable floor plan.</p>
+        </div>
+      </div>
+
+      <!-- Sketch Screen -->
+      <div class="feature">
+        <div class="feature__media">
+          <div class="carousel" aria-label="Sketch screen photos">
+            <div class="carousel__track">
+              <div class="carousel__slide"><img src="assets/images/feature-sketch-1.jpeg" alt="Sketch screen — drawing a room outline" /></div>
+              <div class="carousel__slide"><img src="assets/images/feature-sketch-2.jpeg" alt="Sketch screen — wall measurement assigned" /></div>
+            </div>
+            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+            <div class="carousel__dots"></div>
+          </div>
+        </div>
+        <div class="feature__text">
+          <span class="feature__label mono">01 — SKETCH SCREEN</span>
+          <h3>Draw as you measure</h3>
+          <p>Tap and drag to sketch the shape of a room on screen. Point the device at a
+          wall, take a reading, and assign it to the wall you just drew — the app keeps the
+          shape and the real-world size in sync.</p>
+        </div>
+      </div>
+
+      <!-- PDF Export -->
+      <div class="feature feature--reverse">
+        <div class="feature__media">
+          <div class="media-frame">
+            <img src="assets/images/feature-pdf.jpeg" alt="PDF floor plan report" />
+          </div>
+        </div>
+        <div class="feature__text">
+          <span class="feature__label mono">02 — PDF EXPORT</span>
+          <h3>A ready-to-share report</h3>
+          <p>Turn any project into a clean PDF with the floor plan diagram and a full
+          measurements table — ready to print, email, or attach to a client proposal.</p>
+        </div>
+      </div>
+
+      <!-- DXF Export -->
+      <div class="feature">
+        <div class="feature__media">
+          <div class="media-frame">
+            <img src="assets/images/feature-dxf.jpeg" alt="DXF CAD file export" />
+          </div>
+        </div>
+        <div class="feature__text">
+          <span class="feature__label mono">03 — DXF EXPORT</span>
+          <h3>Straight into CAD software</h3>
+          <p>Export the same floor plan as a DXF file, compatible with AutoCAD. Architects
+          and designers can open it directly and keep working, with no redrawing needed.</p>
+        </div>
+      </div>
+
+            <!-- 3D Visualization -->
+      <div class="feature feature--reverse">
+        <div class="feature__media media-split">
+          <div class="carousel" aria-label="3D room visualization photos">
+            <div class="carousel__track">
+              <div class="carousel__slide"><img src="assets/images/feature-3d-1.jpeg" alt="3D visualization of a measured room" /></div>
+              <div class="carousel__slide"><img src="assets/images/feature-3d-2.jpeg" alt="3D visualization with furniture placed" /></div>
+            </div>
+            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+            <div class="carousel__dots"></div>
+          </div>
+          <div class="video-frame-vertical">
+            <video src="assets/videos/feature-3d-demo.mp4" muted loop playsinline autoplay controls></video>
+          </div>
+        </div>
+        <div class="feature__text">
+          <span class="feature__label mono">04 — 3D VISUALIZATION</span>
+          <h3>See the room, not just the outline</h3>
+          <p>Once the walls are measured, the app builds a 3D model of the room right on
+          your phone — a much clearer picture than a flat sketch, especially for showing
+          a client what the finished space will look like.</p>
+        </div>
+      </div>
+
+      <!-- Cloud Collaboration -->
+      <div class="feature">
+        <div class="feature__media">
+          <div class="carousel" aria-label="Cloud collaboration photos">
+            <div class="carousel__track">
+              <div class="carousel__slide"><img src="assets/images/feature-cloud-1.jpeg" alt="Sharing a project with an invite code" /></div>
+              <div class="carousel__slide"><img src="assets/images/feature-cloud-2.jpeg" alt="Two collaborators editing the same project" /></div>
+            </div>
+            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+            <div class="carousel__dots"></div>
+          </div>
+        </div>
+        <div class="feature__text">
+          <span class="feature__label mono">05 — CLOUD COLLABORATION</span>
+          <h3>Work on a project together</h3>
+          <p>Save a project to the cloud and share it with an invite code. Teammates can
+          open the same project, add measurements, and see each other's changes without
+          passing files back and forth.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. FULL DEMO VIDEO ============ -->
+  <section class="section--surface">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>See it in action</h2>
+          <p>A full walkthrough — taking a measurement with the device and using the app's
+          main features.</p>
+        </div>
+      </div>
+      <div class="video-frame">
+        <video src="assets/videos/full-demo.mp4" controls playsinline></video>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. ARCHITECTURE ============ -->
+  <section class="section--navy" id="architecture">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Three-tier architecture</h2>
+          <p>The device, the app, and the cloud each handle a clear part of the system.</p>
+        </div>
+      </div>
+
+      <div class="tiers">
+        <div class="tier">
+          <span class="tier__index mono">TIER 1</span>
+          <h3>Frontend — Mobile App</h3>
+          <ul>
+            <li>Flutter (Dart) — cross-platform app</li>
+            <li>Bluetooth Low Energy — device connection</li>
+            <li>SQLite — offline project storage</li>
+            <li>Sketch canvas, 3D visualization</li>
+            <li>PDF and DXF export</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <span class="tier__index mono">TIER 2</span>
+          <h3>Backend — Cloud Server</h3>
+          <ul>
+            <li>Node.js + Express.js — REST API</li>
+            <li>JWT — user authentication</li>
+            <li>bcrypt — password hashing</li>
+            <li>Hosted on AWS EC2</li>
+            <li>Handles project sync and sharing</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <span class="tier__index mono">TIER 3</span>
+          <h3>Database</h3>
+          <ul>
+            <li>PostgreSQL</li>
+            <li>Users, projects, and collaborators</li>
+            <li>Room shapes and wall measurements</li>
+            <li>Doors and windows data</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 5. TARGET AUDIENCE ============ -->
+  <section class="section--surface" id="audience">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Who it's for</h2>
+          <p>Built for the people who measure spaces as part of their everyday work.</p>
+        </div>
+      </div>
+
+      <div class="audience-grid">
+        <div class="audience-card">
+          <div class="audience-card__media">
+            <img src="assets/images/audience-construction.jpg" alt="Construction worker" />
+          </div>
+          <h3>Construction workers</h3>
+          <p>Get accurate site measurements quickly, without stretching a tape measure
+          across a room alone.</p>
+        </div>
+        <div class="audience-card">
+          <div class="audience-card__media">
+            <img src="assets/images/audience-interior-designer.jpg" alt="Interior designer" />
+          </div>
+          <h3>Interior designers</h3>
+          <p>Turn a client's room into a floor plan in minutes, complete with a 3D preview
+          to share ideas early.</p>
+        </div>
+        <div class="audience-card">
+          <div class="audience-card__media">
+            <img src="assets/images/audience-architect.jpg" alt="Architect" />
+          </div>
+          <h3>Architects</h3>
+          <p>Export straight to DXF and bring real measurements into your CAD workflow
+          without redrawing anything.</p>
+        </div>
+        <div class="audience-card">
+          <div class="audience-card__media">
+            <img src="assets/images/audience-developer.jpg" alt="Property developer" />
+          </div>
+          <h3>Property developers</h3>
+          <p>Document a property's layout fast, and keep clear, shareable records for every
+          unit.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  
+
+  <!-- ============ 7. DOWNLOAD ============ -->
+  <section class="section--surface" id="download">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Get the app</h2>
+          <p>Download the Android app and pair it with your SmartMeasure Pro device.</p>
+        </div>
+      </div>
+
+      <div class="download-box">
+        <div>
+          <h3 style="margin-bottom:0.3rem;">SmartMeasure Pro — Android APK</h3>
+          <div class="download-box__meta">
+            <span>Version 1.0</span>
+            <span>Android 8.0+</span>
+          </div>
+        </div>
+        <a href="assets/app/smartmeasure-pro.apk" class="btn btn--primary" download>Download APK</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. GUIDELINES ============ -->
+  <section class="section--surface" id="guide">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>How to Use SmartMeasure Pro</h2>
+          <p>A step-by-step guide from installing the app to exporting your first floor plan.</p>
+        </div>
+      </div>
+
+      <div class="guide-steps-list">
+        <div class="guide-step">
+          <span class="guide-step__num">01</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Install and Login</h3>
+            <p class="guide-step__desc">Download the SmartMeasure Pro APK on your Android phone. Open the app, register with your email and password, then login.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">02</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Turn On the Device</h3>
+            <p class="guide-step__desc">Press and hold the power button on the hardware device for 2 seconds. The screen will turn on. Press the mode button until it shows BLE Mode.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">03</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Connect Device to App</h3>
+            <p class="guide-step__desc">On the home screen tap Start Room Sketch. The Bluetooth screen opens automatically. Tap Scan for Devices, select SmartMeasure Pro from the list, and tap Connect. When connected tap Continue to Sketch.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">04</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Draw Your Room</h3>
+            <p class="guide-step__desc">You will see a grid canvas. Tap on the screen to place corners of your room one by one. Walls will draw automatically between each corner. When finished tap near the first corner to close the room.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">05</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Measure Walls with the Device</h3>
+            <p class="guide-step__desc">Stand at one end of a wall. Point the device toward the opposite wall. Press the measure button. The laser fires and the distance appears on the device screen and automatically on the same wall in the app. The wall turns green confirming the real measurement. Repeat for each wall.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">06</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Add Doors and Windows</h3>
+            <p class="guide-step__desc">Tap the door or window icon in the toolbar. Drag and drop it onto the correct wall. Tap on it to enter the width and height measurements in metres. Tap Save.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">07</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Add Furniture</h3>
+            <p class="guide-step__desc">Tap the furniture icon in the toolbar. Choose an item from the list and drag it onto the floor plan to place it.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">08</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">View in 3D</h3>
+            <p class="guide-step__desc">Tap the 3D View button. Your room appears as a 3D model with walls, doors, and windows. Use one finger to rotate and two fingers to zoom. Tap the height button to set the real wall height.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">09</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Export the Floor Plan</h3>
+            <p class="guide-step__desc">Tap the export button and choose PDF for a printable document or DXF for a CAD file. Share it directly from your phone by email or WhatsApp.</p>
+          </div>
+        </div>
+
+        <div class="guide-step">
+          <span class="guide-step__num">10</span>
+          <div class="guide-step__body">
+            <h3 class="guide-step__title">Save and Backup</h3>
+            <p class="guide-step__desc">Tap Save to store the project on your phone. Tap the cloud upload button to backup to the cloud. To load a saved project tap My Projects from the home screen.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 8. TEAM ============ -->
+  <section class="section--surface" id="team">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="crosshair"></span>
+        <div>
+          <h2>Team</h2>
+          <p>The four of us behind SmartMeasure Pro.</p>
+        </div>
+      </div>
+
+      <div class="team-grid">
+        <div class="team-card">
+          <div class="team-card__media"><img src="assets/team/ridmal.jpg" alt="Ridmal Chamod" /></div>
+          <h3>Ridmal Chamod</h3>
+        </div>
+        <div class="team-card">
+          <div class="team-card__media"><img src="assets/team/venuka.jpg" alt="Venuka Kalana" /></div>
+          <h3>Venuka Kalana</h3>
+        </div>
+        <div class="team-card">
+          <div class="team-card__media"><img src="assets/team/dilumi.png" alt="Dilumi Vindya" /></div>
+          <h3>Dilumi Vindya</h3>
+        </div>
+        <div class="team-card">
+          <div class="team-card__media"><img src="assets/team/ravindu.jpg" alt="Ravindu Rashmika" /></div>
+          <h3>Ravindu Rashmika</h3>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer section--navy">
+  <div class="wrap footer__inner">
+    <span class="mono">SmartMeasure Pro — 3YP, Faculty of Engineering, University of Peradeniya</span>
+    <a href="https://github.com/" style="color:#fff;">GitHub →</a>
+  </div>
+</footer>
+
+<script src="js/script.js"></script>
+</body>
+</html>
