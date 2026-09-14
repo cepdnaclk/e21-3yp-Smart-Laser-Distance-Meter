@@ -16,7 +16,7 @@ const double pointSnapRadiusScreen = 30.0;
 const double pointSelectRadiusScreen = 22.0;
 const double snapThresholdDeg = 3.0;
 const double minAngleDistance = 10.0;
-const double wallThickness = 10.0;
+const double wallThickness = 20.0;
 
 List<Offset> thickWallRect(Offset a, Offset b, double thickness) {
   final dx = b.dx - a.dx;

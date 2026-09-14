@@ -58,7 +58,7 @@ class _SketchScreenState extends State<SketchScreen>
   double _scale = 0.35;
   double _scaleStart = 0.35;
   static const double _minCanvasScale = 0.001;
-  static const double _maxCanvasScale = 1.0;
+  static const double _maxCanvasScale = 5.0;
   List<SketchShape> shapes = [SketchShape.empty()];
   int activeIndex = 0;
   Offset? _cursorWorld;
@@ -3462,7 +3462,7 @@ class _SketchScreenState extends State<SketchScreen>
                         });
                       },
                       itemBuilder: (context) => [
-                        for (final value in <double>[0.001, 0.0025, 0.005, 0.01, 0.05, 0.2, 0.35, 1.0])
+                        for (final value in <double>[0.001, 0.0025, 0.005, 0.01, 0.05, 0.2, 0.35, 1.0, 2.0, 5.0])
                           PopupMenuItem<double>(
                             value: value,
                             child: Text(

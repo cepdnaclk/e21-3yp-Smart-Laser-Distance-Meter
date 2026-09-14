@@ -858,7 +858,7 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    if (scale < 0.2) return;
+    if (scale < 0.15) return;
 
     final minorPaint = Paint()
       ..color = const Color(0xFFE6E6E6)
@@ -1162,6 +1162,9 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawPoints(Canvas canvas, SketchShape shape, bool isActive) {
+    double pointRadius(double worldRadius) =>
+      math.max(0.75, worldRadius * scale * 3.0);
+
     for (int i = 0; i < shape.points.length; i++) {
       final s = worldToScreen(shape.points[i]);
       final isFirst = i == 0;
@@ -1170,15 +1173,16 @@ class SketchPainter extends CustomPainter {
       final isSnapTarget = isActive && i == snapTargetIndex;
 
       if (isSnapTarget) {
+        final snapRadius = pointRadius(20);
         canvas.drawCircle(
             s,
-            20,
+            snapRadius,
             Paint()
               ..color = const Color(0xFF00CC44).withOpacity(0.25)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            20,
+          snapRadius,
             Paint()
               ..color = const Color(0xFF00CC44)
               ..strokeWidth = 2.0
@@ -1186,29 +1190,33 @@ class SketchPainter extends CustomPainter {
       }
 
       if (isThisActivePoint) {
+        final glowRadius = pointRadius(lastPointGlowRadius);
+        final ringRadius = pointRadius(lastPointRingRadius);
         canvas.drawCircle(
             s,
-            lastPointGlowRadius,
+            glowRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.10)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.30)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = const Color(0xFFFF6600)
               ..strokeWidth = 1.5
               ..style = PaintingStyle.stroke);
       } else if (isActive && isLast) {
+        final glowRadius = pointRadius(lastPointGlowRadius);
+        final ringRadius = pointRadius(lastPointRingRadius);
         canvas.drawCircle(
             s,
-            lastPointGlowRadius,
+            glowRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.10)
@@ -1216,7 +1224,7 @@ class SketchPainter extends CustomPainter {
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.25)
@@ -1226,7 +1234,7 @@ class SketchPainter extends CustomPainter {
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44)
@@ -1237,7 +1245,9 @@ class SketchPainter extends CustomPainter {
 
       Color dotColor;
       Color borderColor;
-      final double dotRadius = (isActive && (isLast || isThisActivePoint)) ? 7 : (isFirst ? 6 : 4);
+        final double dotWorldRadius =
+          (isActive && (isLast || isThisActivePoint)) ? 7 : (isFirst ? 6 : 4);
+        final double dotRadius = pointRadius(dotWorldRadius);
 
       if (isThisActivePoint) {
         dotColor = const Color(0xFFFF6600);
