@@ -858,6 +858,8 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
+    if (scale < 0.2) return;
+
     final minorPaint = Paint()
       ..color = const Color(0xFFE0E0E0)
       ..strokeWidth = 0.5;
