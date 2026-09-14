@@ -57,6 +57,8 @@ class _SketchScreenState extends State<SketchScreen>
   Offset _panOffset = Offset.zero;
   double _scale = 1.0;
   double _scaleStart = 1.0;
+  static const double _minCanvasScale = 0.001;
+  static const double _maxCanvasScale = 50.0;
   List<SketchShape> shapes = [SketchShape.empty()];
   int activeIndex = 0;
   Offset? _cursorWorld;
@@ -1920,7 +1922,8 @@ class _SketchScreenState extends State<SketchScreen>
     const padding = 60.0;
     final scaleX = (canvasSize.width - padding * 2) / (shapeW < 1 ? 1 : shapeW);
     final scaleY = (canvasSize.height - padding * 2) / (shapeH < 1 ? 1 : shapeH);
-    final newScale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.2, 4.0);
+    final newScale = (scaleX < scaleY ? scaleX : scaleY)
+      .clamp(_minCanvasScale, _maxCanvasScale);
 
     final centerX = (minX + maxX) / 2;
     final centerY = (minY + maxY) / 2;
@@ -2468,7 +2471,7 @@ class _SketchScreenState extends State<SketchScreen>
       setState(() {
         final factor = event.scrollDelta.dy > 0 ? 0.92 : 1.08;
         final focalWorld = screenToWorld(event.position);
-        _scale = (_scale * factor).clamp(0.05, 50.0);
+        _scale = (_scale * factor).clamp(_minCanvasScale, _maxCanvasScale);
         _panOffset = event.position - focalWorld * _scale;
       });
     }
@@ -2553,7 +2556,8 @@ class _SketchScreenState extends State<SketchScreen>
       _panConfirmed = true;
       setState(() {
         final focalWorld = screenToWorld(d.focalPoint);
-        _scale = (_scaleStart * d.scale).clamp(0.05, 50.0);
+        _scale = (_scaleStart * d.scale)
+          .clamp(_minCanvasScale, _maxCanvasScale);
         _panOffset = d.focalPoint - focalWorld * _scale;
       });
       return;
@@ -3444,11 +3448,48 @@ class _SketchScreenState extends State<SketchScreen>
                               fontFamily: 'monospace')),
                     ),
                     const SizedBox(width: 6),
-                    Text('${(_scale * 100).toStringAsFixed(0)}%',
+                    PopupMenuButton<double>(
+                      tooltip: 'Canvas zoom',
+                      initialValue: _scale,
+                      color: const Color(0xFF3A3A3A),
+                      onSelected: (value) {
+                        final size = MediaQuery.sizeOf(context);
+                        final focalPoint = Offset(size.width / 2, size.height / 2);
+                        final focalWorld = screenToWorld(focalPoint);
+                        setState(() {
+                          _scale = value;
+                          _panOffset = focalPoint - focalWorld * value;
+                        });
+                      },
+                      itemBuilder: (context) => [
+                        for (final value in <double>[0.001, 0.0025, 0.005, 0.01, 0.05, 0.2, 1.0])
+                          PopupMenuItem<double>(
+                            value: value,
+                            child: Text(
+                              '${(value * 100).toStringAsFixed(value < 0.01 ? 2 : 0)}%',
+                              style: const TextStyle(
+                                color: Color(0xFFCCCCCC),
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                      ],
+                      child: Text(
+                        '${(_scale * 100).toStringAsFixed(_scale < 0.01 ? 2 : 0)}%',
                         style: const TextStyle(
                             color: Color(0xFF888888),
                             fontSize: 12,
-                            fontFamily: 'monospace')),
+                            fontFamily: 'monospace'),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.fit_screen,
+                          color: Color(0xFFCCCCCC), size: 16),
+                      tooltip: 'Fit drawing',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _fitShapesToView,
+                    ),
                     const SizedBox(width: 4),
                     _buildPresenceAvatars(),
                     if (_cloudProjectId != null)
