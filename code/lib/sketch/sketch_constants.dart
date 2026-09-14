@@ -6,8 +6,8 @@ const double mmPerUnit = 5.0;
 const double unitsPerMeter = 200.0;
 
 const double panThreshold = 6.0;
-const double minorGrid = 20.0;
-const double majorGrid = 100.0;
+const double minorGrid = 40.0;
+const double majorGrid = 200.0;
 const double snapRadiusWorld = 15.0;
 const double minPointDistance = 8.0;
 const double lastPointGlowRadius = 28.0;

@@ -861,18 +861,18 @@ class SketchPainter extends CustomPainter {
     if (scale < 0.2) return;
 
     final minorPaint = Paint()
-      ..color = const Color(0xFFE0E0E0)
-      ..strokeWidth = 0.5;
+      ..color = const Color(0xFFE6E6E6)
+      ..strokeWidth = 0.6;
     final majorPaint = Paint()
-      ..color = const Color(0xFFBBBBBB)
-      ..strokeWidth = 1.0;
+      ..color = const Color(0xFFC8C8C8)
+      ..strokeWidth = 0.9;
     final double minorSpacing = minorGrid * scale;
     final double majorSpacing = majorGrid * scale;
     if (minorSpacing > 4) _drawGridLines(canvas, size, minorSpacing, minorPaint);
     if (majorSpacing > 4) _drawGridLines(canvas, size, majorSpacing, majorPaint);
     if (minorSpacing > 12) {
       final dotPaint = Paint()
-        ..color = const Color(0xFFAAAAAA)
+        ..color = const Color(0xFFD6D6D6)
         ..style = PaintingStyle.fill;
       final double startX = panOffset.dx % minorSpacing;
       final double startY = panOffset.dy % minorSpacing;
