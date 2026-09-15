@@ -87,8 +87,12 @@ class _CloudProjectsScreenState extends State<CloudProjectsScreen> {
 
     // Rebuild room objects
     final List<RoomObject> roomObjects = objectsData.map((r) {
+      final shapeIndex = (r['shape_index'] as num?)?.toInt() ?? 0;
       return RoomObject(
         id: r['object_id'] as String,
+        ownerShapeId: shapes.isNotEmpty && shapeIndex >= 0 && shapeIndex < shapes.length
+            ? shapes[shapeIndex].id
+            : '',
         type: r['type'] == 'door'
             ? RoomObjectType.door
             : RoomObjectType.window,

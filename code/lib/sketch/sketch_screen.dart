@@ -18,6 +18,7 @@ import 'room_object.dart';
 import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
 import 'furniture_painter.dart';
+import 'wall_topology.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
 import '../services/api_service.dart';
@@ -815,6 +816,7 @@ class _SketchScreenState extends State<SketchScreen>
       for (final r in objectsData) {
         activeShape.roomObjects.add(RoomObject(
           id: r['object_id'] as String,
+          ownerShapeId: activeShape.id,
           type: r['type'] == 'door'
               ? RoomObjectType.door
               : RoomObjectType.window,
@@ -1741,58 +1743,6 @@ class _SketchScreenState extends State<SketchScreen>
   /// Returns the overlapping sub-segment between wall [mA→mB] and wall [oA→oB]
   /// when they are parallel, collinear (within [perpThresh]), and overlap.
   /// Returns null if no overlap or not collinear.
-  ({Offset start, Offset end, Offset oStart, Offset oEnd})? _wallOverlapSegment(
-      Offset mA, Offset mB, Offset oA, Offset oB,
-      {double perpThresh = 14.0, double parallelThresh = 0.08}) {
-    final mDir = mB - mA;
-    final mLen = mDir.distance;
-    final oDir = oB - oA;
-    final oLen = oDir.distance;
-    if (mLen < 1 || oLen < 1) return null;
-
-    final mUnit = mDir / mLen;
-    final oUnit = oDir / oLen;
-
-    // Must be parallel (dot product of unit vectors ≈ ±1)
-    final dot = (mUnit.dx * oUnit.dx + mUnit.dy * oUnit.dy).abs();
-    if (dot < 1.0 - parallelThresh) return null;
-
-    // Must be collinear — perpendicular distance from oA to line mA→mB must be small
-    final cross = (oA - mA).dx * mUnit.dy - (oA - mA).dy * mUnit.dx;
-    if (cross.abs() > perpThresh) return null;
-
-    // Project oA and oB onto the mA→mB axis
-    final tOA = (oA - mA).dx * mUnit.dx + (oA - mA).dy * mUnit.dy;
-    final tOB = (oB - mA).dx * mUnit.dx + (oB - mA).dy * mUnit.dy;
-
-    // Overlap along the axis
-    final tStart = tOA < tOB ? tOA : tOB;
-    final tEnd = tOA < tOB ? tOB : tOA;
-    final overlapStart = tStart.clamp(0.0, mLen);
-    final overlapEnd = tEnd.clamp(0.0, mLen);
-    if (overlapEnd - overlapStart < 4.0) return null; // too short, ignore
-
-    final sharedStart = mA + mUnit * overlapStart;
-    final sharedEnd = mA + mUnit * overlapEnd;
-
-    // Corresponding points on the other wall
-    final oUnitSigned = dot > 0 ? oUnit : -oUnit; // match direction
-    final oBase = dot > 0 ? oA : oB;
-    final tOnO_start =
-        (sharedStart - oBase).dx * oUnitSigned.dx + (sharedStart - oBase).dy * oUnitSigned.dy;
-    final tOnO_end =
-        (sharedEnd - oBase).dx * oUnitSigned.dx + (sharedEnd - oBase).dy * oUnitSigned.dy;
-    final oSharedStart = oBase + oUnitSigned * tOnO_start.clamp(0.0, oLen);
-    final oSharedEnd = oBase + oUnitSigned * tOnO_end.clamp(0.0, oLen);
-
-    return (
-      start: sharedStart,
-      end: sharedEnd,
-      oStart: oSharedStart,
-      oEnd: oSharedEnd,
-    );
-  }
-
   /// Finds the best wall pair between movingShape and all other closed shapes.
   /// Returns (myWallIndex, otherShapeIndex, otherWallIndex, overlapData) or null.
   ({
@@ -1817,7 +1767,7 @@ class _SketchScreenState extends State<SketchScreen>
         for (int oi = 0; oi < on; oi++) {
           final Offset oA = other.points[oi];
           final Offset oB = other.points[(oi + 1) % on];
-          final overlap = _wallOverlapSegment(mA, mB, oA, oB);
+          final overlap = wallOverlapSegment(mA, mB, oA, oB);
           if (overlap != null) {
             return (
               mw: mi,
@@ -2180,10 +2130,11 @@ class _SketchScreenState extends State<SketchScreen>
     if (_movingShapeIndex >= 0 && _moveStartWorld != null) {
       // Clear stale shared walls every frame during move - prevents ghost walls
       for (final sw in shapes[_movingShapeIndex].sharedWalls) {
-        if (sw.otherShapeIndex < shapes.length) {
-          shapes[sw.otherShapeIndex]
-              .sharedWalls
-              .removeWhere((s) => s.otherShapeIndex == _movingShapeIndex);
+        final movingId = shapes[_movingShapeIndex].id;
+        for (final other in shapes) {
+          if (other.id == sw.otherShapeId) {
+            other.sharedWalls.removeWhere((s) => s.otherShapeId == movingId);
+          }
         }
       }
       shapes[_movingShapeIndex].sharedWalls.clear();
@@ -2355,12 +2306,12 @@ class _SketchScreenState extends State<SketchScreen>
                 movingShape.points[(candidate.mw + 1) % movingShape.points.length];
             final oA = other.points[candidate.ow];
             final oB = other.points[(candidate.ow + 1) % other.points.length];
-            final finalOverlap = _wallOverlapSegment(mA, mB, oA, oB);
+            final finalOverlap = wallOverlapSegment(mA, mB, oA, oB);
             if (finalOverlap != null) {
               // Remove any existing shared wall for these indices
               movingShape.sharedWalls.removeWhere((sw) => sw.myWallIndex == candidate.mw);
               other.sharedWalls.removeWhere((sw) =>
-                  sw.otherShapeIndex == _movingShapeIndex && sw.myWallIndex == candidate.ow);
+                  sw.otherShapeId == movingShape.id && sw.myWallIndex == candidate.ow);
 
               // Compute parametric t-values along each wall
               final mVec = mB - mA;
@@ -2376,14 +2327,14 @@ class _SketchScreenState extends State<SketchScreen>
               final tOE = _tAlong(oA, oVec, oLen, finalOverlap.oEnd).clamp(0.0, 1.0);
 
               movingShape.sharedWalls.add(SharedWall(
-                otherShapeIndex: candidate.os,
+                otherShapeId: other.id,
                 myWallIndex: candidate.mw,
                 otherWallIndex: candidate.ow,
                 tStart: tMS,
                 tEnd: tME,
               ));
               other.sharedWalls.add(SharedWall(
-                otherShapeIndex: _movingShapeIndex,
+                otherShapeId: movingShape.id,
                 myWallIndex: candidate.ow,
                 otherWallIndex: candidate.mw,
                 tStart: tOS,
@@ -2958,6 +2909,7 @@ class _SketchScreenState extends State<SketchScreen>
         _objectCounter++;
         activeShape.roomObjects.add(RoomObject(
           id: 'obj_$_objectCounter',
+          ownerShapeId: activeShape.id,
           type: _draggingObjectType!,
           wallIndex: hit.wallIndex,
           positionAlong: () {
