@@ -67,3 +67,52 @@ WallOpenings openingsForWall(Wall wall, List<SketchShape> shapes) {
 
   return WallOpenings(resolved, conflict);
 }
+
+Wall? findWallForObject(RoomObject obj, SketchShape owner, List<Wall> walls) {
+  for (final wall in walls) {
+    for (final src in wall.sources) {
+      if (src.shapeId != owner.id || src.wallIndex != obj.wallIndex) continue;
+      final lo = src.tStart < src.tEnd ? src.tStart : src.tEnd;
+      final hi = src.tStart < src.tEnd ? src.tEnd : src.tStart;
+      if (obj.positionAlong >= lo - 1e-6 && obj.positionAlong <= hi + 1e-6) {
+        return wall;
+      }
+    }
+  }
+  return null;
+}
+
+bool wouldConflict(
+    RoomObject candidate, SketchShape owner, List<SketchShape> shapes, List<Wall> walls) {
+  final wall = findWallForObject(candidate, owner, walls);
+  if (wall == null || !wall.isShared) return false;
+
+  WallSource? mySource;
+  for (final source in wall.sources) {
+    if (source.shapeId == owner.id && source.wallIndex == candidate.wallIndex) {
+      mySource = source;
+      break;
+    }
+  }
+  if (mySource == null) return false;
+
+  final wallLen = (wall.b - wall.a).distance;
+  if (wallLen < 1) return false;
+
+  final span = mySource.tEnd - mySource.tStart;
+  final localT = span.abs() < 1e-9
+      ? 0.0
+      : ((candidate.positionAlong - mySource.tStart) / span).clamp(0.0, 1.0);
+  final halfC = (candidate.widthMm / mmPerUnit / 2) / wallLen;
+  final cLo = localT - halfC;
+  final cHi = localT + halfC;
+
+  for (final other in openingsForWall(wall, shapes).openings) {
+    if (other.source.ownerShapeId == owner.id) continue;
+    final halfO = (other.source.widthMm / mmPerUnit / 2) / wallLen;
+    final oLo = other.positionAlong - halfO;
+    final oHi = other.positionAlong + halfO;
+    if (cLo < oHi && oLo < cHi) return true;
+  }
+  return false;
+}

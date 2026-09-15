@@ -19,6 +19,7 @@ import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
 import 'furniture_painter.dart';
 import 'wall_topology.dart';
+import 'wall_openings.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
 import '../services/api_service.dart';
@@ -2755,6 +2756,15 @@ class _SketchScreenState extends State<SketchScreen>
     final idx = activeShape.roomObjects.indexWhere((o) => o.id == id);
     if (idx < 0) return;
     final obj = activeShape.roomObjects[idx];
+
+    final walls = buildWalls(shapes);
+    final wall = findWallForObject(obj, activeShape, walls);
+    final resolved = wall == null ? null : openingsForWall(wall, shapes);
+    if (resolved != null && resolved.hasConflict) {
+      _showConflictDialog(wall!, resolved);
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (ctx) => ObjectMeasurementDialog(
@@ -2786,6 +2796,61 @@ class _SketchScreenState extends State<SketchScreen>
           });
           _queueAutoSync();
         },
+      ),
+    );
+  }
+
+  void _showConflictDialog(Wall wall, WallOpenings resolved) {
+    void removeObject(String objectId, String ownerShapeId) {
+      _saveUndo();
+      setState(() {
+        for (final shape in shapes) {
+          if (shape.id == ownerShapeId) {
+            shape.roomObjects.removeWhere((o) => o.id == objectId);
+          }
+        }
+        if (_selectedObjectId == objectId) _selectedObjectId = null;
+      });
+      _queueAutoSync();
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2A3A),
+        title: const Text('Conflicting openings',
+            style: TextStyle(
+                color: Color(0xFFCCDDEE), fontFamily: 'monospace', fontSize: 14)),
+        content: const Text(
+          'This wall is shared between two rooms and has two different openings '
+          'placed at the same spot. Choose which one to keep.',
+          style: TextStyle(
+              color: Color(0xFF889AAD), fontFamily: 'monospace', fontSize: 12),
+        ),
+        actions: [
+          for (final opening in resolved.openings)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                for (final other in resolved.openings) {
+                  if (other.source.id != opening.source.id) {
+                    removeObject(other.source.id, other.source.ownerShapeId);
+                  }
+                }
+              },
+              child: Text(
+                'Keep ${opening.source.isDoor ? "door" : "window"} '
+                '(${opening.source.ownerShapeId == activeShape.id ? "this room" : "other room"})',
+                style: const TextStyle(
+                    color: Color(0xFF00AA66), fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF778899), fontFamily: 'monospace')),
+          ),
+        ],
       ),
     );
   }
@@ -2904,29 +2969,43 @@ class _SketchScreenState extends State<SketchScreen>
         return;
       }
       
+      final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
+      final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
+      final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
+      final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
+      final positionAlong = hit.positionAlong.clamp(halfT, 1.0 - halfT);
+
+      _objectCounter++;
+      final candidate = RoomObject(
+        id: 'obj_$_objectCounter',
+        ownerShapeId: activeShape.id,
+        type: _draggingObjectType!,
+        wallIndex: hit.wallIndex,
+        positionAlong: positionAlong,
+        widthMm: clampedMm,
+        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
+        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
+      );
+
+      if (wouldConflict(candidate, activeShape, shapes, buildWalls(shapes))) {
+        setState(() {
+          _draggingObjectType = null;
+          _dragObjectScreenPos = null;
+          _dragWallHit = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+            'This spot already has a door or window on the other side of this shared wall.',
+            style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          backgroundColor: Color(0xFF5C1A1A),
+        ));
+        return;
+      }
+
       _saveUndo();
       setState(() {
-        _objectCounter++;
-        activeShape.roomObjects.add(RoomObject(
-          id: 'obj_$_objectCounter',
-          ownerShapeId: activeShape.id,
-          type: _draggingObjectType!,
-          wallIndex: hit.wallIndex,
-          positionAlong: () {
-            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
-            final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
-            final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
-            return hit.positionAlong.clamp(halfT, 1.0 - halfT);
-          }(),
-          widthMm: () {
-            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
-            return math.min(defaultMm, wallLenMm * 0.8);
-          }(),
-          heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
-          elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
-        ));
+        activeShape.roomObjects.add(candidate);
         _draggingObjectType = null;
         _dragObjectScreenPos = null;
         _dragWallHit = null;
