@@ -813,19 +813,21 @@ class _SketchScreenState extends State<SketchScreen>
         _wallDrawnLengths.addAll(lengthRows.map((r) => r['length'] as double));
       }
 
-      activeShape.roomObjects.clear();
       for (final r in objectsData) {
-        activeShape.roomObjects.add(RoomObject(
+        final si = (r['shape_index'] as int?) ?? 0;
+        if (si >= shapes.length) continue;
+        shapes[si].roomObjects.add(RoomObject(
           id: r['object_id'] as String,
-          ownerShapeId: activeShape.id,
+          ownerShapeId: shapes[si].id,
           type: r['type'] == 'door'
               ? RoomObjectType.door
               : RoomObjectType.window,
           wallIndex: r['wall_index'] as int,
-          positionAlong: r['position_along'] as double,
-          widthMm: r['width_mm'] as double,
-          heightMm: r['height_mm'] as double,
-          elevationMm: r['elevation_mm'] as double,
+          positionAlong: (r['position_along'] as num).toDouble(),
+          widthMm: (r['width_mm'] as num).toDouble(),
+          heightMm: (r['height_mm'] as num).toDouble(),
+          elevationMm: (r['elevation_mm'] as num).toDouble(),
+          swingFlipped: ((r['swing_flipped'] as int?) ?? 0) == 1,
         ));
       }
 
