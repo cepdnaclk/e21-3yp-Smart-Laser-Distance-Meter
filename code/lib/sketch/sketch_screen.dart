@@ -12,6 +12,7 @@ import 'furniture_item.dart';
 import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
+import '../screens/dxf_preview_screen.dart';
 import 'sketch_widgets.dart';
 import 'room_object.dart';
 import 'room_object_utils.dart';
@@ -3808,14 +3809,30 @@ class _SketchScreenState extends State<SketchScreen>
                               ? () => exportSketchPdf(
                                     context: context,
                                     shapes: shapes,
-                                    totalPerimeter: _totalPerimeter(),
-                                    totalArea: _totalArea(),
-                                    roomObjects: activeShape.roomObjects,
+                                    projectName: _localProjectName,
                                   )
                               : null,
                           color: const Color(0xFFFF4488),
                           disabledColor: const Color(0xFF555555),
                           tooltip: 'Export PDF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.architecture, size: 18),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => DxfPreviewScreen(
+                                shapes: shapes,
+                                projectName: _localProjectName.isNotEmpty
+                                    ? _localProjectName
+                                    : 'SmartMeasure_Room',
+                              ),
+                            ),
+                          ),
+                          color: const Color(0xFF00CCFF),
+                          tooltip: 'Export DXF',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),

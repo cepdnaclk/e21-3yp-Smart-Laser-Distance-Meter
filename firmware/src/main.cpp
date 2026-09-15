@@ -4,7 +4,6 @@
 #include <SD.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <VL53L0X.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -19,44 +18,53 @@
 #define SD_MISO  19
 #define SD_MOSI  23
 
-#define BTN_PWR   25
-#define BTN_SEL   27
-#define BTN_DOWN  33
-#define BTN_MEAS  32
-#define BUZZER    26
-#define LASER_PIN 4
+#define BTN_PWR    25
+#define BTN_SEL    27
+#define BTN_DOWN   33
+#define BTN_MEAS   32
+#define BTN_OFFSET 35    // NEW — top/bottom toggle, needs external 10k pull-up to 3.3V
+#define BUZZER     26
+#define LASER_PIN  4
+
+#define TF_RX 16
+#define TF_TX 17
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
+#define DEVICE_HEIGHT_MM 146.0   // NEW — offset added when measuring from bottom
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-VL53L0X sensor;
+HardwareSerial   tfSerial(2);
 
 bool  sdReady     = false;
 int   recordCount = 0;
 float lastMm      = 0;
 
-BLEServer*         bleServer    = nullptr;
-BLECharacteristic* bleChar      = nullptr;
-bool               bleConnected = false;
-int                bleMeasureCount = 0;
+bool measureFromBottom = false;  // NEW — false = Top (T), true = Bottom (B)
+
+BLEServer*         bleServer        = nullptr;
+BLECharacteristic* bleChar          = nullptr;
+bool               bleConnected     = false;
+int                bleMeasureCount  = 0;
 
 int    historyOffset = 0;
 int    historyTotal  = 0;
 String historyLines[100];
 
 struct Button {
-  int pin;
-  bool lastReading;
-  bool stable;
+  int           pin;
+  bool          lastReading;
+  bool          stable;
   unsigned long lastChangeTime;
-  bool triggered;
+  bool          triggered;
 };
 
-Button btnPwr  = {BTN_PWR,  true, true, 0, false};
-Button btnSel  = {BTN_SEL,  true, true, 0, false};
-Button btnDown = {BTN_DOWN, true, true, 0, false};
-Button btnMeas = {BTN_MEAS, true, true, 0, false};
+Button btnPwr    = {BTN_PWR,    true, true, 0, false};
+Button btnSel    = {BTN_SEL,    true, true, 0, false};
+Button btnDown   = {BTN_DOWN,   true, true, 0, false};
+Button btnMeas   = {BTN_MEAS,   true, true, 0, false};
+Button btnOffset = {BTN_OFFSET, true, true, 0, false}; // NEW
 
 void updateButton(Button &btn) {
   btn.triggered = false;
@@ -89,8 +97,15 @@ int selectedMode = 0;
 enum NormalState { IDLE, LASER_ON, MEASURED, HISTORY };
 NormalState normalState = IDLE;
 
-enum BleState { BLE_IDLE, BLE_LASER_ON, BLE_SENT };
-BleState bleState = BLE_IDLE;
+// ── Display functions ────────────────────────────────────────
+
+// NEW — draws the small T/B indicator in the top-right corner
+// Placed after the mode text ("BLE"/"NRM") so it never overlaps other layout.
+void drawModeIndicator() {
+  display.setTextSize(1);
+  display.setCursor(122, 0);
+  display.print(measureFromBottom ? "B" : "T");
+}
 
 void drawHeader(String mode) {
   display.setTextColor(SSD1306_WHITE);
@@ -100,6 +115,7 @@ void drawHeader(String mode) {
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
   display.setCursor(98, 0);
   display.print(mode);
+  drawModeIndicator(); // NEW
 }
 
 void showModeSelect() {
@@ -108,6 +124,7 @@ void showModeSelect() {
   display.setTextSize(1);
   display.setCursor(18, 0);
   display.println("SmartMeasure Pro");
+  drawModeIndicator(); // NEW
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
   display.setCursor(0, 14); display.println("Select Mode:");
   display.setCursor(0, 28);
@@ -158,8 +175,8 @@ void showResult(float mm) {
   display.setCursor(0, 14); display.println("Result:");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52); display.println("MEAS=save PWR=cancel");
   display.display();
@@ -171,8 +188,8 @@ void showSaved(float mm) {
   display.setCursor(28, 14); display.println(">> SAVED! <<");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52);
   display.print("Total: "); display.print(recordCount);
@@ -191,16 +208,6 @@ void showBleReady() {
   display.display();
 }
 
-void showBleLaserOn() {
-  display.clearDisplay();
-  drawHeader("BLE");
-  display.setTextSize(1);
-  display.setCursor(0, 14); display.println(">> TAKE MEASUREMENT <<");
-  display.setCursor(0, 28); display.println("Laser ON - aim at wall");
-  display.setCursor(0, 42); display.println("Press MEAS to capture");
-  display.display();
-}
-
 void showBleSent(float mm) {
   display.clearDisplay();
   drawHeader("BLE");
@@ -208,12 +215,14 @@ void showBleSent(float mm) {
   display.setCursor(0, 14); display.println(">> WALL UPDATED <<");
   display.setTextSize(2);
   display.setCursor(0, 28);
-  if (mm >= 1000) { display.print(mm/1000.0, 2); display.println(" m"); }
-  else            { display.print((int)mm);       display.println(" mm"); }
+  if (mm >= 1000) { display.print(mm / 1000.0, 2); display.println(" m"); }
+  else            { display.print((int)mm);         display.println(" mm"); }
   display.setTextSize(1);
   display.setCursor(0, 52); display.println("Select next wall");
   display.display();
 }
+
+// ── SD helpers ───────────────────────────────────────────────
 
 void loadHistory() {
   historyTotal = 0;
@@ -238,6 +247,7 @@ void showHistory() {
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.println("-- History --");
+  drawModeIndicator(); // NEW
   display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
 
   if (!sdReady) {
@@ -287,6 +297,8 @@ bool saveToSD(float mm) {
   return true;
 }
 
+// ── TF-Luna measurement ──────────────────────────────────────
+
 float doMeasure() {
   for (int i = 0; i < 3; i++) {
     digitalWrite(LASER_PIN, LOW);  delay(150);
@@ -294,11 +306,60 @@ float doMeasure() {
   }
   digitalWrite(LASER_PIN, LOW);
   showMeasuring();
-  delay(100);
-  uint16_t mm = sensor.readRangeContinuousMillimeters();
-  if (sensor.timeoutOccurred() || mm >= 2000) return -1;
-  return (float)mm;
+
+  while (tfSerial.available()) tfSerial.read();
+  delay(20);
+
+  unsigned long start = millis();
+  while (millis() - start < 500) {
+
+    if (tfSerial.available() < 9) continue;
+    if (tfSerial.read() != 0x59) continue;
+    if (tfSerial.available() < 8) continue;
+    if (tfSerial.peek()    != 0x59) continue;
+    tfSerial.read();
+
+    uint8_t buf[7];
+    tfSerial.readBytes(buf, 7);
+
+    uint8_t checksum = 0x59 + 0x59;
+    for (int i = 0; i < 6; i++) checksum += buf[i];
+    if ((checksum & 0xFF) != buf[6]) {
+      Serial.println("TF-Luna: bad checksum, retrying");
+      continue;
+    }
+
+    uint16_t cm   = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+    uint16_t flux = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+
+    Serial.print("TF-Luna raw: "); Serial.print(cm);
+    Serial.print(" cm  flux: ");   Serial.println(flux);
+
+    if (flux < 100 || flux == 65535) {
+      Serial.println("TF-Luna: signal quality fail");
+      return -1;
+    }
+    if (cm < 20 || cm > 800) {
+      Serial.println("TF-Luna: out of range");
+      return -1;
+    }
+
+    float resultMm = (float)(cm * 10);
+
+    // NEW — apply bottom offset AFTER validity checks on the raw reading
+    if (measureFromBottom) {
+      resultMm += DEVICE_HEIGHT_MM;
+      Serial.print("Bottom mode: +146mm -> "); Serial.println(resultMm);
+    }
+
+    return resultMm;
+  }
+
+  Serial.println("TF-Luna: read timeout");
+  return -1;
 }
+
+// ── BLE helpers ──────────────────────────────────────────────
 
 void bleSend(float mm, bool capturing) {
   if (!bleConnected || bleChar == nullptr) return;
@@ -314,7 +375,7 @@ void bleSend(float mm, bool capturing) {
 
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* s) override {
-    bleConnected = true;
+    bleConnected    = true;
     bleMeasureCount = 0;
     beep(2);
     Serial.println("BLE connected");
@@ -327,6 +388,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
     display.setCursor(0, 0); display.println("-- Bluetooth --");
+    drawModeIndicator(); // NEW
     display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
     display.setCursor(0, 20); display.println("App disconnected");
     display.setCursor(0, 32); display.println("Waiting for app...");
@@ -335,16 +397,19 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
 };
 
+// ── Setup ────────────────────────────────────────────────────
+
 void setup() {
   Serial.begin(115200);
   Wire.begin(21, 22);
 
-  pinMode(BTN_PWR,   INPUT_PULLUP);
-  pinMode(BTN_SEL,   INPUT_PULLUP);
-  pinMode(BTN_DOWN,  INPUT_PULLUP);
-  pinMode(BTN_MEAS,  INPUT_PULLUP);
-  pinMode(BUZZER,    OUTPUT);
-  pinMode(LASER_PIN, OUTPUT);
+  pinMode(BTN_PWR,    INPUT_PULLUP);
+  pinMode(BTN_SEL,    INPUT_PULLUP);
+  pinMode(BTN_DOWN,   INPUT_PULLUP);
+  pinMode(BTN_MEAS,   INPUT_PULLUP);
+  pinMode(BTN_OFFSET, INPUT);   // NEW — GPIO35 has no internal pull-up, use external 10k
+  pinMode(BUZZER,     OUTPUT);
+  pinMode(LASER_PIN,  OUTPUT);
   digitalWrite(BUZZER,    LOW);
   digitalWrite(LASER_PIN, LOW);
 
@@ -353,9 +418,8 @@ void setup() {
   display.clearDisplay();
   display.display();
 
-  sensor.setTimeout(500);
-  sensor.init();
-  sensor.startContinuous();
+  tfSerial.begin(115200, SERIAL_8N1, TF_RX, TF_TX);
+  delay(100);
 
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   delay(200);
@@ -381,11 +445,30 @@ void setup() {
   Serial.println("Ready - press PWR to start");
 }
 
+// ── Main loop ────────────────────────────────────────────────
+
 void loop() {
   updateButton(btnPwr);
   updateButton(btnSel);
   updateButton(btnDown);
   updateButton(btnMeas);
+  updateButton(btnOffset); // NEW
+
+  // ── NEW — Top/Bottom toggle works ANYTIME, in any screen/state ──
+  if (btnOffset.triggered) {
+    measureFromBottom = !measureFromBottom;
+    beep(1);
+    Serial.println(measureFromBottom ? "Mode: BOTTOM (+146mm)" : "Mode: TOP (raw)");
+
+    // Redraw whatever screen is currently active so the T/B indicator updates immediately
+    if (currentScreen == MODE_SELECT)      showModeSelect();
+    else if (currentScreen == NORMAL || currentScreen == BLE_MODE) {
+      if (normalState == IDLE)      showIdle();
+      else if (normalState == LASER_ON)  showLaserOn();
+      else if (normalState == MEASURED)  showResult(lastMm);
+      else if (normalState == HISTORY)   showHistory();
+    }
+  }
 
   // ── OFF ─────────────────────────────────────────────────
   if (currentScreen == OFF) {
@@ -421,6 +504,7 @@ void loop() {
         display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);
         display.setCursor(0, 0); display.println("-- Bluetooth --");
+        drawModeIndicator(); // NEW
         display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
         display.setCursor(0, 20); display.println("BLE Mode");
         display.setCursor(0, 32); display.println("Waiting for app...");
@@ -468,7 +552,7 @@ void loop() {
           display.clearDisplay();
           drawHeader("NRM");
           display.setCursor(0, 20); display.println("Out of range!");
-          display.setCursor(0, 32); display.println("Move closer");
+          display.setCursor(0, 32); display.println("Check target surface");
           display.setCursor(0, 44); display.println("Press MEAS again");
           display.display();
           delay(1500);
@@ -565,13 +649,14 @@ void loop() {
           display.clearDisplay();
           drawHeader("BLE");
           display.setCursor(0, 20); display.println("Out of range!");
-          display.setCursor(0, 32); display.println("Move closer");
+          display.setCursor(0, 32); display.println("Check target surface");
           display.display();
           delay(1500);
           digitalWrite(LASER_PIN, HIGH);
           showLaserOn();
         } else {
           lastMm = mm;
+          bleMeasureCount++;
           beep(1);
           bleSend(lastMm, false);
           showResult(lastMm);
@@ -623,6 +708,16 @@ void loop() {
         normalState = IDLE;
       }
     }
+  }
+
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 500) {
+    Serial.print("BTN_PWR(25):"); Serial.print(digitalRead(BTN_PWR));
+    Serial.print("  BTN_SEL(27):"); Serial.print(digitalRead(BTN_SEL));
+    Serial.print("  BTN_DOWN(33):"); Serial.print(digitalRead(BTN_DOWN));
+    Serial.print("  BTN_MEAS(32):"); Serial.print(digitalRead(BTN_MEAS));
+    Serial.print("  BTN_OFFSET(35):"); Serial.println(digitalRead(BTN_OFFSET));
+    lastDebug = millis();
   }
 
   delay(10);
