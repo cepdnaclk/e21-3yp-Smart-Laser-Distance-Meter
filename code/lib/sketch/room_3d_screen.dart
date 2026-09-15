@@ -128,16 +128,31 @@ class _Room3DScreenState extends State<Room3DScreen> {
       'toilet':             'assets/models/toilet.glb',
       'armchair':         'assets/models/armchair.gltf',
       'bookshelf':        'assets/models/bookshelf.glb',
-      'coffeeTable':        'assets/models/coffeetable.glb',
+      'coffeeTable':        'assets/models/coffee_table.glb',
       'tvUnit':         'assets/models/tv_unit.glb',
-      'bathtub':             'assets/models/bathtub.glb',
-      'wardrobe':         'assets/models/cupboard.glb',
-      'diningTable':        'assets/models/Diningtable.glb',
-      'doubleBed':        'assets/models/doublebed.glb',
-      'floorlamp':         'assets/models/floorlamp.glb',
+      'bathtub':             'assets/models/Bathtub-new.glb',
+      'wardrobe':         'assets/models/wardrobe.glb',
+      'diningTable':        'assets/models/dining_table.glb',
+      'kingBed':        'assets/models/doublebed.glb',
+      'queenBed':        'assets/models/doublebed.glb',
+
+      'floorLamp':         'assets/models/Floorlamp.glb',
       'chair':            'assets/models/chair.glb',
       'washingMachine':         'assets/models/Washingmachine.glb',
       
+      'desk':               'assets/models/desk.glb',
+      'officeChair':        'assets/models/office_chair.glb',
+      'barStool':           'assets/models/bar_stool.glb',
+      'basinSink':          'assets/models/basinSink.glb',
+      'shower':        'assets/models/shower.glb',
+      'dresser':            'assets/models/dresser.glb',
+      'filingCabinet':      'assets/models/FilingCabinet.glb',
+      'stove':           'assets/models/gas_stove.glb',
+      'islandCounter':      'assets/models/island_counter.glb',
+      'kitchenCounter':     'assets/models/kitchen_counter.glb',
+      'sink':        'assets/models/kitchen_sink.glb',
+      'kitchenStove':       'assets/models/kitchen_stove.glb',
+
     };
     return map[typeName];
   }
