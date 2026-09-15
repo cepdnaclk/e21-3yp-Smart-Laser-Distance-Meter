@@ -75,6 +75,58 @@
     </div>
   </section>
 
+    <!-- ============ HOW IT WORKS — 3 STEP EXPLAINER ============ -->
+  <section class="explainer">
+    <div class="wrap">
+            <div class="explainer__intro">
+        <h2>Two devices. One workflow.</h2>
+        <p>The hardware measures. The app draws. Together they replace a tape measure,
+        a notepad, and hours of redrawing.</p>
+      </div>
+
+
+
+      <div class="explainer__flow">
+        <div class="flow-step">
+          <span class="flow-step__num mono">01</span>
+          <h3>Point &amp; press</h3>
+          <p>Aim the handheld device at a wall and press one button. The laser measures
+          the distance in under a second.</p>
+          <span class="flow-step__tag mono">HARDWARE</span>
+        </div>
+
+        <div class="flow-arrow" aria-hidden="true">→</div>
+
+        <div class="flow-step">
+          <span class="flow-step__num mono">02</span>
+          <h3>It lands in the app</h3>
+          <p>The measurement travels over Bluetooth instantly and attaches itself to the
+          wall you're drawing — no typing, no writing it down.</p>
+          <span class="flow-step__tag mono">BLUETOOTH</span>
+        </div>
+
+        <div class="flow-arrow" aria-hidden="true">→</div>
+
+        <div class="flow-step">
+          <span class="flow-step__num mono">03</span>
+          <h3>Your plan is done</h3>
+          <p>Area, perimeter and volume calculate themselves. Export to PDF or AutoCAD,
+          or view the finished room in 3D.</p>
+          <span class="flow-step__tag mono">MOBILE APP</span>
+        </div>
+      </div>
+
+      <div class="explainer__image">
+        <img src="assets/images/workflow-3steps.jpg" alt="Three steps: point and press the device, the measurement lands in the app, your floor plan is done" />
+      </div>
+
+
+
+    </div>
+  </section>
+
+
+
     <!-- ============ WHY IT MATTERS ============ -->
   <section class="section--navy">
     <div class="wrap">
@@ -154,134 +206,205 @@
     </div>
   </section>
 
-  <!-- ============ 2. FEATURES ============ -->
+    <!-- ============ 2. FEATURES ============ -->
   <section id="features">
     <div class="wrap">
-      <div class="section-head">
-        <span class="crosshair"></span>
-        <div>
-          <h2>Key features of the Mobile App</h2>
-          <p>From a single laser reading to a finished, exportable floor plan.</p>
+
+      <!-- ===== PART A — HARDWARE DEVICE ===== -->
+      <div class="feature-group">
+        <div class="group-head">
+          <span class="group-head__tag mono">PART 01 — THE DEVICE</span>
+          <h2>What the handheld device does</h2>
+          <p>A small device you hold in one hand. It fires a laser at a wall and tells you
+          exactly how far away it is.</p>
+        </div>
+
+        <div class="cap-grid">
+          <div class="cap-card">
+            <span class="cap-card__title">Measures with a laser</span>
+            <p>Point at a wall and press one button. You get the distance in under a second —
+            up to 10 metres away, accurate to within 1 centimetre.</p>
+          </div>
+          <div class="cap-card">
+            <span class="cap-card__title">Shows the reading instantly</span>
+            <p>A small screen on the device displays the measurement the moment you take it,
+            so you can check it before moving on.</p>
+          </div>
+          <div class="cap-card">
+            <span class="cap-card__title">Buzzes when it works</span>
+            <p>A buzzer sounds on every successful measurement. You don't need to look at the
+            screen to know it worked.</p>
+          </div>
+          <div class="cap-card">
+            <span class="cap-card__title">Works two ways</span>
+            <p>Use it with the app over Bluetooth, or on its own — readings save to an SD card
+            as a file you can open later.</p>
+          </div>
+          <div class="cap-card">
+            <span class="cap-card__title">Rechargeable battery</span>
+            <p>Charges with a standard USB-C cable, the same one your phone uses. No special
+            charger to carry around.</p>
+          </div>
+          <div class="cap-card">
+            <span class="cap-card__title">Never sends bad data</span>
+            <p>If a reading is out of range or unsteady, the device rejects it rather than
+            sending a wrong number to the app.</p>
+          </div>
         </div>
       </div>
 
-      <!-- Sketch Screen -->
-      <div class="feature">
-        <div class="feature__media">
-          <div class="carousel" aria-label="Sketch screen photos">
-            <div class="carousel__track">
-              <div class="carousel__slide"><img src="assets/images/feature-sketch-1.jpeg" alt="Sketch screen — drawing a room outline" /></div>
-              <div class="carousel__slide"><img src="assets/images/feature-sketch-2.jpeg" alt="Sketch screen — wall measurement assigned" /></div>
+      <!-- ===== PART B — BASIC APP ===== -->
+      <div class="feature-group">
+        <div class="group-head">
+          <span class="group-head__tag mono">PART 02 — THE APP</span>
+          <h2>What the mobile app does</h2>
+          <p>The app turns those measurements into a floor plan while you work. You don't draw
+          anything to scale by hand.</p>
+        </div>
+
+        <div class="feature">
+          <div class="feature__media">
+            <div class="carousel" aria-label="Sketch screen photos">
+              <div class="carousel__track">
+                <div class="carousel__slide"><img src="assets/images/feature-sketch-1.jpeg" alt="Sketch screen — drawing a room outline" /></div>
+                <div class="carousel__slide"><img src="assets/images/feature-sketch-2.jpeg" alt="Sketch screen — wall measurement assigned" /></div>
+              </div>
+              <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+              <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+              <div class="carousel__dots"></div>
             </div>
-            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
-            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
-            <div class="carousel__dots"></div>
+          </div>
+          <div class="feature__text">
+            <span class="feature__label mono">DRAWING YOUR ROOM</span>
+            <h3>Tap the corners, and the walls appear</h3>
+            <p>Tap on the screen to place each corner of the room. Walls draw themselves between
+            the corners. Then point the device at a wall and press once —
+            <strong>that measurement attaches to the wall on screen automatically</strong> and
+            the wall turns green.</p>
+            <ul class="feature__specs">
+              <li>Walls snap to straight angles so your plan stays neat</li>
+              <li>Made a mistake? Undo as many times as you need</li>
+              <li>Add doors and windows with their real width and height</li>
+              <li>Draw several connected rooms in one project</li>
+            </ul>
           </div>
         </div>
-        <div class="feature__text">
-          <span class="feature__label mono">01 — SKETCH SCREEN</span>
-          <h3>Draw as you measure</h3>
-          <p>Tap and drag to sketch the shape of a room on screen. Point the device at a
-          wall, take a reading, and assign it to the wall you just drew — the app keeps the
-          shape and the real-world size in sync.</p>
+
+        <div class="basic-strip">
+          <div class="basic-item">
+            <span class="basic-item__title">It does the maths for you</span>
+            <p>Floor area, wall perimeter and room volume all calculate themselves as you
+            measure. Nothing to work out by hand.</p>
+          </div>
+          <div class="basic-item">
+            <span class="basic-item__title">Works with no internet</span>
+            <p>Everything saves on your phone. You can measure a whole building with no signal
+            and sync later when you're back online.</p>
+          </div>
+          <div class="basic-item">
+            <span class="basic-item__title">Easy to start</span>
+            <p>You can skip the login and start measuring straight away. Nothing gets in the way
+            of your first plan.</p>
+          </div>
         </div>
       </div>
 
-      <!-- PDF Export -->
-      <div class="feature feature--reverse">
-        <div class="feature__media">
-          <div class="media-frame">
-            <img src="assets/images/feature-pdf.jpeg" alt="PDF floor plan report" />
-          </div>
+      <!-- ===== PART C — ADVANCED FEATURES ===== -->
+      <div class="feature-group">
+        <div class="group-head">
+          <span class="group-head__tag mono">PART 03 — ADVANCED</span>
+          <h2>What you can do with a finished plan</h2>
+          <p>Once the room is measured, the app turns it into something you can share, send to
+          an architect, or walk through in 3D.</p>
         </div>
-        <div class="feature__text">
-          <span class="feature__label mono">02 — PDF EXPORT</span>
-          <h3>A ready-to-share report</h3>
-          <p>Turn any project into a clean PDF with the floor plan diagram and a full
-          measurements table — ready to print, email, or attach to a client proposal.</p>
-        </div>
-      </div>
 
-      <!-- DXF Export -->
-      <div class="feature">
-        <div class="feature__media">
-          <div class="media-frame">
-            <img src="assets/images/feature-dxf.jpeg" alt="DXF CAD file export" />
-          </div>
-        </div>
-        <div class="feature__text">
-          <span class="feature__label mono">03 — DXF EXPORT</span>
-          <h3>Straight into CAD software</h3>
-          <p>Export the same floor plan as a DXF file, compatible with AutoCAD. Architects
-          and designers can open it directly and keep working, with no redrawing needed.</p>
-        </div>
-      </div>
-
-            <!-- 3D Visualization -->
-      <div class="feature feature--reverse">
-        <div class="feature__media media-split">
-          <div class="carousel" aria-label="3D room visualization photos">
-            <div class="carousel__track">
-              <div class="carousel__slide"><img src="assets/images/feature-3d-1.jpeg" alt="3D visualization of a measured room" /></div>
-              <div class="carousel__slide"><img src="assets/images/feature-3d-2.jpeg" alt="3D visualization with furniture placed" /></div>
+        <!-- PDF -->
+        <div class="feature feature--reverse">
+          <div class="feature__media">
+            <div class="media-frame">
+              <img src="assets/images/feature-pdf.jpeg" alt="PDF floor plan report" />
             </div>
-            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
-            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
-            <div class="carousel__dots"></div>
           </div>
-          <div class="video-frame-vertical">
-            <video src="assets/videos/feature-3d-demo.mp4" muted loop playsinline autoplay controls></video>
+          <div class="feature__text">
+            <span class="feature__label mono">01 — PDF EXPORT</span>
+            <span class="feature__badge">Ready to send</span>
+            <h3>Turn your plan into a report</h3>
+            <p>Export the project as a PDF containing the floor plan drawing and a table of every
+            measurement. <strong>Send it to a client through WhatsApp or email straight from your
+            phone.</strong></p>
           </div>
         </div>
-        <div class="feature__text">
-          <span class="feature__label mono">04 — 3D VISUALIZATION</span>
-          <h3>See the room, not just the outline</h3>
-          <p>Once the walls are measured, the app builds a 3D model of the room right on
-          your phone — a much clearer picture than a flat sketch, especially for showing
-          a client what the finished space will look like.</p>
+
+        <!-- DXF -->
+        <div class="feature">
+          <div class="feature__media">
+            <div class="media-frame">
+              <img src="assets/images/feature-dxf.jpeg" alt="DXF CAD file export" />
+            </div>
+          </div>
+          <div class="feature__text">
+            <span class="feature__label mono">02 — DXF EXPORT</span>
+            <span class="feature__badge">Opens in AutoCAD</span>
+            <h3>Send it straight to an architect</h3>
+            <p>Export the same plan as a DXF file — the format professional drawing software uses.
+            <strong>An architect can open your file and keep working immediately,</strong> instead
+            of redrawing everything from your notes.</p>
+          </div>
+        </div>
+
+        <!-- 3D -->
+        <div class="feature feature--reverse">
+          <div class="feature__media media-split">
+            <div class="carousel" aria-label="3D room visualization photos">
+              <div class="carousel__track">
+                <div class="carousel__slide"><img src="assets/images/feature-3d-1.jpeg" alt="3D visualization of a measured room" /></div>
+                <div class="carousel__slide"><img src="assets/images/feature-3d-2.jpeg" alt="3D visualization with furniture placed" /></div>
+              </div>
+              <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+              <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+              <div class="carousel__dots"></div>
+            </div>
+            <div class="video-frame-vertical">
+              <video src="assets/videos/feature-3d-demo.mp4" muted loop playsinline autoplay controls></video>
+            </div>
+          </div>
+          <div class="feature__text">
+            <span class="feature__label mono">03 — 3D VISUALIZATION</span>
+            <span class="feature__badge">See it before you build</span>
+            <h3>Look around the room on your phone</h3>
+            <p>Your flat plan becomes a real 3D room. Drag to turn it around, pinch to zoom in,
+            and drop in furniture from 28 different types to see how the space will work.
+            <strong>Much easier to show someone than a flat drawing.</strong></p>
+          </div>
+        </div>
+
+        <!-- Cloud -->
+        <div class="feature">
+          <div class="feature__media">
+            <div class="carousel" aria-label="Cloud collaboration photos">
+              <div class="carousel__track">
+                <div class="carousel__slide"><img src="assets/images/feature-cloud-1.jpeg" alt="Sharing a project with an invite code" /></div>
+                <div class="carousel__slide"><img src="assets/images/feature-cloud-2.jpeg" alt="Two collaborators editing the same project" /></div>
+              </div>
+              <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
+              <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
+              <div class="carousel__dots"></div>
+            </div>
+          </div>
+          <div class="feature__text">
+            <span class="feature__label mono">04 — CLOUD &amp; COLLABORATION</span>
+            <span class="feature__badge">Work as a team</span>
+            <h3>Share a project with a code</h3>
+            <p>Save your project online and give a teammate a short 8-character code. They open
+            the same project on their own phone, and <strong>you both see each other's changes as
+            they happen</strong> — no files to send back and forth.</p>
+          </div>
         </div>
       </div>
 
-      <!-- Cloud Collaboration -->
-      <div class="feature">
-        <div class="feature__media">
-          <div class="carousel" aria-label="Cloud collaboration photos">
-            <div class="carousel__track">
-              <div class="carousel__slide"><img src="assets/images/feature-cloud-1.jpeg" alt="Sharing a project with an invite code" /></div>
-              <div class="carousel__slide"><img src="assets/images/feature-cloud-2.jpeg" alt="Two collaborators editing the same project" /></div>
-            </div>
-            <button class="carousel__arrow carousel__arrow--prev" aria-label="Previous image">‹</button>
-            <button class="carousel__arrow carousel__arrow--next" aria-label="Next image">›</button>
-            <div class="carousel__dots"></div>
-          </div>
-        </div>
-        <div class="feature__text">
-          <span class="feature__label mono">05 — CLOUD COLLABORATION</span>
-          <h3>Work on a project together</h3>
-          <p>Save a project to the cloud and share it with an invite code. Teammates can
-          open the same project, add measurements, and see each other's changes without
-          passing files back and forth.</p>
-        </div>
-      </div>
     </div>
   </section>
 
-  <!-- ============ 3. FULL DEMO VIDEO ============ -->
-  <section class="section--surface">
-    <div class="wrap">
-      <div class="section-head">
-        <span class="crosshair"></span>
-        <div>
-          <h2>See it in action</h2>
-          <p>A full walkthrough — taking a measurement with the device and using the app's
-          main features.</p>
-        </div>
-      </div>
-      <div class="video-frame">
-        <video src="assets/videos/full-demo.mp4" controls playsinline></video>
-      </div>
-    </div>
-  </section>
 
   <!-- ============ 4. ARCHITECTURE ============ -->
   <section class="section--navy" id="architecture">
