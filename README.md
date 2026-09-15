@@ -18,11 +18,11 @@ title: Smart Laser Distance Meter
 
 ---
 
-📱 Download the Android App
+##📱 Download the Android App
 
 Scan the QR code below to access the latest release of Smart Laser Distance Meter and download the Android APK.
 
-<div align="center"> <img src="docs/images/https_github_com_cepdnaclk_e21-3yp-Smart-Laser-Distance-Meter_releases_download_v1_0_0_app-release_apk" alt="Download Smart Laser Distance Meter APK" width="250"> </div>
+<div align="center"> <img src="docs/images/https_github_com_cepdnaclk_e21-3yp-Smart-Laser-Distance-Meter_releases_download_v1_0_0_app-release_apk.png" alt="Download Smart Laser Distance Meter APK" width="250"> </div>
 
 <p align="center"> <a href="https://github.com/cepdnaclk/e21-3yp-Smart-Laser-Distance-Meter/releases/latest"> Download the latest Android release </a> </p>
 
