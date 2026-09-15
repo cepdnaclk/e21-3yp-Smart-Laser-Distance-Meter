@@ -1403,24 +1403,15 @@ class SketchPainter extends CustomPainter {
     final Color color = isSelected
         ? const Color(0xFFFF8800)
         : const Color(0xFF0099CC);
-
-    // Gap in wall
-    canvas.drawLine(
-      Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW),
-      Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
-      Paint()
-        ..color = const Color(0xFFFFFFFF)
-        ..strokeWidth = wallThickness * 1.1
-        ..style = PaintingStyle.stroke,
-    );
+        final double spread = wallThickness * scale * 0.4;
 
     // Three lines (classic window symbol)
     for (final offset in [-0.5, 0.0, 0.5]) {
       canvas.drawLine(
-        Offset(centre.dx - dir.dx * halfW + dir.dy * offset * 6,
-              centre.dy - dir.dy * halfW - dir.dx * offset * 6),
-        Offset(centre.dx + dir.dx * halfW + dir.dy * offset * 6,
-              centre.dy + dir.dy * halfW - dir.dx * offset * 6),
+        Offset(centre.dx - dir.dx * halfW + dir.dy * offset * spread,
+          centre.dy - dir.dy * halfW - dir.dx * offset * spread),
+        Offset(centre.dx + dir.dx * halfW + dir.dy * offset * spread,
+          centre.dy + dir.dy * halfW - dir.dx * offset * spread),
         Paint()
           ..color = color
           ..strokeWidth = offset == 0 ? 2.0 : 1.0
