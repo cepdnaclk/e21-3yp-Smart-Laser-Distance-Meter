@@ -287,6 +287,9 @@ pw.Page _overviewPage(
                 for (int si = 0; si < valid.length; si++)
                   if (valid[si].isClosed && valid[si].points.length >= 3)
                     _roomLabelOverlay(valid[si], si, tx),
+                for (int si = 0; si < valid.length; si++)
+                  if (valid[si].isClosed && valid[si].points.length >= 3)
+                    _roomAreaOverlay(valid[si], tx),
                 ..._fullPlanDimensionLabels(valid, tx),
               ],
             ),
@@ -431,6 +434,7 @@ pw.Page _roomPage(
                     },
                   ),
                 ),
+                if (shape.isClosed && n >= 3) _roomAreaOverlay(shape, tx),
                 ..._roomWallDimensionLabels(shape, tx, wallCount),
               ],
             ),
@@ -1182,6 +1186,27 @@ pw.Widget _roomLabelOverlay(SketchShape s, int idx, _Tx tx) {
             fontSize: 7,
             fontWeight: pw.FontWeight.bold,
             color: PdfColors.blueGrey900,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+pw.Widget _roomAreaOverlay(SketchShape s, _Tx tx) {
+  final point = tx(_centroidOf(s));
+  return pw.Positioned(
+    left: point.x - 32,
+    top: tx.canvasSize - point.y + 7,
+    child: pw.SizedBox(
+      width: 64,
+      child: pw.Center(
+        child: pw.Text(
+          formatArea(_shapeArea(s)),
+          textAlign: pw.TextAlign.center,
+          style: const pw.TextStyle(
+            fontSize: 7,
+            color: PdfColors.blueGrey700,
           ),
         ),
       ),
