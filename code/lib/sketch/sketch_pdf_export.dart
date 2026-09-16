@@ -743,7 +743,7 @@ void _drawVDimLine(PdfGraphics g, double y1, double y2, double lineX) {
 
 pw.Widget _dimLabel(double x, double y, String text, double canvasSize,
   {bool vertical = false, double rotation = -math.pi / 2}) {
-  final width = vertical ? 14.0 : 32.0;
+  final width = vertical ? 32.0 : 32.0;
   final height = vertical ? 32.0 : 14.0;
   return pw.Positioned(
     left: x - width / 2,
