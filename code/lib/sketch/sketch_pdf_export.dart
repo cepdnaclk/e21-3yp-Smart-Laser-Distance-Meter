@@ -943,11 +943,11 @@ List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
   for (int i = 0; i < rightBp.length - 1; i++) {
     final y1 = tx(Offset(maxX, rightBp[i])).y;
     final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
-    widgets.add(_dimLabel(rightX + _dimSegOffset + 12, (y1 + y2) / 2,
+    widgets.add(_dimLabel(rightX + _dimSegOffset, (y1 + y2) / 2,
         formatLength((rightBp[i + 1] - rightBp[i]).abs()), cs,
         vertical: true));
   }
-  widgets.add(_dimLabel(rightX + _dimTotalOffset + 12,
+  widgets.add(_dimLabel(rightX + _dimTotalOffset,
       (tx(Offset(maxX, minY)).y + tx(Offset(maxX, maxY)).y) / 2,
       formatLength(maxY - minY), cs,
       vertical: true));
