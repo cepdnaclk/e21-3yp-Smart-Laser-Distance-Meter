@@ -742,7 +742,7 @@ void _drawVDimLine(PdfGraphics g, double y1, double y2, double lineX) {
 }
 
 pw.Widget _dimLabel(double x, double y, String text, double canvasSize,
-    {bool vertical = false}) {
+  {bool vertical = false, double rotation = -math.pi / 2}) {
   final width = vertical ? 14.0 : 32.0;
   final height = vertical ? 32.0 : 14.0;
   return pw.Positioned(
@@ -754,7 +754,7 @@ pw.Widget _dimLabel(double x, double y, String text, double canvasSize,
       child: pw.Center(
         child: vertical
             ? pw.Transform.rotate(
-                angle: -math.pi / 2,
+              angle: rotation,
                 child: pw.SizedBox(
                   width: 32,
                   height: 14,
@@ -929,14 +929,15 @@ List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
   for (int i = 0; i < leftBp.length - 1; i++) {
     final y1 = tx(Offset(minX, leftBp[i])).y;
     final y2 = tx(Offset(minX, leftBp[i + 1])).y;
-    widgets.add(_dimLabel(leftX - _dimSegOffset - 12, (y1 + y2) / 2,
+    widgets.add(_dimLabel(leftX - _dimSegOffset - 6, (y1 + y2) / 2,
         formatLength((leftBp[i + 1] - leftBp[i]).abs()), cs,
-        vertical: true));
+      vertical: true, rotation: math.pi / 2));
   }
-  widgets.add(_dimLabel(leftX - _dimTotalOffset - 12,
+  widgets.add(_dimLabel(leftX - _dimTotalOffset - 6,
       (tx(Offset(minX, minY)).y + tx(Offset(minX, maxY)).y) / 2,
       formatLength(maxY - minY), cs,
-      vertical: true));
+      vertical: true,
+      rotation: math.pi / 2));
 
   final rightBp = _yBreakpointsAtX(shapes, maxX, minY, maxY);
   final rightX = tx(Offset(maxX, minY)).x;
