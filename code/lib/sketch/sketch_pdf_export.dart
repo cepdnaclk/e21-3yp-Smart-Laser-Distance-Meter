@@ -15,41 +15,40 @@ import 'furniture_item.dart';
 const double _cs = 296.0; // canvas square size (PDF points)
 const double _cm = 18.0;  // canvas inner margin
 const double _da = _cs - _cm * 2; // drawable area
-
-// ── Room colour palette for overview ────────────────────────────────────────
-const _roomFills = [
-  PdfColor(0.87, 0.94, 1.00),
-  PdfColor(0.87, 0.97, 0.87),
-  PdfColor(1.00, 0.94, 0.85),
-  PdfColor(0.94, 0.88, 1.00),
-  PdfColor(1.00, 0.88, 0.93),
-  PdfColor(0.88, 0.97, 0.97),
-];
+const double _csOv = 480.0; // overview canvas square size (PDF points)
+const double _daOv = _csOv - _cm * 2; // overview drawable area
+// Extra breathing room for dimension lines; the plan keeps its existing scale.
+const double _dimMargin = 30.0;
+const double _csOvDim = _daOv + _dimMargin * 2;
+const double _roomDimMargin = 22.0;
+const double _csRoomDim = _da + _roomDimMargin * 2;
 
 // ── Coordinate transformer ───────────────────────────────────────────────────
 class _Tx {
-  final double minX, minY, scale;
-  const _Tx(this.minX, this.minY, this.scale);
+  final double minX, minY, scale, canvasSize, margin;
+  const _Tx(this.minX, this.minY, this.scale, this.canvasSize,
+      [this.margin = _cm]);
 
   PdfPoint call(Offset w) => PdfPoint(
-        _cm + (w.dx - minX) * scale,
-        _cs - _cm - (w.dy - minY) * scale,
+        margin + (w.dx - minX) * scale,
+        canvasSize - margin - (w.dy - minY) * scale,
       );
 }
 
-_Tx _txFor(List<Offset> pts) {
+_Tx _txFor(List<Offset> pts, [double da = _da]) {
   double minX = pts.map((p) => p.dx).reduce(math.min);
   double maxX = pts.map((p) => p.dx).reduce(math.max);
   double minY = pts.map((p) => p.dy).reduce(math.min);
   double maxY = pts.map((p) => p.dy).reduce(math.max);
-  final s = _da / math.max((maxX - minX).clamp(1.0, double.infinity),
-                            (maxY - minY).clamp(1.0, double.infinity));
-  return _Tx(minX, minY, s);
+  final s = da / math.max((maxX - minX).clamp(1.0, double.infinity),
+                          (maxY - minY).clamp(1.0, double.infinity));
+  final canvasSize = da == _da ? _cs : _csOv;
+  return _Tx(minX, minY, s, canvasSize);
 }
 
-_Tx _txAll(List<SketchShape> shapes) {
+_Tx _txAll(List<SketchShape> shapes, [double da = _da]) {
   final pts = [for (final s in shapes) ...s.points];
-  return _txFor(pts);
+  return _txFor(pts, da);
 }
 
 // ── Public entry point ───────────────────────────────────────────────────────
@@ -70,11 +69,12 @@ Future<void> exportSketchPdf({
 
   final totalPages = 2 + valid.length;
   final pdf = pw.Document();
+  final referenceScale = _txAll(valid, _daOv).scale;
 
   pdf.addPage(_coverPage(valid, projectName, totalPages));
   pdf.addPage(_overviewPage(valid, projectName, 2, totalPages));
   for (int i = 0; i < valid.length; i++) {
-    pdf.addPage(_roomPage(valid[i], i, 3 + i, totalPages));
+    pdf.addPage(_roomPage(valid[i], i, 3 + i, totalPages, referenceScale));
   }
 
   await Printing.layoutPdf(
@@ -201,7 +201,8 @@ pw.Page _coverPage(
 // ── Full overview page ───────────────────────────────────────────────────────
 pw.Page _overviewPage(
     List<SketchShape> valid, String projectName, int pageNum, int totalPages) {
-  final tx = _txAll(valid);
+  final baseTx = _txAll(valid, _daOv);
+  final tx = _Tx(baseTx.minX, baseTx.minY, baseTx.scale, _csOvDim, _dimMargin);
 
   return pw.Page(
     pageFormat: PdfPageFormat.a4,
@@ -213,54 +214,86 @@ pw.Page _overviewPage(
         pw.SizedBox(height: 10),
         pw.Center(
           child: _canvasBox(
-            pw.CustomPaint(
-              painter: (g, size) {
-                _paintGrid(g, size);
-                for (int si = 0; si < valid.length; si++) {
-                  final s = valid[si];
-                  final n = s.points.length;
-                  if (n < 2) continue;
-                  final wc = s.isClosed ? n : n - 1;
+            pw.Stack(
+              children: [
+                pw.Positioned.fill(
+                  child: pw.CustomPaint(
+                    painter: (g, size) {
+                    _paintGrid(g, size);
 
-                  if (s.isClosed && n >= 3) {
-                    g.setFillColor(_roomFills[si % _roomFills.length]);
-                    final f = tx(s.points[0]);
-                    g.moveTo(f.x, f.y);
-                    for (int i = 1; i < n; i++) {
-                      final p = tx(s.points[i]);
-                      g.lineTo(p.x, p.y);
+                    // Pass 1: room fills (white)
+                    for (final s in valid) {
+                      final n = s.points.length;
+                      if (n < 3 || !s.isClosed) continue;
+                      g.setFillColor(PdfColors.white);
+                      final f = tx(s.points[0]);
+                      g.moveTo(f.x, f.y);
+                      for (int i = 1; i < n; i++) {
+                        final p = tx(s.points[i]);
+                        g.lineTo(p.x, p.y);
+                      }
+                      g.closePath();
+                      g.fillPath();
                     }
-                    g.closePath();
-                    g.fillPath();
-                  }
 
-                  g.setStrokeColor(PdfColors.blueGrey800);
-                  g.setLineWidth(1.6);
-                  for (int i = 0; i < wc; i++) {
-                    final a = tx(s.points[i]);
-                    final b = tx(s.points[(i + 1) % n]);
-                    g.moveTo(a.x, a.y);
-                    g.lineTo(b.x, b.y);
-                    g.strokePath();
-                  }
-
-                  // Furniture
-                  for (final item in s.furnitureItems) {
-                    _paintFurniture(g, item, tx);
-                  }
-
-                  // Doors & windows
-                  if (s.isClosed && s.roomObjects.isNotEmpty) {
-                    Offset centroid = Offset.zero;
-                    for (final p in s.points) {
-                      centroid = Offset(centroid.dx + p.dx, centroid.dy + p.dy);
+                    // Pass 2: every wall for every room, filled black.
+                    for (final s in valid) {
+                      final n = s.points.length;
+                      if (n < 2) continue;
+                      final wc = s.isClosed ? n : n - 1;
+                      g.setFillColor(PdfColors.black);
+                      for (int i = 0; i < wc; i++) {
+                        final corners = thickWallRect(s.points[i],
+                            s.points[(i + 1) % n], wallThickness);
+                        if (corners.isEmpty) continue;
+                        final c0 = tx(corners[0]);
+                        final c1 = tx(corners[1]);
+                        final c2 = tx(corners[2]);
+                        final c3 = tx(corners[3]);
+                        g.moveTo(c0.x, c0.y);
+                        g.lineTo(c1.x, c1.y);
+                        g.lineTo(c2.x, c2.y);
+                        g.lineTo(c3.x, c3.y);
+                        g.closePath();
+                        g.fillPath();
+                      }
                     }
-                    centroid = Offset(centroid.dx / n, centroid.dy / n);
-                    _paintRoomObjects(g, s.points, n, wc, s.roomObjects, tx, centroid);
-                  }
-                }
-              },
+
+                    // Pass 3: furniture, then door/window cuts and symbols.
+                    for (final s in valid) {
+                      final n = s.points.length;
+                      if (n < 2) continue;
+                      final wc = s.isClosed ? n : n - 1;
+
+                      for (final item in s.furnitureItems) {
+                        _paintFurniture(g, item, tx);
+                      }
+
+                      if (s.isClosed && s.roomObjects.isNotEmpty) {
+                        Offset centroid = Offset.zero;
+                        for (final p in s.points) {
+                          centroid =
+                              Offset(centroid.dx + p.dx, centroid.dy + p.dy);
+                        }
+                        centroid = Offset(centroid.dx / n, centroid.dy / n);
+                        _paintRoomObjects(g, s.points, n, wc, s.roomObjects,
+                            tx, centroid, wallThickness);
+                      }
+                    }
+                    _paintFullPlanDimensions(g, valid, tx);
+                    },
+                  ),
+                ),
+                for (int si = 0; si < valid.length; si++)
+                  if (valid[si].isClosed && valid[si].points.length >= 3)
+                    _roomLabelOverlay(valid[si], si, tx),
+                for (int si = 0; si < valid.length; si++)
+                  if (valid[si].isClosed && valid[si].points.length >= 3)
+                    _roomAreaOverlay(valid[si], tx),
+                ..._fullPlanDimensionLabels(valid, tx),
+              ],
             ),
+            size: _csOvDim,
           ),
         ),
         pw.SizedBox(height: 14),
@@ -307,10 +340,14 @@ pw.Page _overviewPage(
 
 // ── Room detail page ─────────────────────────────────────────────────────────
 pw.Page _roomPage(
-    SketchShape shape, int roomIdx, int pageNum, int totalPages) {
+    SketchShape shape, int roomIdx, int pageNum, int totalPages,
+    double referenceScale) {
   final n = shape.points.length;
   final wallCount = shape.isClosed ? n : n - 1;
-  final tx = _txFor(shape.points);
+  final baseTx = _txFor(shape.points);
+  final tx = _Tx(
+      baseTx.minX, baseTx.minY, baseTx.scale, _csRoomDim, _roomDimMargin);
+  final effectiveWallThickness = (wallThickness * referenceScale) / tx.scale;
 
   // Centroid for door/window inward direction
   Offset centroid = Offset.zero;
@@ -335,8 +372,11 @@ pw.Page _roomPage(
         // Canvas
         pw.Center(
           child: _canvasBox(
-            pw.CustomPaint(
-              painter: (g, size) {
+            pw.Stack(
+              children: [
+                pw.Positioned.fill(
+                  child: pw.CustomPaint(
+                    painter: (g, size) {
                 _paintGrid(g, size);
 
                 // Room fill
@@ -353,14 +393,21 @@ pw.Page _roomPage(
                 }
 
                 // Walls
-                g.setStrokeColor(PdfColors.blueGrey800);
-                g.setLineWidth(1.8);
+                g.setFillColor(PdfColors.blueGrey800);
                 for (int i = 0; i < wallCount; i++) {
-                  final a = tx(shape.points[i]);
-                  final b = tx(shape.points[(i + 1) % n]);
-                  g.moveTo(a.x, a.y);
-                  g.lineTo(b.x, b.y);
-                  g.strokePath();
+                  final corners = thickWallRect(shape.points[i],
+                      shape.points[(i + 1) % n], effectiveWallThickness);
+                  if (corners.isEmpty) continue;
+                  final c0 = tx(corners[0]);
+                  final c1 = tx(corners[1]);
+                  final c2 = tx(corners[2]);
+                  final c3 = tx(corners[3]);
+                  g.moveTo(c0.x, c0.y);
+                  g.lineTo(c1.x, c1.y);
+                  g.lineTo(c2.x, c2.y);
+                  g.lineTo(c3.x, c3.y);
+                  g.closePath();
+                  g.fillPath();
                 }
 
                 // Corner dots
@@ -381,10 +428,17 @@ pw.Page _roomPage(
                 if (shape.isClosed) {
                   _paintRoomObjects(
                       g, shape.points, n, wallCount,
-                      shape.roomObjects, tx, centroid);
+                      shape.roomObjects, tx, centroid, effectiveWallThickness);
                 }
-              },
+                        _paintRoomWallDimensions(g, shape, tx, wallCount);
+                    },
+                  ),
+                ),
+                if (shape.isClosed && n >= 3) _roomAreaOverlay(shape, tx),
+                ..._roomWallDimensionLabels(shape, tx, wallCount),
+              ],
             ),
+            size: _csRoomDim,
           ),
         ),
         pw.SizedBox(height: 10),
@@ -447,6 +501,7 @@ void _paintRoomObjects(
   List<RoomObject> objects,
   _Tx tx,
   Offset centroid,
+  double wallThicknessWorld,
 ) {
   for (final obj in objects) {
     if (obj.wallIndex >= wallCount) continue;
@@ -486,11 +541,12 @@ void _paintRoomObjects(
     final wdPdf = Offset(wallDir.dx, -wallDir.dy);
     final inPdf = Offset(inW.dx, -inW.dy);
     final widPdf = obj.widthMm / mmPerUnit * tx.scale;
+    final wallGapPdf = wallThicknessWorld * tx.scale + 1.0;
 
     if (obj.isDoor) {
-      _paintDoor(g, sP, eP, wdPdf, inPdf, widPdf);
+      _paintDoor(g, sP, eP, wdPdf, inPdf, widPdf, wallGapPdf);
     } else {
-      _paintWindow(g, sP, eP, inPdf, widPdf);
+      _paintWindow(g, sP, eP, inPdf, widPdf, wallGapPdf);
     }
   }
 }
@@ -502,13 +558,14 @@ void _paintDoor(
   Offset wallDirPdf,
   Offset inWPdf,
   double widthPdf,
+  double gapWidthPdf,
 ) {
   final hx = start.x, hy = start.y; // hinge
   final tx = end.x, ty = end.y;     // tip (far jamb)
 
   // White wall gap
   g.setStrokeColor(PdfColors.white);
-  g.setLineWidth(5.5);
+  g.setLineWidth(gapWidthPdf);
   g.moveTo(hx, hy);
   g.lineTo(tx, ty);
   g.strokePath();
@@ -559,10 +616,11 @@ void _paintWindow(
   PdfPoint end,
   Offset inWPdf,
   double widthPdf,
+  double gapWidthPdf,
 ) {
   // White wall gap
   g.setStrokeColor(PdfColors.white);
-  g.setLineWidth(5.5);
+  g.setLineWidth(gapWidthPdf);
   g.moveTo(start.x, start.y);
   g.lineTo(end.x, end.y);
   g.strokePath();
@@ -635,6 +693,344 @@ void _paintFurniture(PdfGraphics g, FurnitureItem item, _Tx tx) {
   g.moveTo(c2.x, c2.y);
   g.lineTo(c4.x, c4.y);
   g.strokePath();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIMENSION LINES (extension lines + arrows + text, architectural style)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PdfColor _dimColor = PdfColor(0.30, 0.30, 0.30);
+const double _dimArrowSize = 3.0;
+const double _dimSegOffset = 7.0;
+const double _dimTotalOffset = 16.0;
+
+pw.TextStyle get _dimTextStyle => pw.TextStyle(
+      fontSize: 6.5,
+      fontWeight: pw.FontWeight.normal,
+      color: _dimColor,
+    );
+
+void _drawLine(PdfGraphics g, double x1, double y1, double x2, double y2,
+    {double width = 0.4}) {
+  g.setStrokeColor(_dimColor);
+  g.setLineWidth(width);
+  g.moveTo(x1, y1);
+  g.lineTo(x2, y2);
+  g.strokePath();
+}
+
+void _drawArrowHead(PdfGraphics g, double tipX, double tipY, double angleRad) {
+  const spread = 2.6;
+  final a1 = angleRad + spread;
+  final a2 = angleRad - spread;
+  g.setFillColor(_dimColor);
+  g.moveTo(tipX, tipY);
+  g.lineTo(tipX + math.cos(a1) * _dimArrowSize,
+      tipY + math.sin(a1) * _dimArrowSize);
+  g.lineTo(tipX + math.cos(a2) * _dimArrowSize,
+      tipY + math.sin(a2) * _dimArrowSize);
+  g.closePath();
+  g.fillPath();
+}
+
+void _drawHDimLine(PdfGraphics g, double x1, double x2, double lineY) {
+  _drawLine(g, x1, lineY, x2, lineY, width: 0.5);
+  _drawArrowHead(g, x1, lineY, math.pi);
+  _drawArrowHead(g, x2, lineY, 0);
+}
+
+void _drawVDimLine(PdfGraphics g, double y1, double y2, double lineX) {
+  _drawLine(g, lineX, y1, lineX, y2, width: 0.5);
+  _drawArrowHead(g, lineX, y1, -math.pi / 2);
+  _drawArrowHead(g, lineX, y2, math.pi / 2);
+}
+
+pw.Widget _dimLabel(double x, double y, String text, double canvasSize,
+  {bool vertical = false, double rotation = -math.pi / 2}) {
+  final width = vertical ? 32.0 : 32.0;
+  final height = vertical ? 32.0 : 14.0;
+  return pw.Positioned(
+    left: x - width / 2,
+    top: canvasSize - y - height / 2,
+    child: pw.SizedBox(
+      width: width,
+      height: height,
+      child: pw.Center(
+        child: vertical
+            ? pw.Transform.rotate(
+              angle: rotation,
+                child: pw.SizedBox(
+                  width: 32,
+                  height: 14,
+                  child: pw.Center(
+                    child: pw.Text(text,
+                        maxLines: 1,
+                        style: _dimTextStyle,
+                        textAlign: pw.TextAlign.center),
+                  ),
+                ),
+              )
+            : pw.Text(text,
+                style: _dimTextStyle, textAlign: pw.TextAlign.center),
+      ),
+    ),
+  );
+}
+
+Offset _centroidOf(SketchShape s) {
+  Offset c = Offset.zero;
+  for (final p in s.points) {
+    c = Offset(c.dx + p.dx, c.dy + p.dy);
+  }
+  return Offset(c.dx / s.points.length, c.dy / s.points.length);
+}
+
+List<double> _xBreakpointsAtY(
+    List<SketchShape> shapes, double y, double minX, double maxX,
+    {double tol = 3.0}) {
+  final vals = <double>{minX, maxX};
+  for (final s in shapes) {
+    for (final p in s.points) {
+      if ((p.dy - y).abs() < tol) vals.add(p.dx);
+    }
+  }
+  final list = vals.toList()..sort();
+  final merged = <double>[];
+  for (final v in list) {
+    if (merged.isEmpty || (v - merged.last).abs() > tol) merged.add(v);
+  }
+  return merged;
+}
+
+List<double> _yBreakpointsAtX(
+    List<SketchShape> shapes, double x, double minY, double maxY,
+    {double tol = 3.0}) {
+  final vals = <double>{minY, maxY};
+  for (final s in shapes) {
+    for (final p in s.points) {
+      if ((p.dx - x).abs() < tol) vals.add(p.dy);
+    }
+  }
+  final list = vals.toList()..sort();
+  final merged = <double>[];
+  for (final v in list) {
+    if (merged.isEmpty || (v - merged.last).abs() > tol) merged.add(v);
+  }
+  return merged;
+}
+
+void _paintFullPlanDimensions(PdfGraphics g, List<SketchShape> shapes, _Tx tx) {
+  final allPts = [for (final s in shapes) ...s.points];
+  if (allPts.isEmpty) return;
+  final minX = allPts.map((p) => p.dx).reduce(math.min);
+  final maxX = allPts.map((p) => p.dx).reduce(math.max);
+  final minY = allPts.map((p) => p.dy).reduce(math.min);
+  final maxY = allPts.map((p) => p.dy).reduce(math.max);
+
+  final topBp = _xBreakpointsAtY(shapes, minY, minX, maxX);
+  final topY = tx(Offset(minX, minY)).y;
+  final topSegY = topY + _dimSegOffset;
+  final topTotY = topY + _dimTotalOffset;
+  for (final bx in topBp) {
+    final px = tx(Offset(bx, minY)).x;
+    _drawLine(g, px, topY, px, topTotY + 3, width: 0.3);
+  }
+  for (int i = 0; i < topBp.length - 1; i++) {
+    _drawHDimLine(g, tx(Offset(topBp[i], minY)).x,
+        tx(Offset(topBp[i + 1], minY)).x, topSegY);
+  }
+  _drawHDimLine(g, tx(Offset(minX, minY)).x, tx(Offset(maxX, minY)).x, topTotY);
+
+  final botBp = _xBreakpointsAtY(shapes, maxY, minX, maxX);
+  final botY = tx(Offset(minX, maxY)).y;
+  final botSegY = botY - _dimSegOffset;
+  final botTotY = botY - _dimTotalOffset;
+  for (final bx in botBp) {
+    final px = tx(Offset(bx, maxY)).x;
+    _drawLine(g, px, botY, px, botTotY - 3, width: 0.3);
+  }
+  for (int i = 0; i < botBp.length - 1; i++) {
+    _drawHDimLine(g, tx(Offset(botBp[i], maxY)).x,
+        tx(Offset(botBp[i + 1], maxY)).x, botSegY);
+  }
+  _drawHDimLine(g, tx(Offset(minX, maxY)).x, tx(Offset(maxX, maxY)).x, botTotY);
+
+  final leftBp = _yBreakpointsAtX(shapes, minX, minY, maxY);
+  final leftX = tx(Offset(minX, minY)).x;
+  final leftSegX = leftX - _dimSegOffset;
+  final leftTotX = leftX - _dimTotalOffset;
+  for (final by in leftBp) {
+    final py = tx(Offset(minX, by)).y;
+    _drawLine(g, leftX, py, leftTotX - 3, py, width: 0.3);
+  }
+  for (int i = 0; i < leftBp.length - 1; i++) {
+    final y1 = tx(Offset(minX, leftBp[i])).y;
+    final y2 = tx(Offset(minX, leftBp[i + 1])).y;
+    _drawVDimLine(g, math.min(y1, y2), math.max(y1, y2), leftSegX);
+  }
+  final ly1 = tx(Offset(minX, minY)).y;
+  final ly2 = tx(Offset(minX, maxY)).y;
+  _drawVDimLine(g, math.min(ly1, ly2), math.max(ly1, ly2), leftTotX);
+
+  final rightBp = _yBreakpointsAtX(shapes, maxX, minY, maxY);
+  final rightX = tx(Offset(maxX, minY)).x;
+  final rightSegX = rightX + _dimSegOffset;
+  final rightTotX = rightX + _dimTotalOffset;
+  for (final by in rightBp) {
+    final py = tx(Offset(maxX, by)).y;
+    _drawLine(g, rightX, py, rightTotX + 3, py, width: 0.3);
+  }
+  for (int i = 0; i < rightBp.length - 1; i++) {
+    final y1 = tx(Offset(maxX, rightBp[i])).y;
+    final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
+    _drawVDimLine(g, math.min(y1, y2), math.max(y1, y2), rightSegX);
+  }
+  final ry1 = tx(Offset(maxX, minY)).y;
+  final ry2 = tx(Offset(maxX, maxY)).y;
+  _drawVDimLine(g, math.min(ry1, ry2), math.max(ry1, ry2), rightTotX);
+}
+
+List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
+  final widgets = <pw.Widget>[];
+  final allPts = [for (final s in shapes) ...s.points];
+  if (allPts.isEmpty) return widgets;
+  final minX = allPts.map((p) => p.dx).reduce(math.min);
+  final maxX = allPts.map((p) => p.dx).reduce(math.max);
+  final minY = allPts.map((p) => p.dy).reduce(math.min);
+  final maxY = allPts.map((p) => p.dy).reduce(math.max);
+  final cs = tx.canvasSize;
+
+  final topBp = _xBreakpointsAtY(shapes, minY, minX, maxX);
+  final topY = tx(Offset(minX, minY)).y;
+  for (int i = 0; i < topBp.length - 1; i++) {
+    final x1 = tx(Offset(topBp[i], minY)).x;
+    final x2 = tx(Offset(topBp[i + 1], minY)).x;
+    widgets.add(_dimLabel((x1 + x2) / 2, topY + _dimSegOffset + 4,
+        formatLength(topBp[i + 1] - topBp[i]), cs));
+  }
+  widgets.add(_dimLabel(
+      (tx(Offset(minX, minY)).x + tx(Offset(maxX, minY)).x) / 2,
+      topY + _dimTotalOffset + 4,
+      formatLength(maxX - minX),
+      cs));
+
+  final botBp = _xBreakpointsAtY(shapes, maxY, minX, maxX);
+  final botY = tx(Offset(minX, maxY)).y;
+  for (int i = 0; i < botBp.length - 1; i++) {
+    final x1 = tx(Offset(botBp[i], maxY)).x;
+    final x2 = tx(Offset(botBp[i + 1], maxY)).x;
+    widgets.add(_dimLabel((x1 + x2) / 2, botY - _dimSegOffset - 4,
+        formatLength(botBp[i + 1] - botBp[i]), cs));
+  }
+  widgets.add(_dimLabel(
+      (tx(Offset(minX, maxY)).x + tx(Offset(maxX, maxY)).x) / 2,
+      botY - _dimTotalOffset - 4,
+      formatLength(maxX - minX),
+      cs));
+
+  final leftBp = _yBreakpointsAtX(shapes, minX, minY, maxY);
+  final leftX = tx(Offset(minX, minY)).x;
+  for (int i = 0; i < leftBp.length - 1; i++) {
+    final y1 = tx(Offset(minX, leftBp[i])).y;
+    final y2 = tx(Offset(minX, leftBp[i + 1])).y;
+    widgets.add(_dimLabel(leftX - _dimSegOffset - 4, (y1 + y2) / 2,
+        _formatVerticalMeters((leftBp[i + 1] - leftBp[i]).abs()), cs,
+      vertical: true, rotation: math.pi / 2));
+  }
+  widgets.add(_dimLabel(leftX - _dimTotalOffset - 4,
+      (tx(Offset(minX, minY)).y + tx(Offset(minX, maxY)).y) / 2,
+      _formatVerticalMeters(maxY - minY), cs,
+      vertical: true,
+      rotation: math.pi / 2));
+
+  final rightBp = _yBreakpointsAtX(shapes, maxX, minY, maxY);
+  final rightX = tx(Offset(maxX, minY)).x;
+  for (int i = 0; i < rightBp.length - 1; i++) {
+    final y1 = tx(Offset(maxX, rightBp[i])).y;
+    final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
+    widgets.add(_dimLabel(rightX + _dimSegOffset + 3, (y1 + y2) / 2,
+        _formatVerticalMeters((rightBp[i + 1] - rightBp[i]).abs()), cs,
+        vertical: true));
+  }
+  widgets.add(_dimLabel(rightX + _dimTotalOffset + 3,
+      (tx(Offset(maxX, minY)).y + tx(Offset(maxX, maxY)).y) / 2,
+      _formatVerticalMeters(maxY - minY), cs,
+      vertical: true));
+
+  return widgets;
+}
+
+void _paintRoomWallDimensions(
+    PdfGraphics g, SketchShape shape, _Tx tx, int wallCount) {
+  final n = shape.points.length;
+  if (wallCount == 0) return;
+  final centroid = _centroidOf(shape);
+
+  for (int i = 0; i < wallCount; i++) {
+    final a = shape.points[i];
+    final b = shape.points[(i + 1) % n];
+    final wallVec = b - a;
+    final wallLen = wallVec.distance;
+    if (wallLen < 1) continue;
+
+    Offset normal = Offset(-wallVec.dy / wallLen, wallVec.dx / wallLen);
+    final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+    if ((mid.dx - centroid.dx) * normal.dx +
+            (mid.dy - centroid.dy) * normal.dy <
+        0) {
+      normal = Offset(-normal.dx, -normal.dy);
+    }
+    final pdfNormal = Offset(normal.dx, -normal.dy);
+    final pa = tx(a);
+    final pb = tx(b);
+    final x1 = pa.x + pdfNormal.dx * _dimSegOffset;
+    final y1 = pa.y + pdfNormal.dy * _dimSegOffset;
+    final x2 = pb.x + pdfNormal.dx * _dimSegOffset;
+    final y2 = pb.y + pdfNormal.dy * _dimSegOffset;
+
+    _drawLine(g, pa.x, pa.y, x1 + pdfNormal.dx * 3,
+        y1 + pdfNormal.dy * 3, width: 0.3);
+    _drawLine(g, pb.x, pb.y, x2 + pdfNormal.dx * 3,
+        y2 + pdfNormal.dy * 3, width: 0.3);
+    _drawLine(g, x1, y1, x2, y2, width: 0.5);
+    final angle = math.atan2(y2 - y1, x2 - x1);
+    _drawArrowHead(g, x1, y1, angle + math.pi);
+    _drawArrowHead(g, x2, y2, angle);
+  }
+}
+
+List<pw.Widget> _roomWallDimensionLabels(
+    SketchShape shape, _Tx tx, int wallCount) {
+  final n = shape.points.length;
+  if (wallCount == 0) return [];
+  final centroid = _centroidOf(shape);
+  final widgets = <pw.Widget>[];
+
+  for (int i = 0; i < wallCount; i++) {
+    final a = shape.points[i];
+    final b = shape.points[(i + 1) % n];
+    final wallVec = b - a;
+    final wallLen = wallVec.distance;
+    if (wallLen < 1) continue;
+
+    Offset normal = Offset(-wallVec.dy / wallLen, wallVec.dx / wallLen);
+    final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+    if ((mid.dx - centroid.dx) * normal.dx +
+            (mid.dy - centroid.dy) * normal.dy <
+        0) {
+      normal = Offset(-normal.dx, -normal.dy);
+    }
+    final pdfNormal = Offset(normal.dx, -normal.dy);
+    final pa = tx(a);
+    final pb = tx(b);
+    final midX = (pa.x + pb.x) / 2 + pdfNormal.dx * (_dimSegOffset + 7);
+    final midY = (pa.y + pb.y) / 2 + pdfNormal.dy * (_dimSegOffset + 7);
+    final isVertical = (pb.x - pa.x).abs() < (pb.y - pa.y).abs();
+    widgets.add(_dimLabel(
+      midX, midY, _wallLenMeters(shape, i, n), tx.canvasSize,
+      vertical: isVertical));
+  }
+  return widgets;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -768,9 +1164,59 @@ pw.Widget _wallsTable(SketchShape shape, int wallCount) {
 // WIDGET HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pw.Widget _canvasBox(pw.Widget child) => pw.Container(
-      width: _cs,
-      height: _cs,
+pw.Widget _roomLabelOverlay(SketchShape s, int idx, _Tx tx) {
+  Offset centroid = Offset.zero;
+  for (final p in s.points) {
+    centroid = Offset(centroid.dx + p.dx, centroid.dy + p.dy);
+  }
+  centroid = Offset(
+      centroid.dx / s.points.length, centroid.dy / s.points.length);
+
+  final point = tx(centroid);
+  return pw.Positioned(
+    left: point.x - 24,
+    top: tx.canvasSize - point.y - 6,
+    child: pw.SizedBox(
+      width: 48,
+      child: pw.Center(
+        child: pw.Text(
+          _roomName(s, idx),
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(
+            fontSize: 7,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.blueGrey900,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+pw.Widget _roomAreaOverlay(SketchShape s, _Tx tx) {
+  final point = tx(_centroidOf(s));
+  return pw.Positioned(
+    left: point.x - 32,
+    top: tx.canvasSize - point.y + 7,
+    child: pw.SizedBox(
+      width: 64,
+      child: pw.Center(
+        child: pw.Text(
+          formatArea(_shapeArea(s)),
+          textAlign: pw.TextAlign.center,
+          style: const pw.TextStyle(
+            fontSize: 7,
+            color: PdfColors.blueGrey700,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+pw.Widget _canvasBox(pw.Widget child, {double size = _cs}) => pw.Container(
+  width: size,
+  height: size,
       decoration: pw.BoxDecoration(
         color: PdfColors.white,
         border: pw.Border.all(color: PdfColors.blueGrey300),
@@ -997,6 +1443,15 @@ String _wallLen(SketchShape s, int i, int n) {
       ? _fmtMm(s.wallRealMm[i]!)
       : formatLength(worldLen);
 }
+
+String _wallLenMeters(SketchShape s, int i, int n) {
+  final millimeters = s.wallRealMm[i] ??
+      (s.points[(i + 1) % n] - s.points[i]).distance * mmPerUnit;
+  return '${(millimeters / 1000).toStringAsFixed(2)} m';
+}
+
+String _formatVerticalMeters(double worldUnits) =>
+    '${(worldUnits * mmPerUnit / 1000).toStringAsFixed(2)} m';
 
 String _roomName(SketchShape s, int idx) =>
     s.label.isNotEmpty ? s.label : 'Room ${idx + 1}';

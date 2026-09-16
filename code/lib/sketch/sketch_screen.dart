@@ -98,6 +98,7 @@ class _SketchScreenState extends State<SketchScreen>
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
   final List<({Rect rect, int wallIndex, int shapeIndex})> _labelHitRects = [];
+  final List<({Rect rect, int shapeIndex})> _roomLabelHitRects = [];
   double? _pendingBleMm;
   bool _waitingForBle = false;
   String? _lastCloudUpdatedAt;
@@ -238,8 +239,10 @@ class _SketchScreenState extends State<SketchScreen>
     super.dispose();
   }
 
-  void _showRoomNameDialog() {
-    final controller = TextEditingController(text: activeShape.label);
+  void _showRoomNameDialog([int? shapeIndex]) {
+    final idx = shapeIndex ?? activeIndex;
+    final target = shapes[idx];
+    final controller = TextEditingController(text: target.label);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -258,8 +261,9 @@ class _SketchScreenState extends State<SketchScreen>
           ),
           TextButton(
             onPressed: () {
-              setState(() => activeShape.label = controller.text.trim());
+              setState(() => shapes[idx].label = controller.text.trim());
               Navigator.pop(ctx);
+              _queueAutoSync();
             },
             child: const Text('Save'),
           ),
@@ -2563,6 +2567,14 @@ class _SketchScreenState extends State<SketchScreen>
       }
     }
 
+    // Tap on room name label -> rename that room, anytime
+    for (final hit in _roomLabelHitRects) {
+      if (hit.rect.contains(details.localPosition)) {
+        _showRoomNameDialog(hit.shapeIndex);
+        return;
+      }
+    }
+
     if (_isMoveMode) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
     if (_objectDragOccurred) { _objectDragOccurred = false; return; }
@@ -3045,6 +3057,7 @@ class _SketchScreenState extends State<SketchScreen>
         !activeShape.isClosed;
 
     _labelHitRects.clear();
+    _roomLabelHitRects.clear();
 
     return PopScope(
       canPop: false,
@@ -3100,6 +3113,7 @@ class _SketchScreenState extends State<SketchScreen>
                   activeIndex: activeIndex,
                   selectedObjectId: _selectedObjectId,
                   selectedFurnitureId: _selectedFurnitureId,
+                  roomLabelHitRects: _roomLabelHitRects,
                 ),
                 child: const SizedBox.expand(),
               ),
