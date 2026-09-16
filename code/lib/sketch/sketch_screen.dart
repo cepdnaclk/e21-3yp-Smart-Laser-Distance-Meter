@@ -3396,12 +3396,9 @@ class _SketchScreenState extends State<SketchScreen>
                     context,
                     MaterialPageRoute(
                       builder: (_) => Room3DScreen(
-                        points: activeShape.points,
-                        roomObjects: activeShape.roomObjects,
-                        wallRealMm: activeShape.wallRealMm,
-                        furnitureItems: activeShape.furnitureItems,
+                        shapes: shapes,
+                        initialActiveShapeIndex: activeIndex,
                         bleManager: widget.bleManager,
-                        initialHeightMm: activeShape.heightMm,
                         onWallMeasured: (wallIndex, mm) {
                           _applyRealMeasurement(wallIndex, mm);
                         },

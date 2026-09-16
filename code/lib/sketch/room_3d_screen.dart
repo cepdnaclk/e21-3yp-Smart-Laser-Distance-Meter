@@ -7,29 +7,24 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:math' as math;
 import 'room_object.dart';
 import 'furniture_item.dart';
+import 'sketch_model.dart';
 import 'sketch_constants.dart';
 import '../ble/ble_manager.dart';
 
 class Room3DScreen extends StatefulWidget {
-  final List<Offset> points;
-  final List<RoomObject> roomObjects;
-  final Map<int, double> wallRealMm;
-  final List<FurnitureItem> furnitureItems;
+  final List<SketchShape> shapes;
+  final int initialActiveShapeIndex;
   final BleManager? bleManager;
 
   final void Function(int wallIndex, double mm)? onWallMeasured;
-  final double initialHeightMm;
   final void Function(double heightMm)? onHeightChanged;
 
   const Room3DScreen({
     super.key,
-    required this.points,
-    required this.roomObjects,
-    required this.wallRealMm,
-    this.furnitureItems = const [],
+    required this.shapes,
+    this.initialActiveShapeIndex = 0,
     this.bleManager,
     this.onWallMeasured,
-    this.initialHeightMm = 2400,
     this.onHeightChanged,
   });
 
@@ -46,6 +41,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
   double _lastZoom = 0.7;
 
   int? _selectedWallIndex;
+  String? _selectedRoomId;
   bool _waitingForBle = false;
 
   final List<List<Offset>> _wallPolygons = [];
@@ -56,6 +52,10 @@ class _Room3DScreenState extends State<Room3DScreen> {
   late double _wallHeightMm;
   static const double _mmScale = 0.10;
 
+  // ── Multi-room state ────────────────────────────────────────────────────
+  late int _activeShapeIndex;
+  SketchShape get _activeShape => widget.shapes[_activeShapeIndex];
+
   // ── WebView state ──────────────────────────────────────────────────────────
   bool _use3D = true;   // true = WebView, false = legacy painter
   late WebViewController _webController;
@@ -64,7 +64,8 @@ class _Room3DScreenState extends State<Room3DScreen> {
   @override
   void initState() {
     super.initState();
-    _wallHeightMm = widget.initialHeightMm;
+    _activeShapeIndex = widget.initialActiveShapeIndex;
+    _wallHeightMm = _activeShape.heightMm;
     _initWebView();
   }
 
@@ -158,38 +159,44 @@ class _Room3DScreenState extends State<Room3DScreen> {
   }
 
   // ── JSON contract: sketch world-units → Three.js metres ───────────────────
-  Map<String, dynamic> _buildRoomJson() {
-    const double toM = mmPerUnit / 1000.0; // 5mm per unit → metres
+  Map<String, dynamic> _buildHouseJson() {
+    const double toM = mmPerUnit / 1000.0;
 
     return {
-      'points': widget.points
-          .map((p) => {'x': p.dx * toM, 'z': p.dy * toM})
-          .toList(),
-      'wallHeightM': _wallHeightMm / 1000.0,
-      'wallThicknessM': 0.2,
-      'roomObjects': widget.roomObjects
-          .map((obj) => {
-                'wallIndex': obj.wallIndex,
-                'positionAlong': obj.positionAlong,
-                'widthM': obj.widthMm / 1000.0,
-                'heightM': obj.heightMm / 1000.0,
-                'elevationM': obj.elevationMm / 1000.0,
-                'isDoor': obj.isDoor,
-              })
-          .toList(),
-      'furnitureItems': widget.furnitureItems.map((item) {
-        // toARGB32() gives 0xFFRRGGBB — drop alpha byte for CSS hex
-        final argb = item.type.color.toARGB32();
-        final hex = '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
+      'rooms': widget.shapes.map((shape) {
         return {
-          'type': item.type.name,
-          'x': item.position.dx * toM,
-          'z': item.position.dy * toM,
-          'rotationDeg': item.rotationDeg,
-          'widthM': item.widthMm / 1000.0,
-          'depthM': item.depthMm / 1000.0,
-          'heightM': item.type.heightMm / 1000.0,
-          'colorHex': hex,
+          'id': shape.id,
+          'label': shape.label,
+          'points': shape.points
+              .map((p) => {'x': p.dx * toM, 'z': p.dy * toM})
+              .toList(),
+          'wallHeightM': shape.heightMm / 1000.0,
+          'wallThicknessM': 0.2,
+          'roomObjects': shape.roomObjects
+              .map((obj) => {
+                    'wallIndex': obj.wallIndex,
+                    'positionAlong': obj.positionAlong,
+                    'widthM': obj.widthMm / 1000.0,
+                    'heightM': obj.heightMm / 1000.0,
+                    'elevationM': obj.elevationMm / 1000.0,
+                    'isDoor': obj.isDoor,
+                  })
+              .toList(),
+          'furnitureItems': shape.furnitureItems.map((item) {
+            final argb = item.type.color.toARGB32();
+            final hex =
+                '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
+            return {
+              'type': item.type.name,
+              'x': item.position.dx * toM,
+              'z': item.position.dy * toM,
+              'rotationDeg': item.rotationDeg,
+              'widthM': item.widthMm / 1000.0,
+              'depthM': item.depthMm / 1000.0,
+              'heightM': item.type.heightMm / 1000.0,
+              'colorHex': hex,
+            };
+          }).toList(),
         };
       }).toList(),
     };
@@ -201,15 +208,32 @@ class _Room3DScreenState extends State<Room3DScreen> {
   }
 
   Future<void> _sendRoomDataAsync() async {
-    final data = _buildRoomJson();
-    
-    // Load 3D model files as base64
-    final models = await _loadFurnitureModels(widget.furnitureItems);
-    
-    // Add models to the data
-    data['furnitureModels'] = models;
-    
-    _webController.runJavaScript('window.initRoom(${jsonEncode(data)})');
+    try {
+      final data = _buildHouseJson();
+      final allFurniture =
+          widget.shapes.expand((s) => s.furnitureItems).toList();
+      final models = await _loadFurnitureModels(allFurniture);
+      data['furnitureModels'] = models;
+      final jsonString = jsonEncode(data);
+      
+      // Chunk the JSON to prevent TransactionTooLargeException on Android
+      // when sending multiple base64 GLB models over the MethodChannel.
+      const int chunkSize = 250000; 
+      await _webController.runJavaScript('window._roomDataChunks = [];');
+      for (int i = 0; i < jsonString.length; i += chunkSize) {
+        final end = (i + chunkSize < jsonString.length) ? i + chunkSize : jsonString.length;
+        final chunk = jsonString.substring(i, end);
+        await _webController.runJavaScript('window._roomDataChunks.push(${jsonEncode(chunk)});');
+      }
+      await _webController.runJavaScript('window.initHouse(window._roomDataChunks.join(""));');
+    } catch (e, st) {
+      debugPrint('Error sending room data: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load 3D view: $e')),
+        );
+      }
+    }
   }
 
   // ── JS → Flutter messages ──────────────────────────────────────────────────
@@ -218,20 +242,41 @@ class _Room3DScreenState extends State<Room3DScreen> {
       final data = jsonDecode(msg.message) as Map<String, dynamic>;
       switch (data['type'] as String) {
         case 'ready':
-          // Three.js finished loading — send the current room data
           _sendRoomData();
           break;
+
         case 'wallTap':
           final idx = (data['index'] as num).toInt();
-          setState(() =>
-              _selectedWallIndex = _selectedWallIndex == idx ? null : idx);
-          // Mirror highlight back into JS
+          final roomId = data['roomId'] as String?;
+          if (roomId != null) {
+            final si = widget.shapes.indexWhere((s) => s.id == roomId);
+            if (si != -1) _activeShapeIndex = si;
+          }
+          setState(() {
+            _selectedRoomId = roomId;
+            _selectedWallIndex = _selectedWallIndex == idx ? null : idx;
+          });
           _webController.runJavaScript(
-              'window.highlightWall(${_selectedWallIndex ?? -1})');
+              'window.highlightWall(${jsonEncode(roomId)}, ${_selectedWallIndex ?? -1})');
           break;
+
+        case 'roomTap':
+          final roomId = data['roomId'] as String?;
+          if (roomId == null) break;
+          final si = widget.shapes.indexWhere((s) => s.id == roomId);
+          if (si == -1) break;
+          setState(() {
+            _activeShapeIndex = si;
+            _selectedRoomId = roomId;
+            _selectedWallIndex = null;
+          });
+          _webController
+              .runJavaScript('window.highlightRoom(${jsonEncode(roomId)})');
+          break;
+
         case 'furnitureTap':
-          // Future: show info panel
           break;
+
         case 'screenshot':
           _handleScreenshot(data['data'] as String);
           break;
@@ -257,10 +302,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
   void didUpdateWidget(Room3DScreen old) {
     super.didUpdateWidget(old);
     if (_use3D && _webLoaded) {
-      if (old.furnitureItems.length != widget.furnitureItems.length ||
-          old.roomObjects.length != widget.roomObjects.length ||
-          old.points.length != widget.points.length ||
-          old.wallRealMm.length != widget.wallRealMm.length) {
+      if (old.shapes.length != widget.shapes.length) {
         _sendRoomData();
       }
     }
@@ -461,7 +503,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
         ),
 
         // ── Object legend (top-left, painter mode only) ────────────────────
-        if (!_use3D && widget.roomObjects.isNotEmpty)
+        if (!_use3D && _activeShape.roomObjects.isNotEmpty)
           Positioned(
             top: 12,
             left: 12,
@@ -520,10 +562,10 @@ class _Room3DScreenState extends State<Room3DScreen> {
       child: RepaintBoundary(
         child: CustomPaint(
           painter: _Room3DPainter(
-            points: widget.points,
-            roomObjects: widget.roomObjects,
-            wallRealMm: widget.wallRealMm,
-            furnitureItems: widget.furnitureItems,
+            points: _activeShape.points,
+            roomObjects: _activeShape.roomObjects,
+            wallRealMm: _activeShape.wallRealMm,
+            furnitureItems: _activeShape.furnitureItems,
             rotX: _rotX,
             rotY: _rotY,
             zoom: _zoom,
@@ -675,12 +717,13 @@ class _Room3DScreenState extends State<Room3DScreen> {
       final mm = packet.distanceMm;
       setState(() {
         _waitingForBle = false;
-        widget.wallRealMm[wallIdx] = mm;
+        _activeShape.wallRealMm[wallIdx] = mm;
         _selectedWallIndex = null;
       });
       widget.onWallMeasured?.call(wallIdx, mm);
+      _selectedRoomId = null;
       _webController
-          .runJavaScript('window.highlightWall(-1)'); // deselect in Three.js
+          .runJavaScript('window.highlightWall(null, -1)'); // deselect
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
             'Wall ${wallIdx + 1}: ${mm.toStringAsFixed(0)} mm — updated!',

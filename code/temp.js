@@ -1,37 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>3D Room</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0D1117; overflow: hidden; width: 100vw; height: 100vh; }
-    canvas { display: block; }
-    #loading {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      color: #00AA66; font-family: monospace; font-size: 13px;
-      text-align: center; pointer-events: none; line-height: 1.8;
-    }
-    #loading small { color: #445566; font-size: 11px; display: block; }
-    #error {
-      display: none; position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      color: #FF6666; font-family: monospace; font-size: 11px;
-      text-align: center; padding: 16px; max-width: 80vw;
-      background: rgba(0,0,0,0.85); border-radius: 8px;
-    }
-  </style>
-</head>
-<body>
-  <div id="loading">Initializing 3D view…<small>Loading scene</small></div>
-  <div id="error"></div>
 
-  <!-- Three.js global build is injected here by Flutter at runtime -->
-  <!--THREE_JS-->
-
-  <script>
     // ── Global error display ───────────────────────────────────────────────────
     window.onerror = function(msg, src, line) {
       var el = document.getElementById('error');
@@ -431,25 +398,6 @@
         g.add(ps);
       }
     }
-    // ── Rectangular table (dining, coffee, desk, counter) ────────────────────
-    function buildTable(g, w, d, h, col, dark) {
-      var topT = h * 0.06;
-      var legT = Math.min(w * 0.05, 0.06);
-      var legH = h - topT;
-      var lx = w / 2 - legT * 0.8;
-      var lz = d / 2 - legT * 0.8;
-
-      var top = mkBox(w, topT, d, col);
-      top.position.set(0, h - topT / 2, 0);
-      g.add(top);
-
-      [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]].forEach(function(p) {
-        var leg = mkBox(legT, legH, legT, dark);
-        leg.position.set(p[0], legH / 2, p[1]);
-        g.add(leg);
-      });
-    }
-
     // ── Round dining table ────────────────────────────────────────────────────
     function buildRoundTable(g, w, d, h, col, dark) {
       var topT = h * 0.06;
@@ -1174,7 +1122,7 @@
       return tex;
     }
 
-    function buildRoomGroup(data, gcx, gcz, furnitureModels) {
+    function buildRoomGroup(data, gcx, gcz) {
       var g = new THREE.Group();
       g.userData.roomId = data.id;
 
@@ -1290,6 +1238,7 @@
         opacity:     1.0,
       });
 
+      var furnitureModels = data.furnitureModels || {};
       var loader = new THREE.GLTFLoader();
 
       (data.furnitureItems || []).forEach(function(item) {
@@ -1373,7 +1322,6 @@
 
       var rooms = data.rooms || [];
       if (!rooms.length) return;
-      var furnitureModels = data.furnitureModels || {};
 
       // Global centroid across every room, so rooms stay positioned
       // correctly relative to each other instead of each snapping to (0,0).
@@ -1385,7 +1333,7 @@
 
       var maxH = 0;
       rooms.forEach(function(roomData) {
-        var g = buildRoomGroup(roomData, gcx, gcz, furnitureModels);
+        var g = buildRoomGroup(roomData, gcx, gcz);
         houseGroup.add(g);
         maxH = Math.max(maxH, roomData.wallHeightM || 2.4);
       });
@@ -1552,6 +1500,4 @@
     if (window.FlutterBridge) {
       window.FlutterBridge.postMessage(JSON.stringify({ type: 'ready' }));
     }
-  </script>
-</body>
-</html>
+  
