@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'furniture_painter.dart';
 import 'sketch_constants.dart';
 import 'sketch_model.dart';
-import 'room_object.dart';
-import 'room_object_utils.dart';
+import 'wall_topology.dart';
+import 'wall_openings.dart';
 
 class SketchPainter extends CustomPainter {
   final Offset panOffset;
@@ -104,7 +104,7 @@ class SketchPainter extends CustomPainter {
     _drawGrid(canvas, size);
     _drawAxes(canvas, size);
 
-    // Loop through every room we have created
+    // Pass 1: floor fills and outlines, per room
     for (int s = 0; s < shapes.length; s++) {
       final shape = shapes[s];
       final isActive = s == activeIndex;
@@ -112,25 +112,34 @@ class SketchPainter extends CustomPainter {
       if (shape.points.isNotEmpty) {
         _drawSnapGuides(canvas, size, shape, isActive);
         _drawRoom(canvas, shape, isActive, s);
-        if (shape.isClosed) {
-          _drawRoomObjects(canvas, shape);
-          // Draw furniture items
-          for (final item in shape.furnitureItems) {
-            drawFurnitureItem(
-              canvas: canvas,
-              item: item,
-              worldToScreen: worldToScreen,
-              scale: scale,
-              isSelected: item.id == selectedFurnitureId,
-            );
-          }
-          _drawRoomLabel(canvas, shape);
-        }
-        _drawPoints(canvas, shape, isActive);
-        _drawAngleIndicator(canvas, shape, isActive);
-        _drawNearestSnapLine(canvas, size, shape, isActive);
-        _drawMiddlePointAngles(canvas, shape, isActive);
       }
+    }
+
+    // Pass 2: every wall in the project, drawn once, openings cut once
+    _drawAllWalls(canvas, shapes);
+
+    // Pass 3: furniture, labels, points, per room
+    for (int s = 0; s < shapes.length; s++) {
+      final shape = shapes[s];
+      final isActive = s == activeIndex;
+      if (shape.points.isEmpty) continue;
+
+      if (shape.isClosed) {
+        for (final item in shape.furnitureItems) {
+          drawFurnitureItem(
+            canvas: canvas,
+            item: item,
+            worldToScreen: worldToScreen,
+            scale: scale,
+            isSelected: item.id == selectedFurnitureId,
+          );
+        }
+        _drawRoomLabel(canvas, shape);
+      }
+      _drawPoints(canvas, shape, isActive);
+      _drawAngleIndicator(canvas, shape, isActive);
+      _drawNearestSnapLine(canvas, size, shape, isActive);
+      _drawMiddlePointAngles(canvas, shape, isActive);
     }
 
     if (shapes.isNotEmpty) {
@@ -858,19 +867,21 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, Size size) {
+    if (scale < 0.15) return;
+
     final minorPaint = Paint()
-      ..color = const Color(0xFFE0E0E0)
-      ..strokeWidth = 0.5;
+      ..color = const Color(0xFFE6E6E6)
+      ..strokeWidth = 0.6;
     final majorPaint = Paint()
-      ..color = const Color(0xFFBBBBBB)
-      ..strokeWidth = 1.0;
+      ..color = const Color(0xFFC8C8C8)
+      ..strokeWidth = 0.9;
     final double minorSpacing = minorGrid * scale;
     final double majorSpacing = majorGrid * scale;
     if (minorSpacing > 4) _drawGridLines(canvas, size, minorSpacing, minorPaint);
     if (majorSpacing > 4) _drawGridLines(canvas, size, majorSpacing, majorPaint);
     if (minorSpacing > 12) {
       final dotPaint = Paint()
-        ..color = const Color(0xFFAAAAAA)
+        ..color = const Color(0xFFD6D6D6)
         ..style = PaintingStyle.fill;
       final double startX = panOffset.dx % minorSpacing;
       final double startY = panOffset.dy % minorSpacing;
@@ -945,14 +956,6 @@ class SketchPainter extends CustomPainter {
       ..color = const Color(0xFF1A1A1A)
       ..style = PaintingStyle.fill;
 
-    final selectedWallFillPaint = Paint()
-      ..color = const Color(0xFFFF8800)
-      ..style = PaintingStyle.fill;
-
-    final snapWallFillPaint = Paint()
-      ..color = const Color(0xFF00CC44)
-      ..style = PaintingStyle.fill;
-
     final List<Offset> sp =
         shape.points.map<Offset>((p) => worldToScreen(p)).toList();
 
@@ -987,92 +990,6 @@ class SketchPainter extends CustomPainter {
     if (shape.isClosed && shape.points.length >= 2) {
       final int n = shape.points.length;
 
-      // Build offset lines for each wall
-      // Each entry: (outerA, outerB, innerA, innerB)
-      List<(Offset, Offset, Offset, Offset)> wallLines = [];
-      for (int i = 0; i < n; i++) {
-        final a = shape.points[i];
-        final b = shape.points[(i + 1) % n];
-        final corners = thickWallRect(a, b, wallThickness);
-        // thickWallRect returns [outerA, outerB, innerB, innerA]
-        wallLines.add((corners[0], corners[1], corners[3], corners[2]));
-      }
-
-      // Compute mitre corners
-      List<Offset> outerCorners = [];
-      List<Offset> innerCorners = [];
-      for (int i = 0; i < n; i++) {
-        final next = (i + 1) % n;
-        final (oA, oB, iA, iB) = wallLines[i];
-        final (oC, oD, iC, iD) = wallLines[next];
-
-        final oDir1 = oB - oA;
-        final oDir2 = oD - oC;
-        final iDir1 = iB - iA;
-        final iDir2 = iD - iC;
-
-        final outerMitre = lineIntersect(oA, oDir1, oC, oDir2) ?? oB;
-        final innerMitre = lineIntersect(iA, iDir1, iC, iDir2) ?? iB;
-
-        outerCorners.add(worldToScreen(outerMitre));
-        innerCorners.add(worldToScreen(innerMitre));
-      }
-
-      // Draw single filled wall path
-      final wallPath = Path();
-      wallPath.moveTo(outerCorners[0].dx, outerCorners[0].dy);
-      for (int i = 1; i < n; i++) {
-        wallPath.lineTo(outerCorners[i].dx, outerCorners[i].dy);
-      }
-      wallPath.close();
-
-      // Cut out interior
-      wallPath.moveTo(innerCorners[0].dx, innerCorners[0].dy);
-      for (int i = 1; i < n; i++) {
-        wallPath.lineTo(innerCorners[i].dx, innerCorners[i].dy);
-      }
-      wallPath.close();
-
-      wallPath.fillType = PathFillType.evenOdd;
-      canvas.drawPath(
-        wallPath,
-        Paint()
-          ..color = const Color(0xFF1A1A1A)
-          ..style = PaintingStyle.fill,
-      );
-
-      // Draw ONLY the shared sub-segment thin — the rest of the wall stays full thickness
-      for (final sw in shape.sharedWalls) {
-        if (sw.myWallIndex >= n) continue;
-        final Offset wallA = shape.points[sw.myWallIndex];
-        final Offset wallB = shape.points[(sw.myWallIndex + 1) % n];
-        // Recompute from t-values — always follows the room's current position
-        final Offset a = wallA + (wallB - wallA) * sw.tStart;
-        final Offset b = wallA + (wallB - wallA) * sw.tEnd;
-        if ((a - b).distance < 2.0) continue;
-
-        final corners = thickWallRect(a, b, wallThickness * 0.28);
-        if (corners.isEmpty) continue;
-        final sc = corners.map((c) => worldToScreen(c)).toList();
-        final thinPath = Path()
-          ..moveTo(sc[0].dx, sc[0].dy)
-          ..lineTo(sc[1].dx, sc[1].dy)
-          ..lineTo(sc[2].dx, sc[2].dy)
-          ..lineTo(sc[3].dx, sc[3].dy)
-          ..close();
-        // First erase that strip (paint over with background) then draw thin
-        canvas.drawPath(
-            thinPath,
-            Paint()
-              ..color = const Color(0xFFF5F5F0) // match your floor/background color
-              ..style = PaintingStyle.fill);
-        canvas.drawPath(
-            thinPath,
-            Paint()
-              ..color = const Color(0xFF1A1A1A)
-              ..style = PaintingStyle.fill);
-      }
-
       // Highlight snap candidate wall during drag (green glow)
       if (s == snapCandidateShape && snapCandidateWall >= 0) {
         final int i = snapCandidateWall;
@@ -1095,7 +1012,6 @@ class SketchPainter extends CustomPainter {
         for (int i = 0; i < n; i++) {
           final a = shape.points[i];
           final b = shape.points[(i + 1) % n];
-          // Only draw simple label if no objects on this wall
           final hasObjects = shape.roomObjects.any((o) => o.wallIndex == i);
           if (!hasObjects) {
             _drawWallLengthLabel(canvas, a, b,
@@ -1160,6 +1076,9 @@ class SketchPainter extends CustomPainter {
   }
 
   void _drawPoints(Canvas canvas, SketchShape shape, bool isActive) {
+    double pointRadius(double worldRadius) =>
+      math.max(0.75, worldRadius * scale * 3.0);
+
     for (int i = 0; i < shape.points.length; i++) {
       final s = worldToScreen(shape.points[i]);
       final isFirst = i == 0;
@@ -1168,15 +1087,16 @@ class SketchPainter extends CustomPainter {
       final isSnapTarget = isActive && i == snapTargetIndex;
 
       if (isSnapTarget) {
+        final snapRadius = pointRadius(20);
         canvas.drawCircle(
             s,
-            20,
+            snapRadius,
             Paint()
               ..color = const Color(0xFF00CC44).withOpacity(0.25)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            20,
+          snapRadius,
             Paint()
               ..color = const Color(0xFF00CC44)
               ..strokeWidth = 2.0
@@ -1184,29 +1104,33 @@ class SketchPainter extends CustomPainter {
       }
 
       if (isThisActivePoint) {
+        final glowRadius = pointRadius(lastPointGlowRadius);
+        final ringRadius = pointRadius(lastPointRingRadius);
         canvas.drawCircle(
             s,
-            lastPointGlowRadius,
+            glowRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.10)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = const Color(0xFFFF6600).withOpacity(0.30)
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = const Color(0xFFFF6600)
               ..strokeWidth = 1.5
               ..style = PaintingStyle.stroke);
       } else if (isActive && isLast) {
+        final glowRadius = pointRadius(lastPointGlowRadius);
+        final ringRadius = pointRadius(lastPointRingRadius);
         canvas.drawCircle(
             s,
-            lastPointGlowRadius,
+            glowRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.10)
@@ -1214,7 +1138,7 @@ class SketchPainter extends CustomPainter {
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44).withOpacity(0.25)
@@ -1224,7 +1148,7 @@ class SketchPainter extends CustomPainter {
               ..style = PaintingStyle.fill);
         canvas.drawCircle(
             s,
-            lastPointRingRadius,
+          ringRadius,
             Paint()
               ..color = isAngleSnapped
                   ? const Color(0xFF00CC44)
@@ -1235,7 +1159,9 @@ class SketchPainter extends CustomPainter {
 
       Color dotColor;
       Color borderColor;
-      final double dotRadius = (isActive && (isLast || isThisActivePoint)) ? 7 : (isFirst ? 6 : 4);
+        final double dotWorldRadius =
+          (isActive && (isLast || isThisActivePoint)) ? 7 : (isFirst ? 6 : 4);
+        final double dotRadius = pointRadius(dotWorldRadius);
 
       if (isThisActivePoint) {
         dotColor = const Color(0xFFFF6600);
@@ -1269,92 +1195,146 @@ class SketchPainter extends CustomPainter {
   @override
   bool shouldRepaint(SketchPainter oldDelegate) => true;
 
-  void _drawRoomObjects(Canvas canvas, SketchShape shape) {
-    final pts = shape.points;
-    final isClosed = shape.isClosed;
-    final wallCount = isClosed ? pts.length : pts.length - 1;
+  void _drawAllWalls(Canvas canvas, List<SketchShape> shapes) {
+    final walls = buildWalls(shapes);
+    if (walls.isEmpty) return;
 
-    for (final obj in shape.roomObjects) {
-      if (obj.wallIndex >= wallCount) continue;
+    Path? wallPath;
+    for (final wall in walls) {
+      final corners = thickWallRect(wall.a, wall.b, wallThickness);
+      if (corners.isEmpty) continue;
+      final sc = corners.map((c) => worldToScreen(c)).toList();
+      final band = Path()
+        ..moveTo(sc[0].dx, sc[0].dy)
+        ..lineTo(sc[1].dx, sc[1].dy)
+        ..lineTo(sc[2].dx, sc[2].dy)
+        ..lineTo(sc[3].dx, sc[3].dy)
+        ..close();
+      wallPath = wallPath == null
+          ? band
+          : Path.combine(PathOperation.union, wallPath, band);
+    }
+    if (wallPath == null) return;
 
-      // Wall segment in world coords
-      final wA = pts[obj.wallIndex];
-      final wB = pts[(obj.wallIndex + 1) % pts.length];
-      final wallLenWorld = (wB - wA).distance;
-      if (wallLenWorld < 1) continue;
-
-      // Convert door width from mm -> world units
-      final objWidthWorld = obj.widthMm / mmPerUnit;
-      // Half-width in screen pixels
-      final scaleRatio =
-          (worldToScreen(wB) - worldToScreen(wA)).distance / wallLenWorld;
-      final halfWScreen = (objWidthWorld / 2) * scaleRatio;
-
-      final centre = objectCentreWorld(
-        obj: obj,
-        points: pts,
-        wallCount: wallCount,
-      );
-      final centreScreen = worldToScreen(centre);
-
-      final dir = wallDirectionScreen(
-        wallIndex: obj.wallIndex,
-        points: pts,
-        worldToScreen: worldToScreen,
-      );
-      final perp = obj.swingFlipped
-          ? Offset(dir.dy, -dir.dx) // flipped side
-          : Offset(-dir.dy, dir.dx); // default inward
-
-      final bool isSelected = obj.id == selectedObjectId;
-
-      // Draw blue selection rectangle when selected
-      if (isSelected) {
-        final double rectHalfW = halfWScreen + 6;
-        final double rectHalfH = halfWScreen + 6; // square-ish like the image
-        final Offset rectA = Offset(
-          centreScreen.dx - dir.dx * rectHalfW - perp.dx * 4,
-          centreScreen.dy - dir.dy * rectHalfW - perp.dy * 4,
-        );
-        final Offset rectB = Offset(
-          centreScreen.dx + dir.dx * rectHalfW - perp.dx * 4,
-          centreScreen.dy + dir.dy * rectHalfW - perp.dy * 4,
-        );
-        final Offset rectC = Offset(
-          centreScreen.dx + dir.dx * rectHalfW + perp.dx * rectHalfH,
-          centreScreen.dy + dir.dy * rectHalfW + perp.dy * rectHalfH,
-        );
-        final Offset rectD = Offset(
-          centreScreen.dx - dir.dx * rectHalfW + perp.dx * rectHalfH,
-          centreScreen.dy - dir.dy * rectHalfW + perp.dy * rectHalfH,
-        );
-        final selPath = Path()
-          ..moveTo(rectA.dx, rectA.dy)
-          ..lineTo(rectB.dx, rectB.dy)
-          ..lineTo(rectC.dx, rectC.dy)
-          ..lineTo(rectD.dx, rectD.dy)
-          ..close();
-        canvas.drawPath(
-          selPath,
-          Paint()
-            ..color = const Color(0xFF0099FF).withOpacity(0.08)
-            ..style = PaintingStyle.fill,
-        );
-        canvas.drawPath(
-          selPath,
-          Paint()
-            ..color = const Color(0xFF0099FF)
-            ..strokeWidth = 1.5
-            ..style = PaintingStyle.stroke,
-        );
-      }
-
-      if (obj.isDoor) {
-        _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
-      } else {
-        _drawWindow(canvas, centreScreen, dir, halfWScreen, isSelected);
+    final resolvedByWall = <Wall, WallOpenings>{};
+    for (final wall in walls) {
+      final resolved = openingsForWall(wall, shapes);
+      resolvedByWall[wall] = resolved;
+      for (final opening in resolved.openings) {
+        final hole = _openingHoleScreen(wall, opening);
+        if (hole != null) {
+          wallPath = Path.combine(PathOperation.difference, wallPath!, hole);
+        }
       }
     }
+
+    canvas.drawPath(
+      wallPath!,
+      Paint()
+        ..color = const Color(0xFF1A1A1A)
+        ..style = PaintingStyle.fill,
+    );
+
+    for (final wall in walls) {
+      final resolved = resolvedByWall[wall]!;
+      for (final opening in resolved.openings) {
+        _drawOpeningSymbol(canvas, wall, opening);
+      }
+      if (resolved.hasConflict) {
+        _drawConflictHighlight(canvas, wall);
+      }
+    }
+  }
+
+  Path? _openingHoleScreen(Wall wall, ResolvedOpening opening) {
+    final dir = wall.b - wall.a;
+    final wallLen = dir.distance;
+    if (wallLen < 1) return null;
+    final unit = dir / wallLen;
+    final perp = Offset(-unit.dy, unit.dx);
+    final halfW = (opening.source.widthMm / mmPerUnit) / 2;
+    final centre = wall.a + dir * opening.positionAlong;
+    final p0 = centre - unit * halfW - perp * (wallThickness * 0.6);
+    final p1 = centre + unit * halfW - perp * (wallThickness * 0.6);
+    final p2 = centre + unit * halfW + perp * (wallThickness * 0.6);
+    final p3 = centre - unit * halfW + perp * (wallThickness * 0.6);
+    final sc = [p0, p1, p2, p3].map((p) => worldToScreen(p)).toList();
+    return Path()
+      ..moveTo(sc[0].dx, sc[0].dy)
+      ..lineTo(sc[1].dx, sc[1].dy)
+      ..lineTo(sc[2].dx, sc[2].dy)
+      ..lineTo(sc[3].dx, sc[3].dy)
+      ..close();
+  }
+
+  void _drawOpeningSymbol(Canvas canvas, Wall wall, ResolvedOpening opening) {
+    final dirWorld = wall.b - wall.a;
+    final wallLenWorld = dirWorld.distance;
+    if (wallLenWorld < 1) return;
+
+    final centreWorld = wall.a + dirWorld * opening.positionAlong;
+    final centreScreen = worldToScreen(centreWorld);
+    final aScreen = worldToScreen(wall.a);
+    final bScreen = worldToScreen(wall.b);
+    final dirScreenVec = bScreen - aScreen;
+    final dirLenScreen = dirScreenVec.distance;
+    final dir = dirLenScreen < 1 ? const Offset(1, 0) : dirScreenVec / dirLenScreen;
+    final perp = opening.source.swingFlipped
+        ? Offset(dir.dy, -dir.dx)
+        : Offset(-dir.dy, dir.dx);
+
+    final objWidthWorld = opening.source.widthMm / mmPerUnit;
+    final scaleRatio = dirLenScreen / wallLenWorld;
+    final halfWScreen = (objWidthWorld / 2) * scaleRatio;
+    final isSelected = opening.source.id == selectedObjectId;
+
+    if (isSelected) {
+      final rectHalfW = halfWScreen + 6;
+      final rectHalfH = halfWScreen + 6;
+      final rectA = Offset(centreScreen.dx - dir.dx * rectHalfW - perp.dx * 4,
+          centreScreen.dy - dir.dy * rectHalfW - perp.dy * 4);
+      final rectB = Offset(centreScreen.dx + dir.dx * rectHalfW - perp.dx * 4,
+          centreScreen.dy + dir.dy * rectHalfW - perp.dy * 4);
+      final rectC = Offset(centreScreen.dx + dir.dx * rectHalfW + perp.dx * rectHalfH,
+          centreScreen.dy + dir.dy * rectHalfW + perp.dy * rectHalfH);
+      final rectD = Offset(centreScreen.dx - dir.dx * rectHalfW + perp.dx * rectHalfH,
+          centreScreen.dy - dir.dy * rectHalfW + perp.dy * rectHalfH);
+      final selPath = Path()
+        ..moveTo(rectA.dx, rectA.dy)
+        ..lineTo(rectB.dx, rectB.dy)
+        ..lineTo(rectC.dx, rectC.dy)
+        ..lineTo(rectD.dx, rectD.dy)
+        ..close();
+      canvas.drawPath(selPath, Paint()
+        ..color = const Color(0xFF0099FF).withOpacity(0.08)
+        ..style = PaintingStyle.fill);
+      canvas.drawPath(selPath, Paint()
+        ..color = const Color(0xFF0099FF)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke);
+    }
+
+    if (opening.source.isDoor) {
+      _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
+    } else {
+      _drawWindow(canvas, centreScreen, dir, halfWScreen, isSelected);
+    }
+  }
+
+  void _drawConflictHighlight(Canvas canvas, Wall wall) {
+    final corners = thickWallRect(wall.a, wall.b, wallThickness * 1.15);
+    if (corners.isEmpty) return;
+    final sc = corners.map((c) => worldToScreen(c)).toList();
+    final path = Path()
+      ..moveTo(sc[0].dx, sc[0].dy)
+      ..lineTo(sc[1].dx, sc[1].dy)
+      ..lineTo(sc[2].dx, sc[2].dy)
+      ..lineTo(sc[3].dx, sc[3].dy)
+      ..close();
+    canvas.drawPath(path, Paint()
+      ..color = const Color(0xFFEF9F27)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5);
   }
 
   void _drawDoor(Canvas canvas, Offset centre, Offset dir, Offset perp,
@@ -1370,17 +1350,6 @@ class SketchPainter extends CustomPainter {
     final Offset tipPoint = Offset(
       centre.dx + dir.dx * halfW,
       centre.dy + dir.dy * halfW,
-    );
-
-    // 1. Colour-less gap - fill with canvas background colour
-    canvas.drawLine(
-      hingePoint,
-      tipPoint,
-      Paint()
-        ..color = const Color(0xFFFFFFFF)
-        ..strokeWidth = wallThickness * 1.1
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.butt,
     );
 
     final double radius = halfW * 2;
@@ -1434,24 +1403,15 @@ class SketchPainter extends CustomPainter {
     final Color color = isSelected
         ? const Color(0xFFFF8800)
         : const Color(0xFF0099CC);
-
-    // Gap in wall
-    canvas.drawLine(
-      Offset(centre.dx - dir.dx * halfW, centre.dy - dir.dy * halfW),
-      Offset(centre.dx + dir.dx * halfW, centre.dy + dir.dy * halfW),
-      Paint()
-        ..color = const Color(0xFFFFFFFF)
-        ..strokeWidth = wallThickness * 1.1
-        ..style = PaintingStyle.stroke,
-    );
+        final double spread = wallThickness * scale * 0.4;
 
     // Three lines (classic window symbol)
     for (final offset in [-0.5, 0.0, 0.5]) {
       canvas.drawLine(
-        Offset(centre.dx - dir.dx * halfW + dir.dy * offset * 6,
-              centre.dy - dir.dy * halfW - dir.dx * offset * 6),
-        Offset(centre.dx + dir.dx * halfW + dir.dy * offset * 6,
-              centre.dy + dir.dy * halfW - dir.dx * offset * 6),
+        Offset(centre.dx - dir.dx * halfW + dir.dy * offset * spread,
+          centre.dy - dir.dy * halfW - dir.dx * offset * spread),
+        Offset(centre.dx + dir.dx * halfW + dir.dy * offset * spread,
+          centre.dy + dir.dy * halfW - dir.dx * offset * spread),
         Paint()
           ..color = color
           ..strokeWidth = offset == 0 ? 2.0 : 1.0
