@@ -234,14 +234,21 @@ pw.Page _overviewPage(
                     g.fillPath();
                   }
 
-                  g.setStrokeColor(PdfColors.blueGrey800);
-                  g.setLineWidth(1.6);
+                  g.setFillColor(PdfColors.blueGrey800);
                   for (int i = 0; i < wc; i++) {
-                    final a = tx(s.points[i]);
-                    final b = tx(s.points[(i + 1) % n]);
-                    g.moveTo(a.x, a.y);
-                    g.lineTo(b.x, b.y);
-                    g.strokePath();
+                    final corners = thickWallRect(
+                        s.points[i], s.points[(i + 1) % n], wallThickness);
+                    if (corners.isEmpty) continue;
+                    final c0 = tx(corners[0]);
+                    final c1 = tx(corners[1]);
+                    final c2 = tx(corners[2]);
+                    final c3 = tx(corners[3]);
+                    g.moveTo(c0.x, c0.y);
+                    g.lineTo(c1.x, c1.y);
+                    g.lineTo(c2.x, c2.y);
+                    g.lineTo(c3.x, c3.y);
+                    g.closePath();
+                    g.fillPath();
                   }
 
                   // Furniture
@@ -353,14 +360,21 @@ pw.Page _roomPage(
                 }
 
                 // Walls
-                g.setStrokeColor(PdfColors.blueGrey800);
-                g.setLineWidth(1.8);
+                g.setFillColor(PdfColors.blueGrey800);
                 for (int i = 0; i < wallCount; i++) {
-                  final a = tx(shape.points[i]);
-                  final b = tx(shape.points[(i + 1) % n]);
-                  g.moveTo(a.x, a.y);
-                  g.lineTo(b.x, b.y);
-                  g.strokePath();
+                  final corners = thickWallRect(shape.points[i],
+                      shape.points[(i + 1) % n], wallThickness);
+                  if (corners.isEmpty) continue;
+                  final c0 = tx(corners[0]);
+                  final c1 = tx(corners[1]);
+                  final c2 = tx(corners[2]);
+                  final c3 = tx(corners[3]);
+                  g.moveTo(c0.x, c0.y);
+                  g.lineTo(c1.x, c1.y);
+                  g.lineTo(c2.x, c2.y);
+                  g.lineTo(c3.x, c3.y);
+                  g.closePath();
+                  g.fillPath();
                 }
 
                 // Corner dots
@@ -486,11 +500,12 @@ void _paintRoomObjects(
     final wdPdf = Offset(wallDir.dx, -wallDir.dy);
     final inPdf = Offset(inW.dx, -inW.dy);
     final widPdf = obj.widthMm / mmPerUnit * tx.scale;
+    final wallGapPdf = wallThickness * tx.scale + 1.0;
 
     if (obj.isDoor) {
-      _paintDoor(g, sP, eP, wdPdf, inPdf, widPdf);
+      _paintDoor(g, sP, eP, wdPdf, inPdf, widPdf, wallGapPdf);
     } else {
-      _paintWindow(g, sP, eP, inPdf, widPdf);
+      _paintWindow(g, sP, eP, inPdf, widPdf, wallGapPdf);
     }
   }
 }
@@ -502,13 +517,14 @@ void _paintDoor(
   Offset wallDirPdf,
   Offset inWPdf,
   double widthPdf,
+  double gapWidthPdf,
 ) {
   final hx = start.x, hy = start.y; // hinge
   final tx = end.x, ty = end.y;     // tip (far jamb)
 
   // White wall gap
   g.setStrokeColor(PdfColors.white);
-  g.setLineWidth(5.5);
+  g.setLineWidth(gapWidthPdf);
   g.moveTo(hx, hy);
   g.lineTo(tx, ty);
   g.strokePath();
@@ -559,10 +575,11 @@ void _paintWindow(
   PdfPoint end,
   Offset inWPdf,
   double widthPdf,
+  double gapWidthPdf,
 ) {
   // White wall gap
   g.setStrokeColor(PdfColors.white);
-  g.setLineWidth(5.5);
+  g.setLineWidth(gapWidthPdf);
   g.moveTo(start.x, start.y);
   g.lineTo(end.x, end.y);
   g.strokePath();
