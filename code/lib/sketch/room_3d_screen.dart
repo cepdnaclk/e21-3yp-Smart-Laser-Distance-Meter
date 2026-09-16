@@ -8,28 +8,25 @@ import 'dart:math' as math;
 import 'room_object.dart';
 import 'furniture_item.dart';
 import 'sketch_constants.dart';
+import 'sketch_model.dart';
 import '../ble/ble_manager.dart';
 
 class Room3DScreen extends StatefulWidget {
-  final List<Offset> points;
-  final List<RoomObject> roomObjects;
-  final Map<int, double> wallRealMm;
-  final List<FurnitureItem> furnitureItems;
+  final List<SketchShape> shapes;
   final BleManager? bleManager;
 
+  // TODO Phase 4: these become
+  // void Function(String shapeId, int wallIndex, double mm)?
+  // void Function(String shapeId, double heightMm)?
+  // For now they still target the first shape in `shapes` (see _primaryShape).
   final void Function(int wallIndex, double mm)? onWallMeasured;
-  final double initialHeightMm;
   final void Function(double heightMm)? onHeightChanged;
 
   const Room3DScreen({
     super.key,
-    required this.points,
-    required this.roomObjects,
-    required this.wallRealMm,
-    this.furnitureItems = const [],
+    required this.shapes,
     this.bleManager,
     this.onWallMeasured,
-    this.initialHeightMm = 2400,
     this.onHeightChanged,
   });
 
@@ -46,6 +43,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
   double _lastZoom = 0.7;
 
   int? _selectedWallIndex;
+  String? _focusedShapeId;
   bool _waitingForBle = false;
 
   final List<List<Offset>> _wallPolygons = [];
@@ -56,6 +54,12 @@ class _Room3DScreenState extends State<Room3DScreen> {
   late double _wallHeightMm;
   static const double _mmScale = 0.10;
 
+  // TODO Phase 3/4: replace with the currently-focused room.
+  // For now, the legacy 2D painter fallback and BLE wall measurement
+  // still operate on a single room — this is that room (shapes[0]).
+  SketchShape get _primaryShape =>
+      widget.shapes.isNotEmpty ? widget.shapes.first : SketchShape.empty();
+
   // ── WebView state ──────────────────────────────────────────────────────────
   bool _use3D = true;   // true = WebView, false = legacy painter
   late WebViewController _webController;
@@ -64,7 +68,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
   @override
   void initState() {
     super.initState();
-    _wallHeightMm = widget.initialHeightMm;
+    _wallHeightMm = _primaryShape.heightMm;
     _initWebView();
   }
 
@@ -98,12 +102,15 @@ class _Room3DScreenState extends State<Room3DScreen> {
 
   // Loads all furniture .glb files and converts them to base64
   Future<Map<String, String>> _loadFurnitureModels(
-      List<FurnitureItem> items) async {
+      List<SketchShape> shapes) async {
     final Map<String, String> models = {};
-    
-    // Get unique furniture types from the items in this room
-    final Set<String> types = items.map((i) => i.type.name).toSet();
-    
+
+    // Unique furniture types across ALL rooms, deduplicated
+    final Set<String> types = {
+      for (final shape in shapes)
+        for (final item in shape.furnitureItems) item.type.name,
+    };
+
     for (final typeName in types) {
       final path = _modelPathForType(typeName);
       if (path == null) continue;
@@ -158,38 +165,47 @@ class _Room3DScreenState extends State<Room3DScreen> {
   }
 
   // ── JSON contract: sketch world-units → Three.js metres ───────────────────
+  // One entry per closed room, all sharing the same world coordinate system
+  // (points are NOT re-centered per room here — that happens once, across
+  // all rooms combined, on the JS side).
   Map<String, dynamic> _buildRoomJson() {
     const double toM = mmPerUnit / 1000.0; // 5mm per unit → metres
 
     return {
-      'points': widget.points
-          .map((p) => {'x': p.dx * toM, 'z': p.dy * toM})
-          .toList(),
-      'wallHeightM': _wallHeightMm / 1000.0,
-      'wallThicknessM': 0.2,
-      'roomObjects': widget.roomObjects
-          .map((obj) => {
-                'wallIndex': obj.wallIndex,
-                'positionAlong': obj.positionAlong,
-                'widthM': obj.widthMm / 1000.0,
-                'heightM': obj.heightMm / 1000.0,
-                'elevationM': obj.elevationMm / 1000.0,
-                'isDoor': obj.isDoor,
-              })
-          .toList(),
-      'furnitureItems': widget.furnitureItems.map((item) {
-        // toARGB32() gives 0xFFRRGGBB — drop alpha byte for CSS hex
-        final argb = item.type.color.toARGB32();
-        final hex = '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
+      'rooms': widget.shapes.map((shape) {
         return {
-          'type': item.type.name,
-          'x': item.position.dx * toM,
-          'z': item.position.dy * toM,
-          'rotationDeg': item.rotationDeg,
-          'widthM': item.widthMm / 1000.0,
-          'depthM': item.depthMm / 1000.0,
-          'heightM': item.type.heightMm / 1000.0,
-          'colorHex': hex,
+          'shapeId': shape.id,
+          'label': shape.label,
+          'points': shape.points
+              .map((p) => {'x': p.dx * toM, 'z': p.dy * toM})
+              .toList(),
+          'wallHeightM': shape.heightMm / 1000.0,
+          'wallThicknessM': 0.2,
+          'roomObjects': shape.roomObjects
+              .map((obj) => {
+                    'wallIndex': obj.wallIndex,
+                    'positionAlong': obj.positionAlong,
+                    'widthM': obj.widthMm / 1000.0,
+                    'heightM': obj.heightMm / 1000.0,
+                    'elevationM': obj.elevationMm / 1000.0,
+                    'isDoor': obj.isDoor,
+                  })
+              .toList(),
+          'furnitureItems': shape.furnitureItems.map((item) {
+            final argb = item.type.color.toARGB32();
+            final hex =
+                '#${argb.toRadixString(16).padLeft(8, '0').substring(2)}';
+            return {
+              'type': item.type.name,
+              'x': item.position.dx * toM,
+              'z': item.position.dy * toM,
+              'rotationDeg': item.rotationDeg,
+              'widthM': item.widthMm / 1000.0,
+              'depthM': item.depthMm / 1000.0,
+              'heightM': item.type.heightMm / 1000.0,
+              'colorHex': hex,
+            };
+          }).toList(),
         };
       }).toList(),
     };
@@ -202,13 +218,13 @@ class _Room3DScreenState extends State<Room3DScreen> {
 
   Future<void> _sendRoomDataAsync() async {
     final data = _buildRoomJson();
-    
+
     // Load 3D model files as base64
-    final models = await _loadFurnitureModels(widget.furnitureItems);
-    
+    final models = await _loadFurnitureModels(widget.shapes);
+
     // Add models to the data
     data['furnitureModels'] = models;
-    
+
     _webController.runJavaScript('window.initRoom(${jsonEncode(data)})');
   }
 
@@ -228,6 +244,9 @@ class _Room3DScreenState extends State<Room3DScreen> {
           // Mirror highlight back into JS
           _webController.runJavaScript(
               'window.highlightWall(${_selectedWallIndex ?? -1})');
+          break;
+        case 'roomSelected':
+          setState(() => _focusedShapeId = data['shapeId'] as String);
           break;
         case 'furnitureTap':
           // Future: show info panel
@@ -257,13 +276,28 @@ class _Room3DScreenState extends State<Room3DScreen> {
   void didUpdateWidget(Room3DScreen old) {
     super.didUpdateWidget(old);
     if (_use3D && _webLoaded) {
-      if (old.furnitureItems.length != widget.furnitureItems.length ||
-          old.roomObjects.length != widget.roomObjects.length ||
-          old.points.length != widget.points.length ||
-          old.wallRealMm.length != widget.wallRealMm.length) {
+      if (_shapesChanged(old.shapes, widget.shapes)) {
         _sendRoomData();
       }
     }
+  }
+
+  // Cheap structural diff — good enough to detect "something changed"
+  // without deep-comparing every point. Fine-grained per-room diffing
+  // (to avoid full rebuilds) is Phase 5 work.
+  bool _shapesChanged(List<SketchShape> a, List<SketchShape> b) {
+    if (a.length != b.length) return true;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].points.length != b[i].points.length ||
+          a[i].roomObjects.length != b[i].roomObjects.length ||
+          a[i].furnitureItems.length != b[i].furnitureItems.length ||
+          a[i].wallRealMm.length != b[i].wallRealMm.length ||
+          a[i].heightMm != b[i].heightMm) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -384,6 +418,38 @@ class _Room3DScreenState extends State<Room3DScreen> {
         else
           _buildPainterView(),
 
+        // ── Room navigation chips (3D mode, multi-room only) ────────────────
+        if (_use3D && widget.shapes.length > 1)
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _RoomChip(
+                    label: 'Overview',
+                    selected: _focusedShapeId == null,
+                    onTap: _showOverview,
+                  ),
+                  const SizedBox(width: 6),
+                  for (var i = 0; i < widget.shapes.length; i++) ...[
+                    _RoomChip(
+                      label: widget.shapes[i].label.isNotEmpty
+                          ? widget.shapes[i].label
+                          : 'Room ${i + 1}',
+                      selected: _focusedShapeId == widget.shapes[i].id,
+                      onTap: () => _focusRoom(widget.shapes[i].id),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
         // ── Bottom info / BLE bar ─────────────────────────────────────────
         Positioned(
           bottom: 16,
@@ -461,7 +527,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
         ),
 
         // ── Object legend (top-left, painter mode only) ────────────────────
-        if (!_use3D && widget.roomObjects.isNotEmpty)
+        if (!_use3D && _primaryShape.roomObjects.isNotEmpty)
           Positioned(
             top: 12,
             left: 12,
@@ -520,10 +586,10 @@ class _Room3DScreenState extends State<Room3DScreen> {
       child: RepaintBoundary(
         child: CustomPaint(
           painter: _Room3DPainter(
-            points: widget.points,
-            roomObjects: widget.roomObjects,
-            wallRealMm: widget.wallRealMm,
-            furnitureItems: widget.furnitureItems,
+            points: _primaryShape.points,
+            roomObjects: _primaryShape.roomObjects,
+            wallRealMm: _primaryShape.wallRealMm,
+            furnitureItems: _primaryShape.furnitureItems,
             rotX: _rotX,
             rotY: _rotY,
             zoom: _zoom,
@@ -587,6 +653,16 @@ class _Room3DScreenState extends State<Room3DScreen> {
       j = i;
     }
     return inside;
+  }
+
+  void _focusRoom(String shapeId) {
+    setState(() => _focusedShapeId = shapeId);
+    _webController.runJavaScript('window.focusRoom(${jsonEncode(shapeId)})');
+  }
+
+  void _showOverview() {
+    setState(() => _focusedShapeId = null);
+    _webController.runJavaScript('window.showOverview()');
   }
 
   Future<void> _editHeight() async {
@@ -675,7 +751,7 @@ class _Room3DScreenState extends State<Room3DScreen> {
       final mm = packet.distanceMm;
       setState(() {
         _waitingForBle = false;
-        widget.wallRealMm[wallIdx] = mm;
+        _primaryShape.wallRealMm[wallIdx] = mm;
         _selectedWallIndex = null;
       });
       widget.onWallMeasured?.call(wallIdx, mm);
@@ -688,6 +764,45 @@ class _Room3DScreenState extends State<Room3DScreen> {
         backgroundColor: const Color(0xFF003311),
       ));
     });
+  }
+}
+
+class _RoomChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _RoomChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF00AAFF) : const Color(0xFF161B22),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? const Color(0xFF00AAFF) : const Color(0xFF30363D),
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.black : const Color(0xFFCCCCCC),
+            fontFamily: 'monospace',
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
   }
 }
 
