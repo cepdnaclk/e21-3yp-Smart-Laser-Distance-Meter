@@ -3392,23 +3392,16 @@ class _SketchScreenState extends State<SketchScreen>
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
                 onPressed: () {
-                  // Send every closed room, but put activeShape first so
-                  // the legacy single-room features in Room3DScreen (BLE
-                  // measurement, height dialog, 2D fallback) still target
-                  // the room the user was actually working on.
-                  // TODO Phase 4: remove this ordering hack once
-                  // Room3DScreen is fully shapeId-aware.
-                  final roomsFor3D = <SketchShape>[
-                    if (activeShape.isClosed) activeShape,
-                    ...shapes.where(
-                        (s) => s.isClosed && s.id != activeShape.id),
-                  ];
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => Room3DScreen(
-                        shapes: roomsFor3D,
+                        points: activeShape.points,
+                        roomObjects: activeShape.roomObjects,
+                        wallRealMm: activeShape.wallRealMm,
+                        furnitureItems: activeShape.furnitureItems,
                         bleManager: widget.bleManager,
+                        initialHeightMm: activeShape.heightMm,
                         onWallMeasured: (wallIndex, mm) {
                           _applyRealMeasurement(wallIndex, mm);
                         },
