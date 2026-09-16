@@ -197,49 +197,6 @@
       return { cx: cx, cz: cz, maxR: maxR };
     }
 
-    // ── Camera tween (for room focus / overview transitions) ──────────────────
-    var _camTween = null;
-
-    function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
-
-    function tweenCameraTo(endPos, endTarget, duration) {
-      _camTween = {
-        startPos:    camera.position.clone(),
-        endPos:      endPos,
-        startTarget: controls.target.clone(),
-        endTarget:   endTarget,
-        startTime:   performance.now(),
-        duration:    duration || 500,
-      };
-    }
-
-    function _updateCameraTween() {
-      if (!_camTween) return;
-      var now = performance.now();
-      var t = Math.min(1, (now - _camTween.startTime) / _camTween.duration);
-      var e = easeInOutQuad(t);
-      var pos = new THREE.Vector3().lerpVectors(_camTween.startPos, _camTween.endPos, e);
-      controls.target.lerpVectors(_camTween.startTarget, _camTween.endTarget, e);
-      controls.setPosition(pos.x, pos.y, pos.z);
-      if (t >= 1) _camTween = null;
-    }
-
-    function _roomByShapeId(id) {
-      for (var i = 0; i < roomGroups.length; i++) {
-        if (roomGroups[i].shapeId === id) return roomGroups[i];
-      }
-      return null;
-    }
-
-    var focusedShapeId = null;
-
-    function _setFocusedRoom(shapeId) {
-      roomGroups.forEach(function(rg) {
-        if (rg.selectionOverlay) rg.selectionOverlay.visible = (rg.shapeId === shapeId);
-      });
-      focusedShapeId = shapeId;
-    }
-
     var lastData    = null;
     var _woodTex    = null;
     var _plasterTex = null;
@@ -1206,16 +1163,6 @@
         });
         var floorW = maxBX - minBX;
         var floorD = maxBZ - minBZ;
-
-        // Room's own center/radius (for camera focus) — distinct from the
-        // shared house centroid (cx, cz) used to position all rooms.
-        var roomCenter = { x: (minBX + maxBX) / 2, z: (minBZ + maxBZ) / 2 };
-        var roomMaxR = 0;
-        pts.forEach(function(p) {
-          var ddx = lx(p) - roomCenter.x, ddz = lz(p) - roomCenter.z;
-          roomMaxR = Math.max(roomMaxR, Math.sqrt(ddx * ddx + ddz * ddz));
-        });
-
         var rptX = Math.max(2, Math.round(floorW / (0.12 * 6)));
         var rptZ = Math.max(1, Math.round(floorD / 1.5));
         var roomWoodTex = _woodTex.clone();
@@ -1230,16 +1177,6 @@
         floor.userData.isFloor = true;
         floor.userData.shapeId = room.shapeId;
         roomGroup.add(floor);
-
-        // Translucent overlay shown only for the focused room
-        var overlayGeo = new THREE.ShapeGeometry(shape);
-        overlayGeo.rotateX(-Math.PI / 2);
-        var selectionOverlay = new THREE.Mesh(overlayGeo, new THREE.MeshBasicMaterial({
-          color: 0x3FA9F5, transparent: true, opacity: 0.18, depthWrite: false,
-        }));
-        selectionOverlay.position.y = 0.012;
-        selectionOverlay.visible = false;
-        roomGroup.add(selectionOverlay);
 
         // ── Ceiling ── skipped in multi-room overview (Phase 2 decision:
         // reduces clutter; can be reintroduced per-room in Phase 6 focus view)
@@ -1322,14 +1259,7 @@
         roomGroup.add(ptLight);
 
         scene.add(roomGroup);
-        roomGroups.push({
-          shapeId: room.shapeId,
-          group: roomGroup,
-          center: roomCenter,
-          maxR: roomMaxR,
-          H: H,
-          selectionOverlay: selectionOverlay,
-        });
+        roomGroups.push({ shapeId: room.shapeId, group: roomGroup });
       });
 
       // ── Fit camera to the whole house (overview) ──────────────────────
@@ -1363,29 +1293,6 @@
           / rooms.length;
       controls.target.set(0, avgH / 2, 0);
       controls.setPosition(camD, camD * 0.75, camD);
-    };
-
-    window.focusRoom = function(shapeId) {
-      var rg = _roomByShapeId(shapeId);
-      if (!rg) return;
-      _setFocusedRoom(shapeId);
-      var camD = rg.maxR * 1.8 + 2;
-      var endPos = new THREE.Vector3(rg.center.x + camD, camD * 0.75, rg.center.z + camD);
-      var endTarget = new THREE.Vector3(rg.center.x, rg.H / 2, rg.center.z);
-      tweenCameraTo(endPos, endTarget, 500);
-    };
-
-    window.showOverview = function() {
-      _setFocusedRoom(null);
-      if (!lastData || !lastData.rooms || !lastData.rooms.length) return;
-      var rooms = lastData.rooms;
-      var bounds = computeHouseBounds(rooms);
-      var camD = bounds.maxR * 1.8 + 2;
-      var avgH = rooms.reduce(function(s, r) { return s + (r.wallHeightM || 2.4); }, 0)
-          / rooms.length;
-      var endPos = new THREE.Vector3(camD, camD * 0.75, camD);
-      var endTarget = new THREE.Vector3(0, avgH / 2, 0);
-      tweenCameraTo(endPos, endTarget, 500);
     };
 
     window.captureScreenshot = function() {
@@ -1459,13 +1366,6 @@
             JSON.stringify({ type: 'furnitureTap', furnitureType: cur.userData.furnitureType }));
           break;
         }
-        if (cur.userData.isFloor) {
-          var tappedShapeId = cur.userData.shapeId;
-          window.focusRoom(tappedShapeId);
-          window.FlutterBridge.postMessage(
-            JSON.stringify({ type: 'roomSelected', shapeId: tappedShapeId }));
-          break;
-        }
         cur = cur.parent;
       }
     }, { passive: true });
@@ -1480,7 +1380,6 @@
     // ── Render loop ───────────────────────────────────────────────────────────
     (function animate() {
       requestAnimationFrame(animate);
-      _updateCameraTween();
       controls.update();
       renderer.render(scene, camera);
     })();

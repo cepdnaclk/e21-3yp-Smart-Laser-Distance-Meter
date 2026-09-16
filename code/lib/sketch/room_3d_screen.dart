@@ -43,7 +43,6 @@ class _Room3DScreenState extends State<Room3DScreen> {
   double _lastZoom = 0.7;
 
   int? _selectedWallIndex;
-  String? _focusedShapeId;
   bool _waitingForBle = false;
 
   final List<List<Offset>> _wallPolygons = [];
@@ -230,9 +229,6 @@ class _Room3DScreenState extends State<Room3DScreen> {
           _webController.runJavaScript(
               'window.highlightWall(${_selectedWallIndex ?? -1})');
           break;
-        case 'roomSelected':
-          setState(() => _focusedShapeId = data['shapeId'] as String);
-          break;
         case 'furnitureTap':
           // Future: show info panel
           break;
@@ -402,38 +398,6 @@ class _Room3DScreenState extends State<Room3DScreen> {
           WebViewWidget(controller: _webController)
         else
           _buildPainterView(),
-
-        // ── Room navigation chips (3D mode, multi-room only) ────────────────
-        if (_use3D && widget.shapes.length > 1)
-          Positioned(
-            top: 12,
-            left: 12,
-            right: 12,
-            child: SizedBox(
-              height: 36,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _RoomChip(
-                    label: 'Overview',
-                    selected: _focusedShapeId == null,
-                    onTap: _showOverview,
-                  ),
-                  const SizedBox(width: 6),
-                  for (var i = 0; i < widget.shapes.length; i++) ...[
-                    _RoomChip(
-                      label: widget.shapes[i].label.isNotEmpty
-                          ? widget.shapes[i].label
-                          : 'Room ${i + 1}',
-                      selected: _focusedShapeId == widget.shapes[i].id,
-                      onTap: () => _focusRoom(widget.shapes[i].id),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
-                ],
-              ),
-            ),
-          ),
 
         // ── Bottom info / BLE bar ─────────────────────────────────────────
         Positioned(
@@ -640,16 +604,6 @@ class _Room3DScreenState extends State<Room3DScreen> {
     return inside;
   }
 
-  void _focusRoom(String shapeId) {
-    setState(() => _focusedShapeId = shapeId);
-    _webController.runJavaScript('window.focusRoom(${jsonEncode(shapeId)})');
-  }
-
-  void _showOverview() {
-    setState(() => _focusedShapeId = null);
-    _webController.runJavaScript('window.showOverview()');
-  }
-
   Future<void> _editHeight() async {
     final ctrl = TextEditingController(
       text: (_wallHeightMm / 1000).toStringAsFixed(3),
@@ -749,45 +703,6 @@ class _Room3DScreenState extends State<Room3DScreen> {
         backgroundColor: const Color(0xFF003311),
       ));
     });
-  }
-}
-
-class _RoomChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _RoomChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF00AAFF) : const Color(0xFF161B22),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? const Color(0xFF00AAFF) : const Color(0xFF30363D),
-          ),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.black : const Color(0xFFCCCCCC),
-            fontFamily: 'monospace',
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
   }
 }
 
