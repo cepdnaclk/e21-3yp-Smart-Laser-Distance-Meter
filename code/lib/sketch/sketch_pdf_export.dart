@@ -929,13 +929,13 @@ List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
   for (int i = 0; i < leftBp.length - 1; i++) {
     final y1 = tx(Offset(minX, leftBp[i])).y;
     final y2 = tx(Offset(minX, leftBp[i + 1])).y;
-    widgets.add(_dimLabel(leftX - _dimSegOffset - 6, (y1 + y2) / 2,
-        formatLength((leftBp[i + 1] - leftBp[i]).abs()), cs,
+    widgets.add(_dimLabel(leftX - _dimSegOffset - 4, (y1 + y2) / 2,
+        _formatVerticalMeters((leftBp[i + 1] - leftBp[i]).abs()), cs,
       vertical: true, rotation: math.pi / 2));
   }
-  widgets.add(_dimLabel(leftX - _dimTotalOffset - 6,
+  widgets.add(_dimLabel(leftX - _dimTotalOffset - 4,
       (tx(Offset(minX, minY)).y + tx(Offset(minX, maxY)).y) / 2,
-      formatLength(maxY - minY), cs,
+      _formatVerticalMeters(maxY - minY), cs,
       vertical: true,
       rotation: math.pi / 2));
 
@@ -945,12 +945,12 @@ List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
     final y1 = tx(Offset(maxX, rightBp[i])).y;
     final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
     widgets.add(_dimLabel(rightX + _dimSegOffset + 3, (y1 + y2) / 2,
-        formatLength((rightBp[i + 1] - rightBp[i]).abs()), cs,
+        _formatVerticalMeters((rightBp[i + 1] - rightBp[i]).abs()), cs,
         vertical: true));
   }
   widgets.add(_dimLabel(rightX + _dimTotalOffset + 3,
       (tx(Offset(maxX, minY)).y + tx(Offset(maxX, maxY)).y) / 2,
-      formatLength(maxY - minY), cs,
+      _formatVerticalMeters(maxY - minY), cs,
       vertical: true));
 
   return widgets;
@@ -1023,7 +1023,7 @@ List<pw.Widget> _roomWallDimensionLabels(
     final midY = (pa.y + pb.y) / 2 + pdfNormal.dy * (_dimSegOffset + 7);
     final isVertical = (pb.x - pa.x).abs() < (pb.y - pa.y).abs();
     widgets.add(_dimLabel(
-      midX, midY, _wallLen(shape, i, n), tx.canvasSize,
+      midX, midY, _wallLenMeters(shape, i, n), tx.canvasSize,
       vertical: isVertical));
   }
   return widgets;
@@ -1418,6 +1418,15 @@ String _wallLen(SketchShape s, int i, int n) {
       ? _fmtMm(s.wallRealMm[i]!)
       : formatLength(worldLen);
 }
+
+String _wallLenMeters(SketchShape s, int i, int n) {
+  final millimeters = s.wallRealMm[i] ??
+      (s.points[(i + 1) % n] - s.points[i]).distance * mmPerUnit;
+  return '${(millimeters / 1000).toStringAsFixed(2)} m';
+}
+
+String _formatVerticalMeters(double worldUnits) =>
+    '${(worldUnits * mmPerUnit / 1000).toStringAsFixed(2)} m';
 
 String _roomName(SketchShape s, int idx) =>
     s.label.isNotEmpty ? s.label : 'Room ${idx + 1}';
