@@ -25,7 +25,7 @@ class DatabaseHelper {
     final path = join(dbPath, fileName);
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _createTables,
       onUpgrade: _onUpgrade,
     );
@@ -106,6 +106,7 @@ class DatabaseHelper {
       CREATE TABLE room_objects (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id      INTEGER NOT NULL,
+        shape_index     INTEGER NOT NULL DEFAULT 0,
         object_id       TEXT NOT NULL,
         type            TEXT NOT NULL,
         wall_index      INTEGER NOT NULL,
@@ -113,6 +114,7 @@ class DatabaseHelper {
         width_mm        REAL NOT NULL,
         height_mm       REAL NOT NULL,
         elevation_mm    REAL NOT NULL,
+        swing_flipped   INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     ''');
@@ -146,6 +148,11 @@ class DatabaseHelper {
     ''');
   }
 
+  Future<bool> _hasColumn(Database db, String table, String column) async {
+    final rows = await db.rawQuery('PRAGMA table_info($table)');
+    return rows.any((r) => r['name'] == column);
+  }
+
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await db.execute('''
@@ -176,6 +183,16 @@ class DatabaseHelper {
           FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
         )
       ''');
+    }
+    if (oldVersion < 4) {
+      if (!await _hasColumn(db, 'room_objects', 'shape_index')) {
+        await db.execute(
+          'ALTER TABLE room_objects ADD COLUMN shape_index INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!await _hasColumn(db, 'room_objects', 'swing_flipped')) {
+        await db.execute(
+          'ALTER TABLE room_objects ADD COLUMN swing_flipped INTEGER NOT NULL DEFAULT 0');
+      }
     }
   }
 
@@ -250,20 +267,22 @@ class DatabaseHelper {
             'length': wallDrawnLengths[i],
           });
         }
-      }
 
-      // 3. Save all room objects (doors/windows)
-      for (final obj in roomObjects) {
-        await txn.insert('room_objects', {
-          'project_id': projectId,
-          'object_id': obj.id,
-          'type': obj.type.name,
-          'wall_index': obj.wallIndex,
-          'position_along': obj.positionAlong,
-          'width_mm': obj.widthMm,
-          'height_mm': obj.heightMm,
-          'elevation_mm': obj.elevationMm,
-        });
+        // Openings belong to THIS shape
+        for (final obj in (shape.roomObjects as List<RoomObject>)) {
+          await txn.insert('room_objects', {
+            'project_id': projectId,
+            'shape_index': s,
+            'object_id': obj.id,
+            'type': obj.type.name,
+            'wall_index': obj.wallIndex,
+            'position_along': obj.positionAlong,
+            'width_mm': obj.widthMm,
+            'height_mm': obj.heightMm,
+            'elevation_mm': obj.elevationMm,
+            'swing_flipped': obj.swingFlipped ? 1 : 0,
+          });
+        }
       }
 
       // 4. Save furniture items per shape
@@ -360,20 +379,22 @@ class DatabaseHelper {
             'depth_mm': f.depthMm,
           });
         }
-      }
 
-      // Re-insert room objects
-      for (final obj in roomObjects) {
-        await txn.insert('room_objects', {
-          'project_id': projectId,
-          'object_id': obj.id,
-          'type': obj.type.name,
-          'wall_index': obj.wallIndex,
-          'position_along': obj.positionAlong,
-          'width_mm': obj.widthMm,
-          'height_mm': obj.heightMm,
-          'elevation_mm': obj.elevationMm,
-        });
+        // Openings belong to THIS shape
+        for (final obj in (shape.roomObjects as List<RoomObject>)) {
+          await txn.insert('room_objects', {
+            'project_id': projectId,
+            'shape_index': s,
+            'object_id': obj.id,
+            'type': obj.type.name,
+            'wall_index': obj.wallIndex,
+            'position_along': obj.positionAlong,
+            'width_mm': obj.widthMm,
+            'height_mm': obj.heightMm,
+            'elevation_mm': obj.elevationMm,
+            'swing_flipped': obj.swingFlipped ? 1 : 0,
+          });
+        }
       }
     });
   }
@@ -454,6 +475,7 @@ class DatabaseHelper {
       'room_objects',
       where: 'project_id = ?',
       whereArgs: [projectId],
+      orderBy: 'shape_index ASC',
     );
 
     // Furniture items

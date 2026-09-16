@@ -434,8 +434,12 @@ class _CollaborationScreenState extends State<CollaborationScreen>
     // Distribute room objects to their correct shape
     final roomObjects = <RoomObject>[];
     for (final r in objectsData) {
+      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
       final obj = RoomObject(
         id: r['object_id'] as String,
+        ownerShapeId: shapes.isNotEmpty && si >= 0 && si < shapes.length
+            ? shapes[si].id
+            : '',
         type: r['type'] == 'door' ? RoomObjectType.door : RoomObjectType.window,
         wallIndex: r['wall_index'] as int,
         positionAlong: (r['position_along'] as num).toDouble(),
@@ -444,7 +448,6 @@ class _CollaborationScreenState extends State<CollaborationScreen>
         elevationMm: (r['elevation_mm'] as num).toDouble(),
       );
       roomObjects.add(obj);
-      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
       if (si < shapes.length) shapes[si].roomObjects.add(obj);
     }
 
@@ -857,8 +860,12 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
 
     // Distribute room objects to their correct shape
     for (final r in objectsData) {
+      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
       final obj = RoomObject(
         id: r['object_id'] as String,
+        ownerShapeId: newShapes.isNotEmpty && si >= 0 && si < newShapes.length
+            ? newShapes[si].id
+            : '',
         type: r['type'] == 'door' ? RoomObjectType.door : RoomObjectType.window,
         wallIndex: r['wall_index'] as int,
         positionAlong: (r['position_along'] as num).toDouble(),
@@ -866,7 +873,6 @@ class _LiveCollabWrapperState extends State<_LiveCollabWrapper> {
         heightMm: (r['height_mm'] as num).toDouble(),
         elevationMm: (r['elevation_mm'] as num).toDouble(),
       );
-      final si = (r['shape_index'] as num?)?.toInt() ?? 0;
       if (si < newShapes.length) newShapes[si].roomObjects.add(obj);
     }
 

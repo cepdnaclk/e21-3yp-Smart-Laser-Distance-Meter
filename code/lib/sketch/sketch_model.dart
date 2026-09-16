@@ -4,15 +4,22 @@ import 'package:flutter/material.dart';
 import 'furniture_item.dart';
 import 'room_object.dart';
 
+int _shapeIdCounter = 0;
+
+String generateShapeId() {
+  _shapeIdCounter++;
+  return '${DateTime.now().microsecondsSinceEpoch}_$_shapeIdCounter';
+}
+
 class SharedWall {
-  final int otherShapeIndex;
+  final String otherShapeId;
   final int myWallIndex;
   final int otherWallIndex;
   final double tStart; // 0.0-1.0 along myWallIndex segment
   final double tEnd; // 0.0-1.0 along myWallIndex segment
 
   SharedWall({
-    required this.otherShapeIndex,
+    required this.otherShapeId,
     required this.myWallIndex,
     required this.otherWallIndex,
     required this.tStart,
@@ -21,6 +28,7 @@ class SharedWall {
 }
 
 class SketchShape {
+  final String id;
   List<Offset> points;
   bool isClosed;
   String label;
@@ -32,6 +40,7 @@ class SketchShape {
   double heightMm;
 
   SketchShape({
+    String? id,
     List<Offset>? points,
     this.isClosed = false,
     this.label = '',
@@ -40,7 +49,8 @@ class SketchShape {
     List<SharedWall>? sharedWalls,
     List<FurnitureItem>? furnitureItems,
     this.heightMm = 2400,
-  })  : points = points ?? [],
+    })  : id = id ?? generateShapeId(),
+      points = points ?? [],
         wallRealMm = wallRealMm ?? {},
         roomObjects = roomObjects ?? [],
         sharedWalls = sharedWalls ?? [],

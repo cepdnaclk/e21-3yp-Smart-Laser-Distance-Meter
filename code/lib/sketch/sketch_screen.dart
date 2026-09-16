@@ -12,11 +12,14 @@ import 'furniture_item.dart';
 import 'sketch_painter.dart';
 import 'sketch_dialogs.dart';
 import 'sketch_pdf_export.dart';
+import '../screens/dxf_preview_screen.dart';
 import 'sketch_widgets.dart';
 import 'room_object.dart';
 import 'room_object_utils.dart';
 import 'room_3d_screen.dart';
 import 'furniture_painter.dart';
+import 'wall_topology.dart';
+import 'wall_openings.dart';
 import '../database/database_helper.dart';
 import '../database/project_list_screen.dart';
 import '../services/api_service.dart';
@@ -55,8 +58,10 @@ class _SketchScreenState extends State<SketchScreen>
   String _localProjectName = '';
   bool _isDirty = false;
   Offset _panOffset = Offset.zero;
-  double _scale = 1.0;
-  double _scaleStart = 1.0;
+  double _scale = 0.35;
+  double _scaleStart = 0.35;
+  static const double _minCanvasScale = 0.001;
+  static const double _maxCanvasScale = 5.0;
   List<SketchShape> shapes = [SketchShape.empty()];
   int activeIndex = 0;
   Offset? _cursorWorld;
@@ -808,18 +813,21 @@ class _SketchScreenState extends State<SketchScreen>
         _wallDrawnLengths.addAll(lengthRows.map((r) => r['length'] as double));
       }
 
-      activeShape.roomObjects.clear();
       for (final r in objectsData) {
-        activeShape.roomObjects.add(RoomObject(
+        final si = (r['shape_index'] as int?) ?? 0;
+        if (si >= shapes.length) continue;
+        shapes[si].roomObjects.add(RoomObject(
           id: r['object_id'] as String,
+          ownerShapeId: shapes[si].id,
           type: r['type'] == 'door'
               ? RoomObjectType.door
               : RoomObjectType.window,
           wallIndex: r['wall_index'] as int,
-          positionAlong: r['position_along'] as double,
-          widthMm: r['width_mm'] as double,
-          heightMm: r['height_mm'] as double,
-          elevationMm: r['elevation_mm'] as double,
+          positionAlong: (r['position_along'] as num).toDouble(),
+          widthMm: (r['width_mm'] as num).toDouble(),
+          heightMm: (r['height_mm'] as num).toDouble(),
+          elevationMm: (r['elevation_mm'] as num).toDouble(),
+          swingFlipped: ((r['swing_flipped'] as int?) ?? 0) == 1,
         ));
       }
 
@@ -1738,58 +1746,6 @@ class _SketchScreenState extends State<SketchScreen>
   /// Returns the overlapping sub-segment between wall [mA→mB] and wall [oA→oB]
   /// when they are parallel, collinear (within [perpThresh]), and overlap.
   /// Returns null if no overlap or not collinear.
-  ({Offset start, Offset end, Offset oStart, Offset oEnd})? _wallOverlapSegment(
-      Offset mA, Offset mB, Offset oA, Offset oB,
-      {double perpThresh = 14.0, double parallelThresh = 0.08}) {
-    final mDir = mB - mA;
-    final mLen = mDir.distance;
-    final oDir = oB - oA;
-    final oLen = oDir.distance;
-    if (mLen < 1 || oLen < 1) return null;
-
-    final mUnit = mDir / mLen;
-    final oUnit = oDir / oLen;
-
-    // Must be parallel (dot product of unit vectors ≈ ±1)
-    final dot = (mUnit.dx * oUnit.dx + mUnit.dy * oUnit.dy).abs();
-    if (dot < 1.0 - parallelThresh) return null;
-
-    // Must be collinear — perpendicular distance from oA to line mA→mB must be small
-    final cross = (oA - mA).dx * mUnit.dy - (oA - mA).dy * mUnit.dx;
-    if (cross.abs() > perpThresh) return null;
-
-    // Project oA and oB onto the mA→mB axis
-    final tOA = (oA - mA).dx * mUnit.dx + (oA - mA).dy * mUnit.dy;
-    final tOB = (oB - mA).dx * mUnit.dx + (oB - mA).dy * mUnit.dy;
-
-    // Overlap along the axis
-    final tStart = tOA < tOB ? tOA : tOB;
-    final tEnd = tOA < tOB ? tOB : tOA;
-    final overlapStart = tStart.clamp(0.0, mLen);
-    final overlapEnd = tEnd.clamp(0.0, mLen);
-    if (overlapEnd - overlapStart < 4.0) return null; // too short, ignore
-
-    final sharedStart = mA + mUnit * overlapStart;
-    final sharedEnd = mA + mUnit * overlapEnd;
-
-    // Corresponding points on the other wall
-    final oUnitSigned = dot > 0 ? oUnit : -oUnit; // match direction
-    final oBase = dot > 0 ? oA : oB;
-    final tOnO_start =
-        (sharedStart - oBase).dx * oUnitSigned.dx + (sharedStart - oBase).dy * oUnitSigned.dy;
-    final tOnO_end =
-        (sharedEnd - oBase).dx * oUnitSigned.dx + (sharedEnd - oBase).dy * oUnitSigned.dy;
-    final oSharedStart = oBase + oUnitSigned * tOnO_start.clamp(0.0, oLen);
-    final oSharedEnd = oBase + oUnitSigned * tOnO_end.clamp(0.0, oLen);
-
-    return (
-      start: sharedStart,
-      end: sharedEnd,
-      oStart: oSharedStart,
-      oEnd: oSharedEnd,
-    );
-  }
-
   /// Finds the best wall pair between movingShape and all other closed shapes.
   /// Returns (myWallIndex, otherShapeIndex, otherWallIndex, overlapData) or null.
   ({
@@ -1814,7 +1770,7 @@ class _SketchScreenState extends State<SketchScreen>
         for (int oi = 0; oi < on; oi++) {
           final Offset oA = other.points[oi];
           final Offset oB = other.points[(oi + 1) % on];
-          final overlap = _wallOverlapSegment(mA, mB, oA, oB);
+          final overlap = wallOverlapSegment(mA, mB, oA, oB);
           if (overlap != null) {
             return (
               mw: mi,
@@ -1920,7 +1876,8 @@ class _SketchScreenState extends State<SketchScreen>
     const padding = 60.0;
     final scaleX = (canvasSize.width - padding * 2) / (shapeW < 1 ? 1 : shapeW);
     final scaleY = (canvasSize.height - padding * 2) / (shapeH < 1 ? 1 : shapeH);
-    final newScale = (scaleX < scaleY ? scaleX : scaleY).clamp(0.2, 4.0);
+    final newScale = (scaleX < scaleY ? scaleX : scaleY)
+      .clamp(_minCanvasScale, _maxCanvasScale);
 
     final centerX = (minX + maxX) / 2;
     final centerY = (minY + maxY) / 2;
@@ -2176,10 +2133,11 @@ class _SketchScreenState extends State<SketchScreen>
     if (_movingShapeIndex >= 0 && _moveStartWorld != null) {
       // Clear stale shared walls every frame during move - prevents ghost walls
       for (final sw in shapes[_movingShapeIndex].sharedWalls) {
-        if (sw.otherShapeIndex < shapes.length) {
-          shapes[sw.otherShapeIndex]
-              .sharedWalls
-              .removeWhere((s) => s.otherShapeIndex == _movingShapeIndex);
+        final movingId = shapes[_movingShapeIndex].id;
+        for (final other in shapes) {
+          if (other.id == sw.otherShapeId) {
+            other.sharedWalls.removeWhere((s) => s.otherShapeId == movingId);
+          }
         }
       }
       shapes[_movingShapeIndex].sharedWalls.clear();
@@ -2351,12 +2309,12 @@ class _SketchScreenState extends State<SketchScreen>
                 movingShape.points[(candidate.mw + 1) % movingShape.points.length];
             final oA = other.points[candidate.ow];
             final oB = other.points[(candidate.ow + 1) % other.points.length];
-            final finalOverlap = _wallOverlapSegment(mA, mB, oA, oB);
+            final finalOverlap = wallOverlapSegment(mA, mB, oA, oB);
             if (finalOverlap != null) {
               // Remove any existing shared wall for these indices
               movingShape.sharedWalls.removeWhere((sw) => sw.myWallIndex == candidate.mw);
               other.sharedWalls.removeWhere((sw) =>
-                  sw.otherShapeIndex == _movingShapeIndex && sw.myWallIndex == candidate.ow);
+                  sw.otherShapeId == movingShape.id && sw.myWallIndex == candidate.ow);
 
               // Compute parametric t-values along each wall
               final mVec = mB - mA;
@@ -2372,14 +2330,14 @@ class _SketchScreenState extends State<SketchScreen>
               final tOE = _tAlong(oA, oVec, oLen, finalOverlap.oEnd).clamp(0.0, 1.0);
 
               movingShape.sharedWalls.add(SharedWall(
-                otherShapeIndex: candidate.os,
+                otherShapeId: other.id,
                 myWallIndex: candidate.mw,
                 otherWallIndex: candidate.ow,
                 tStart: tMS,
                 tEnd: tME,
               ));
               other.sharedWalls.add(SharedWall(
-                otherShapeIndex: _movingShapeIndex,
+                otherShapeId: movingShape.id,
                 myWallIndex: candidate.ow,
                 otherWallIndex: candidate.mw,
                 tStart: tOS,
@@ -2468,7 +2426,7 @@ class _SketchScreenState extends State<SketchScreen>
       setState(() {
         final factor = event.scrollDelta.dy > 0 ? 0.92 : 1.08;
         final focalWorld = screenToWorld(event.position);
-        _scale = (_scale * factor).clamp(0.05, 50.0);
+        _scale = (_scale * factor).clamp(_minCanvasScale, _maxCanvasScale);
         _panOffset = event.position - focalWorld * _scale;
       });
     }
@@ -2553,7 +2511,8 @@ class _SketchScreenState extends State<SketchScreen>
       _panConfirmed = true;
       setState(() {
         final focalWorld = screenToWorld(d.focalPoint);
-        _scale = (_scaleStart * d.scale).clamp(0.05, 50.0);
+        _scale = (_scaleStart * d.scale)
+          .clamp(_minCanvasScale, _maxCanvasScale);
         _panOffset = d.focalPoint - focalWorld * _scale;
       });
       return;
@@ -2799,6 +2758,15 @@ class _SketchScreenState extends State<SketchScreen>
     final idx = activeShape.roomObjects.indexWhere((o) => o.id == id);
     if (idx < 0) return;
     final obj = activeShape.roomObjects[idx];
+
+    final walls = buildWalls(shapes);
+    final wall = findWallForObject(obj, activeShape, walls);
+    final resolved = wall == null ? null : openingsForWall(wall, shapes);
+    if (resolved != null && resolved.hasConflict) {
+      _showConflictDialog(wall!, resolved);
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (ctx) => ObjectMeasurementDialog(
@@ -2830,6 +2798,61 @@ class _SketchScreenState extends State<SketchScreen>
           });
           _queueAutoSync();
         },
+      ),
+    );
+  }
+
+  void _showConflictDialog(Wall wall, WallOpenings resolved) {
+    void removeObject(String objectId, String ownerShapeId) {
+      _saveUndo();
+      setState(() {
+        for (final shape in shapes) {
+          if (shape.id == ownerShapeId) {
+            shape.roomObjects.removeWhere((o) => o.id == objectId);
+          }
+        }
+        if (_selectedObjectId == objectId) _selectedObjectId = null;
+      });
+      _queueAutoSync();
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2A3A),
+        title: const Text('Conflicting openings',
+            style: TextStyle(
+                color: Color(0xFFCCDDEE), fontFamily: 'monospace', fontSize: 14)),
+        content: const Text(
+          'This wall is shared between two rooms and has two different openings '
+          'placed at the same spot. Choose which one to keep.',
+          style: TextStyle(
+              color: Color(0xFF889AAD), fontFamily: 'monospace', fontSize: 12),
+        ),
+        actions: [
+          for (final opening in resolved.openings)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                for (final other in resolved.openings) {
+                  if (other.source.id != opening.source.id) {
+                    removeObject(other.source.id, other.source.ownerShapeId);
+                  }
+                }
+              },
+              child: Text(
+                'Keep ${opening.source.isDoor ? "door" : "window"} '
+                '(${opening.source.ownerShapeId == activeShape.id ? "this room" : "other room"})',
+                style: const TextStyle(
+                    color: Color(0xFF00AA66), fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Color(0xFF778899), fontFamily: 'monospace')),
+          ),
+        ],
       ),
     );
   }
@@ -2948,28 +2971,43 @@ class _SketchScreenState extends State<SketchScreen>
         return;
       }
       
+      final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
+      final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
+      final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
+      final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
+      final positionAlong = hit.positionAlong.clamp(halfT, 1.0 - halfT);
+
+      _objectCounter++;
+      final candidate = RoomObject(
+        id: 'obj_$_objectCounter',
+        ownerShapeId: activeShape.id,
+        type: _draggingObjectType!,
+        wallIndex: hit.wallIndex,
+        positionAlong: positionAlong,
+        widthMm: clampedMm,
+        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
+        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
+      );
+
+      if (wouldConflict(candidate, activeShape, shapes, buildWalls(shapes))) {
+        setState(() {
+          _draggingObjectType = null;
+          _dragObjectScreenPos = null;
+          _dragWallHit = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+            'This spot already has a door or window on the other side of this shared wall.',
+            style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          backgroundColor: Color(0xFF5C1A1A),
+        ));
+        return;
+      }
+
       _saveUndo();
       setState(() {
-        _objectCounter++;
-        activeShape.roomObjects.add(RoomObject(
-          id: 'obj_$_objectCounter',
-          type: _draggingObjectType!,
-          wallIndex: hit.wallIndex,
-          positionAlong: () {
-            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
-            final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
-            final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
-            return hit.positionAlong.clamp(halfT, 1.0 - halfT);
-          }(),
-          widthMm: () {
-            final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-            final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
-            return math.min(defaultMm, wallLenMm * 0.8);
-          }(),
-          heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
-          elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
-        ));
+        activeShape.roomObjects.add(candidate);
         _draggingObjectType = null;
         _dragObjectScreenPos = null;
         _dragWallHit = null;
@@ -3437,18 +3475,55 @@ class _SketchScreenState extends State<SketchScreen>
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: const Color(0xFF555555)),
                       ),
-                      child: const Text('1div=100mm',
+                      child: const Text('1div=200mm',
                           style: TextStyle(
                               color: Color(0xFF888888),
                               fontSize: 10,
                               fontFamily: 'monospace')),
                     ),
                     const SizedBox(width: 6),
-                    Text('${(_scale * 100).toStringAsFixed(0)}%',
+                    PopupMenuButton<double>(
+                      tooltip: 'Canvas zoom',
+                      initialValue: _scale,
+                      color: const Color(0xFF3A3A3A),
+                      onSelected: (value) {
+                        final size = MediaQuery.sizeOf(context);
+                        final focalPoint = Offset(size.width / 2, size.height / 2);
+                        final focalWorld = screenToWorld(focalPoint);
+                        setState(() {
+                          _scale = value;
+                          _panOffset = focalPoint - focalWorld * value;
+                        });
+                      },
+                      itemBuilder: (context) => [
+                        for (final value in <double>[0.001, 0.0025, 0.005, 0.01, 0.05, 0.2, 0.35, 1.0, 2.0, 5.0])
+                          PopupMenuItem<double>(
+                            value: value,
+                            child: Text(
+                              '${(value * 100).toStringAsFixed(value < 0.01 ? 2 : 0)}%',
+                              style: const TextStyle(
+                                color: Color(0xFFCCCCCC),
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                      ],
+                      child: Text(
+                        '${(_scale * 100).toStringAsFixed(_scale < 0.01 ? 2 : 0)}%',
                         style: const TextStyle(
                             color: Color(0xFF888888),
                             fontSize: 12,
-                            fontFamily: 'monospace')),
+                            fontFamily: 'monospace'),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.fit_screen,
+                          color: Color(0xFFCCCCCC), size: 16),
+                      tooltip: 'Fit drawing',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _fitShapesToView,
+                    ),
                     const SizedBox(width: 4),
                     _buildPresenceAvatars(),
                     if (_cloudProjectId != null)
@@ -3767,14 +3842,30 @@ class _SketchScreenState extends State<SketchScreen>
                               ? () => exportSketchPdf(
                                     context: context,
                                     shapes: shapes,
-                                    totalPerimeter: _totalPerimeter(),
-                                    totalArea: _totalArea(),
-                                    roomObjects: activeShape.roomObjects,
+                                    projectName: _localProjectName,
                                   )
                               : null,
                           color: const Color(0xFFFF4488),
                           disabledColor: const Color(0xFF555555),
                           tooltip: 'Export PDF',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.architecture, size: 18),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => DxfPreviewScreen(
+                                shapes: shapes,
+                                projectName: _localProjectName.isNotEmpty
+                                    ? _localProjectName
+                                    : 'SmartMeasure_Room',
+                              ),
+                            ),
+                          ),
+                          color: const Color(0xFF00CCFF),
+                          tooltip: 'Export DXF',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                         ),
