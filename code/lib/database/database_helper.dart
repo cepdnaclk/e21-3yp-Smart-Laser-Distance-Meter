@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:flutter/material.dart';
 import '../sketch/room_object.dart';
+import '../sketch/furniture_item.dart';
 
 class DatabaseHelper {
   // Singleton — only one instance ever exists in the app
@@ -24,7 +25,7 @@ class DatabaseHelper {
     final path = join(dbPath, fileName);
     return await openDatabase(
       path,
-      version: 2,
+      version: 4,
       onCreate: _createTables,
       onUpgrade: _onUpgrade,
     );
@@ -105,6 +106,7 @@ class DatabaseHelper {
       CREATE TABLE room_objects (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id      INTEGER NOT NULL,
+        shape_index     INTEGER NOT NULL DEFAULT 0,
         object_id       TEXT NOT NULL,
         type            TEXT NOT NULL,
         wall_index      INTEGER NOT NULL,
@@ -112,6 +114,23 @@ class DatabaseHelper {
         width_mm        REAL NOT NULL,
         height_mm       REAL NOT NULL,
         elevation_mm    REAL NOT NULL,
+        swing_flipped   INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE furniture_items (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id    INTEGER NOT NULL,
+        shape_index   INTEGER NOT NULL,
+        furniture_id  TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        position_x    REAL NOT NULL,
+        position_y    REAL NOT NULL,
+        rotation_deg  REAL NOT NULL,
+        width_mm      REAL NOT NULL,
+        depth_mm      REAL NOT NULL,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     ''');
@@ -129,6 +148,11 @@ class DatabaseHelper {
     ''');
   }
 
+  Future<bool> _hasColumn(Database db, String table, String column) async {
+    final rows = await db.rawQuery('PRAGMA table_info($table)');
+    return rows.any((r) => r['name'] == column);
+  }
+
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await db.execute('''
@@ -143,6 +167,33 @@ class DatabaseHelper {
         )
       ''');
     }
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS furniture_items (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id    INTEGER NOT NULL,
+          shape_index   INTEGER NOT NULL,
+          furniture_id  TEXT NOT NULL,
+          type          TEXT NOT NULL,
+          position_x    REAL NOT NULL,
+          position_y    REAL NOT NULL,
+          rotation_deg  REAL NOT NULL,
+          width_mm      REAL NOT NULL,
+          depth_mm      REAL NOT NULL,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      ''');
+    }
+    if (oldVersion < 4) {
+      if (!await _hasColumn(db, 'room_objects', 'shape_index')) {
+        await db.execute(
+          'ALTER TABLE room_objects ADD COLUMN shape_index INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!await _hasColumn(db, 'room_objects', 'swing_flipped')) {
+        await db.execute(
+          'ALTER TABLE room_objects ADD COLUMN swing_flipped INTEGER NOT NULL DEFAULT 0');
+      }
+    }
   }
 
   // ── CREATE ────────────────────────────────────────────────────────────────
@@ -155,6 +206,7 @@ class DatabaseHelper {
     required List<RoomObject> roomObjects,
     required List<double> wallAngles,
     required List<double> wallDrawnLengths,
+    List<List<FurnitureItem>>? furniturePerShape,
   }) async {
     final db = await database;
     final now = DateTime.now().toIso8601String();
@@ -215,23 +267,135 @@ class DatabaseHelper {
             'length': wallDrawnLengths[i],
           });
         }
+
+        // Openings belong to THIS shape
+        for (final obj in (shape.roomObjects as List<RoomObject>)) {
+          await txn.insert('room_objects', {
+            'project_id': projectId,
+            'shape_index': s,
+            'object_id': obj.id,
+            'type': obj.type.name,
+            'wall_index': obj.wallIndex,
+            'position_along': obj.positionAlong,
+            'width_mm': obj.widthMm,
+            'height_mm': obj.heightMm,
+            'elevation_mm': obj.elevationMm,
+            'swing_flipped': obj.swingFlipped ? 1 : 0,
+          });
+        }
       }
 
-      // 3. Save all room objects (doors/windows)
-      for (final obj in roomObjects) {
-        await txn.insert('room_objects', {
-          'project_id': projectId,
-          'object_id': obj.id,
-          'type': obj.type.name,
-          'wall_index': obj.wallIndex,
-          'position_along': obj.positionAlong,
-          'width_mm': obj.widthMm,
-          'height_mm': obj.heightMm,
-          'elevation_mm': obj.elevationMm,
-        });
+      // 4. Save furniture items per shape
+      final furnitureSource = furniturePerShape ??
+          shapes.map<List<FurnitureItem>>(
+            (s) => List<FurnitureItem>.from(s.furnitureItems as List),
+          ).toList();
+      for (int s = 0; s < furnitureSource.length; s++) {
+        for (final f in furnitureSource[s]) {
+          await txn.insert('furniture_items', {
+            'project_id': projectId,
+            'shape_index': s,
+            'furniture_id': f.id,
+            'type': f.type.name,
+            'position_x': f.position.dx,
+            'position_y': f.position.dy,
+            'rotation_deg': f.rotationDeg,
+            'width_mm': f.widthMm,
+            'depth_mm': f.depthMm,
+          });
+        }
       }
 
       return projectId;
+    });
+  }
+
+  Future<void> updateProject({
+    required int projectId,
+    required List<dynamic> shapes,
+    required List<RoomObject> roomObjects,
+    required List<double> wallAngles,
+    required List<double> wallDrawnLengths,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toIso8601String();
+
+    await db.transaction((txn) async {
+      await txn.update('projects', {'updated_at': now},
+          where: 'id = ?', whereArgs: [projectId]);
+
+      // Delete old data (CASCADE handles shape_points, wall_real_mm, wall_angles, wall_lengths)
+      await txn.delete('shapes', where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('room_objects', where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('furniture_items', where: 'project_id = ?', whereArgs: [projectId]);
+
+      // Re-insert shapes
+      for (int s = 0; s < shapes.length; s++) {
+        final shape = shapes[s];
+        final shapeId = await txn.insert('shapes', {
+          'project_id': projectId,
+          'shape_index': s,
+          'is_closed': shape.isClosed ? 1 : 0,
+        });
+        for (int i = 0; i < shape.points.length; i++) {
+          await txn.insert('shape_points', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'x': shape.points[i].dx,
+            'y': shape.points[i].dy,
+          });
+        }
+        for (final entry in shape.wallRealMm.entries) {
+          await txn.insert('wall_real_mm', {
+            'shape_id': shapeId,
+            'wall_index': entry.key,
+            'real_mm': entry.value,
+          });
+        }
+        for (int i = 0; i < wallAngles.length; i++) {
+          await txn.insert('wall_angles', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'angle': wallAngles[i],
+          });
+        }
+        for (int i = 0; i < wallDrawnLengths.length; i++) {
+          await txn.insert('wall_lengths', {
+            'shape_id': shapeId,
+            'order_index': i,
+            'length': wallDrawnLengths[i],
+          });
+        }
+        for (final f in (shape.furnitureItems as List)) {
+          await txn.insert('furniture_items', {
+            'project_id': projectId,
+            'shape_index': s,
+            'furniture_id': (f as dynamic).id,
+            'type': f.type.name,
+            'position_x': f.position.dx,
+            'position_y': f.position.dy,
+            'rotation_deg': f.rotationDeg,
+            'width_mm': f.widthMm,
+            'depth_mm': f.depthMm,
+          });
+        }
+
+        // Openings belong to THIS shape
+        for (final obj in (shape.roomObjects as List<RoomObject>)) {
+          await txn.insert('room_objects', {
+            'project_id': projectId,
+            'shape_index': s,
+            'object_id': obj.id,
+            'type': obj.type.name,
+            'wall_index': obj.wallIndex,
+            'position_along': obj.positionAlong,
+            'width_mm': obj.widthMm,
+            'height_mm': obj.heightMm,
+            'elevation_mm': obj.elevationMm,
+            'swing_flipped': obj.swingFlipped ? 1 : 0,
+          });
+        }
+      }
     });
   }
 
@@ -311,12 +475,22 @@ class DatabaseHelper {
       'room_objects',
       where: 'project_id = ?',
       whereArgs: [projectId],
+      orderBy: 'shape_index ASC',
+    );
+
+    // Furniture items
+    final furnitureRows = await db.query(
+      'furniture_items',
+      where: 'project_id = ?',
+      whereArgs: [projectId],
+      orderBy: 'shape_index ASC',
     );
 
     return {
       'project': projects.first,
       'shapes': shapesData,
       'room_objects': objects,
+      'furniture_items': furnitureRows,
     };
   }
 
@@ -324,11 +498,28 @@ class DatabaseHelper {
 
   Future<void> deleteProject(int projectId) async {
     final db = await database;
-    await db.delete(
-      'projects', where: 'id = ?', whereArgs: [projectId],
-    );
-    // CASCADE in the table definition automatically deletes
-    // all shapes, points, objects linked to this project
+    await db.transaction((txn) async {
+      // Get shape IDs so we can manually delete child rows
+      // (SQLite foreign key CASCADE is off by default)
+      final shapeRows = await txn.query(
+        'shapes', columns: ['id'],
+        where: 'project_id = ?', whereArgs: [projectId],
+      );
+      for (final row in shapeRows) {
+        final sid = row['id'] as int;
+        await txn.delete('shape_points',  where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_real_mm',  where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_angles',   where: 'shape_id = ?', whereArgs: [sid]);
+        await txn.delete('wall_lengths',  where: 'shape_id = ?', whereArgs: [sid]);
+      }
+      await txn.delete('shapes',        where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('room_objects',   where: 'project_id = ?', whereArgs: [projectId]);
+      await txn.delete('pending_uploads',where: 'project_id = ?', whereArgs: [projectId]);
+      try {
+        await txn.delete('furniture_items', where: 'project_id = ?', whereArgs: [projectId]);
+      } catch (_) {}
+      await txn.delete('projects', where: 'id = ?', whereArgs: [projectId]);
+    });
   }
 
   // Add an item to the upload queue

@@ -4,6 +4,7 @@ enum RoomObjectType { door, window }
 
 class RoomObject {
   final String id;
+  final String ownerShapeId;
   final RoomObjectType type;
   int wallIndex;          // which wall it sits on
   double positionAlong;   // 0.0 = wall start, 1.0 = wall end
@@ -14,6 +15,7 @@ class RoomObject {
 
   RoomObject({
     required this.id,
+    required this.ownerShapeId,
     required this.type,
     required this.wallIndex,
     this.positionAlong = 0.5,
@@ -36,6 +38,7 @@ class RoomObject {
   }) {
     return RoomObject(
       id: id,
+      ownerShapeId: ownerShapeId,
       type: type,
       wallIndex: wallIndex ?? this.wallIndex,
       positionAlong: positionAlong ?? this.positionAlong,
