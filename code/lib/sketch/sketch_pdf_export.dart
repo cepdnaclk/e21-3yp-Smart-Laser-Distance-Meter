@@ -17,15 +17,21 @@ const double _cm = 18.0;  // canvas inner margin
 const double _da = _cs - _cm * 2; // drawable area
 const double _csOv = 480.0; // overview canvas square size (PDF points)
 const double _daOv = _csOv - _cm * 2; // overview drawable area
+// Extra breathing room for dimension lines; the plan keeps its existing scale.
+const double _dimMargin = 30.0;
+const double _csOvDim = _daOv + _dimMargin * 2;
+const double _roomDimMargin = 22.0;
+const double _csRoomDim = _da + _roomDimMargin * 2;
 
 // ── Coordinate transformer ───────────────────────────────────────────────────
 class _Tx {
-  final double minX, minY, scale, canvasSize;
-  const _Tx(this.minX, this.minY, this.scale, this.canvasSize);
+  final double minX, minY, scale, canvasSize, margin;
+  const _Tx(this.minX, this.minY, this.scale, this.canvasSize,
+      [this.margin = _cm]);
 
   PdfPoint call(Offset w) => PdfPoint(
-        _cm + (w.dx - minX) * scale,
-        canvasSize - _cm - (w.dy - minY) * scale,
+        margin + (w.dx - minX) * scale,
+        canvasSize - margin - (w.dy - minY) * scale,
       );
 }
 
@@ -195,7 +201,8 @@ pw.Page _coverPage(
 // ── Full overview page ───────────────────────────────────────────────────────
 pw.Page _overviewPage(
     List<SketchShape> valid, String projectName, int pageNum, int totalPages) {
-  final tx = _txAll(valid, _daOv);
+  final baseTx = _txAll(valid, _daOv);
+  final tx = _Tx(baseTx.minX, baseTx.minY, baseTx.scale, _csOvDim, _dimMargin);
 
   return pw.Page(
     pageFormat: PdfPageFormat.a4,
@@ -273,15 +280,17 @@ pw.Page _overviewPage(
                             tx, centroid, wallThickness);
                       }
                     }
+                    _paintFullPlanDimensions(g, valid, tx);
                     },
                   ),
                 ),
                 for (int si = 0; si < valid.length; si++)
                   if (valid[si].isClosed && valid[si].points.length >= 3)
                     _roomLabelOverlay(valid[si], si, tx),
+                ..._fullPlanDimensionLabels(valid, tx),
               ],
             ),
-            size: _csOv,
+            size: _csOvDim,
           ),
         ),
         pw.SizedBox(height: 14),
@@ -332,7 +341,9 @@ pw.Page _roomPage(
     double referenceScale) {
   final n = shape.points.length;
   final wallCount = shape.isClosed ? n : n - 1;
-  final tx = _txFor(shape.points);
+  final baseTx = _txFor(shape.points);
+  final tx = _Tx(
+      baseTx.minX, baseTx.minY, baseTx.scale, _csRoomDim, _roomDimMargin);
   final effectiveWallThickness = (wallThickness * referenceScale) / tx.scale;
 
   // Centroid for door/window inward direction
@@ -358,8 +369,11 @@ pw.Page _roomPage(
         // Canvas
         pw.Center(
           child: _canvasBox(
-            pw.CustomPaint(
-              painter: (g, size) {
+            pw.Stack(
+              children: [
+                pw.Positioned.fill(
+                  child: pw.CustomPaint(
+                    painter: (g, size) {
                 _paintGrid(g, size);
 
                 // Room fill
@@ -413,8 +427,14 @@ pw.Page _roomPage(
                       g, shape.points, n, wallCount,
                       shape.roomObjects, tx, centroid, effectiveWallThickness);
                 }
-              },
+                        _paintRoomWallDimensions(g, shape, tx, wallCount);
+                    },
+                  ),
+                ),
+                ..._roomWallDimensionLabels(shape, tx, wallCount),
+              ],
             ),
+            size: _csRoomDim,
           ),
         ),
         pw.SizedBox(height: 10),
@@ -669,6 +689,319 @@ void _paintFurniture(PdfGraphics g, FurnitureItem item, _Tx tx) {
   g.moveTo(c2.x, c2.y);
   g.lineTo(c4.x, c4.y);
   g.strokePath();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIMENSION LINES (extension lines + arrows + text, architectural style)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PdfColor _dimColor = PdfColor(0.30, 0.30, 0.30);
+const double _dimArrowSize = 3.0;
+const double _dimSegOffset = 7.0;
+const double _dimTotalOffset = 16.0;
+
+pw.TextStyle get _dimTextStyle => pw.TextStyle(
+      fontSize: 6.5,
+      fontWeight: pw.FontWeight.normal,
+      color: _dimColor,
+    );
+
+void _drawLine(PdfGraphics g, double x1, double y1, double x2, double y2,
+    {double width = 0.4}) {
+  g.setStrokeColor(_dimColor);
+  g.setLineWidth(width);
+  g.moveTo(x1, y1);
+  g.lineTo(x2, y2);
+  g.strokePath();
+}
+
+void _drawArrowHead(PdfGraphics g, double tipX, double tipY, double angleRad) {
+  const spread = 2.6;
+  final a1 = angleRad + spread;
+  final a2 = angleRad - spread;
+  g.setFillColor(_dimColor);
+  g.moveTo(tipX, tipY);
+  g.lineTo(tipX + math.cos(a1) * _dimArrowSize,
+      tipY + math.sin(a1) * _dimArrowSize);
+  g.lineTo(tipX + math.cos(a2) * _dimArrowSize,
+      tipY + math.sin(a2) * _dimArrowSize);
+  g.closePath();
+  g.fillPath();
+}
+
+void _drawHDimLine(PdfGraphics g, double x1, double x2, double lineY) {
+  _drawLine(g, x1, lineY, x2, lineY, width: 0.5);
+  _drawArrowHead(g, x1, lineY, math.pi);
+  _drawArrowHead(g, x2, lineY, 0);
+}
+
+void _drawVDimLine(PdfGraphics g, double y1, double y2, double lineX) {
+  _drawLine(g, lineX, y1, lineX, y2, width: 0.5);
+  _drawArrowHead(g, lineX, y1, -math.pi / 2);
+  _drawArrowHead(g, lineX, y2, math.pi / 2);
+}
+
+pw.Widget _dimLabel(double x, double y, String text, double canvasSize) {
+  return pw.Positioned(
+    left: x - 16,
+    top: canvasSize - y - 7,
+    child: pw.SizedBox(
+      width: 32,
+      child: pw.Center(
+        child: pw.Text(text,
+            style: _dimTextStyle, textAlign: pw.TextAlign.center),
+      ),
+    ),
+  );
+}
+
+Offset _centroidOf(SketchShape s) {
+  Offset c = Offset.zero;
+  for (final p in s.points) {
+    c = Offset(c.dx + p.dx, c.dy + p.dy);
+  }
+  return Offset(c.dx / s.points.length, c.dy / s.points.length);
+}
+
+List<double> _xBreakpointsAtY(
+    List<SketchShape> shapes, double y, double minX, double maxX,
+    {double tol = 3.0}) {
+  final vals = <double>{minX, maxX};
+  for (final s in shapes) {
+    for (final p in s.points) {
+      if ((p.dy - y).abs() < tol) vals.add(p.dx);
+    }
+  }
+  final list = vals.toList()..sort();
+  final merged = <double>[];
+  for (final v in list) {
+    if (merged.isEmpty || (v - merged.last).abs() > tol) merged.add(v);
+  }
+  return merged;
+}
+
+List<double> _yBreakpointsAtX(
+    List<SketchShape> shapes, double x, double minY, double maxY,
+    {double tol = 3.0}) {
+  final vals = <double>{minY, maxY};
+  for (final s in shapes) {
+    for (final p in s.points) {
+      if ((p.dx - x).abs() < tol) vals.add(p.dy);
+    }
+  }
+  final list = vals.toList()..sort();
+  final merged = <double>[];
+  for (final v in list) {
+    if (merged.isEmpty || (v - merged.last).abs() > tol) merged.add(v);
+  }
+  return merged;
+}
+
+void _paintFullPlanDimensions(PdfGraphics g, List<SketchShape> shapes, _Tx tx) {
+  final allPts = [for (final s in shapes) ...s.points];
+  if (allPts.isEmpty) return;
+  final minX = allPts.map((p) => p.dx).reduce(math.min);
+  final maxX = allPts.map((p) => p.dx).reduce(math.max);
+  final minY = allPts.map((p) => p.dy).reduce(math.min);
+  final maxY = allPts.map((p) => p.dy).reduce(math.max);
+
+  final topBp = _xBreakpointsAtY(shapes, minY, minX, maxX);
+  final topY = tx(Offset(minX, minY)).y;
+  final topSegY = topY + _dimSegOffset;
+  final topTotY = topY + _dimTotalOffset;
+  for (final bx in topBp) {
+    final px = tx(Offset(bx, minY)).x;
+    _drawLine(g, px, topY, px, topTotY + 3, width: 0.3);
+  }
+  for (int i = 0; i < topBp.length - 1; i++) {
+    _drawHDimLine(g, tx(Offset(topBp[i], minY)).x,
+        tx(Offset(topBp[i + 1], minY)).x, topSegY);
+  }
+  _drawHDimLine(g, tx(Offset(minX, minY)).x, tx(Offset(maxX, minY)).x, topTotY);
+
+  final botBp = _xBreakpointsAtY(shapes, maxY, minX, maxX);
+  final botY = tx(Offset(minX, maxY)).y;
+  final botSegY = botY - _dimSegOffset;
+  final botTotY = botY - _dimTotalOffset;
+  for (final bx in botBp) {
+    final px = tx(Offset(bx, maxY)).x;
+    _drawLine(g, px, botY, px, botTotY - 3, width: 0.3);
+  }
+  for (int i = 0; i < botBp.length - 1; i++) {
+    _drawHDimLine(g, tx(Offset(botBp[i], maxY)).x,
+        tx(Offset(botBp[i + 1], maxY)).x, botSegY);
+  }
+  _drawHDimLine(g, tx(Offset(minX, maxY)).x, tx(Offset(maxX, maxY)).x, botTotY);
+
+  final leftBp = _yBreakpointsAtX(shapes, minX, minY, maxY);
+  final leftX = tx(Offset(minX, minY)).x;
+  final leftSegX = leftX - _dimSegOffset;
+  final leftTotX = leftX - _dimTotalOffset;
+  for (final by in leftBp) {
+    final py = tx(Offset(minX, by)).y;
+    _drawLine(g, leftX, py, leftTotX - 3, py, width: 0.3);
+  }
+  for (int i = 0; i < leftBp.length - 1; i++) {
+    final y1 = tx(Offset(minX, leftBp[i])).y;
+    final y2 = tx(Offset(minX, leftBp[i + 1])).y;
+    _drawVDimLine(g, math.min(y1, y2), math.max(y1, y2), leftSegX);
+  }
+  final ly1 = tx(Offset(minX, minY)).y;
+  final ly2 = tx(Offset(minX, maxY)).y;
+  _drawVDimLine(g, math.min(ly1, ly2), math.max(ly1, ly2), leftTotX);
+
+  final rightBp = _yBreakpointsAtX(shapes, maxX, minY, maxY);
+  final rightX = tx(Offset(maxX, minY)).x;
+  final rightSegX = rightX + _dimSegOffset;
+  final rightTotX = rightX + _dimTotalOffset;
+  for (final by in rightBp) {
+    final py = tx(Offset(maxX, by)).y;
+    _drawLine(g, rightX, py, rightTotX + 3, py, width: 0.3);
+  }
+  for (int i = 0; i < rightBp.length - 1; i++) {
+    final y1 = tx(Offset(maxX, rightBp[i])).y;
+    final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
+    _drawVDimLine(g, math.min(y1, y2), math.max(y1, y2), rightSegX);
+  }
+  final ry1 = tx(Offset(maxX, minY)).y;
+  final ry2 = tx(Offset(maxX, maxY)).y;
+  _drawVDimLine(g, math.min(ry1, ry2), math.max(ry1, ry2), rightTotX);
+}
+
+List<pw.Widget> _fullPlanDimensionLabels(List<SketchShape> shapes, _Tx tx) {
+  final widgets = <pw.Widget>[];
+  final allPts = [for (final s in shapes) ...s.points];
+  if (allPts.isEmpty) return widgets;
+  final minX = allPts.map((p) => p.dx).reduce(math.min);
+  final maxX = allPts.map((p) => p.dx).reduce(math.max);
+  final minY = allPts.map((p) => p.dy).reduce(math.min);
+  final maxY = allPts.map((p) => p.dy).reduce(math.max);
+  final cs = tx.canvasSize;
+
+  final topBp = _xBreakpointsAtY(shapes, minY, minX, maxX);
+  final topY = tx(Offset(minX, minY)).y;
+  for (int i = 0; i < topBp.length - 1; i++) {
+    final x1 = tx(Offset(topBp[i], minY)).x;
+    final x2 = tx(Offset(topBp[i + 1], minY)).x;
+    widgets.add(_dimLabel((x1 + x2) / 2, topY + _dimSegOffset + 4,
+        formatLength(topBp[i + 1] - topBp[i]), cs));
+  }
+  widgets.add(_dimLabel(
+      (tx(Offset(minX, minY)).x + tx(Offset(maxX, minY)).x) / 2,
+      topY + _dimTotalOffset + 4,
+      formatLength(maxX - minX),
+      cs));
+
+  final botBp = _xBreakpointsAtY(shapes, maxY, minX, maxX);
+  final botY = tx(Offset(minX, maxY)).y;
+  for (int i = 0; i < botBp.length - 1; i++) {
+    final x1 = tx(Offset(botBp[i], maxY)).x;
+    final x2 = tx(Offset(botBp[i + 1], maxY)).x;
+    widgets.add(_dimLabel((x1 + x2) / 2, botY - _dimSegOffset - 4,
+        formatLength(botBp[i + 1] - botBp[i]), cs));
+  }
+  widgets.add(_dimLabel(
+      (tx(Offset(minX, maxY)).x + tx(Offset(maxX, maxY)).x) / 2,
+      botY - _dimTotalOffset - 4,
+      formatLength(maxX - minX),
+      cs));
+
+  final leftBp = _yBreakpointsAtX(shapes, minX, minY, maxY);
+  final leftX = tx(Offset(minX, minY)).x;
+  for (int i = 0; i < leftBp.length - 1; i++) {
+    final y1 = tx(Offset(minX, leftBp[i])).y;
+    final y2 = tx(Offset(minX, leftBp[i + 1])).y;
+    widgets.add(_dimLabel(leftX - _dimSegOffset - 12, (y1 + y2) / 2,
+        formatLength((leftBp[i + 1] - leftBp[i]).abs()), cs));
+  }
+  widgets.add(_dimLabel(leftX - _dimTotalOffset - 12,
+      (tx(Offset(minX, minY)).y + tx(Offset(minX, maxY)).y) / 2,
+      formatLength(maxY - minY), cs));
+
+  final rightBp = _yBreakpointsAtX(shapes, maxX, minY, maxY);
+  final rightX = tx(Offset(maxX, minY)).x;
+  for (int i = 0; i < rightBp.length - 1; i++) {
+    final y1 = tx(Offset(maxX, rightBp[i])).y;
+    final y2 = tx(Offset(maxX, rightBp[i + 1])).y;
+    widgets.add(_dimLabel(rightX + _dimSegOffset + 12, (y1 + y2) / 2,
+        formatLength((rightBp[i + 1] - rightBp[i]).abs()), cs));
+  }
+  widgets.add(_dimLabel(rightX + _dimTotalOffset + 12,
+      (tx(Offset(maxX, minY)).y + tx(Offset(maxX, maxY)).y) / 2,
+      formatLength(maxY - minY), cs));
+
+  return widgets;
+}
+
+void _paintRoomWallDimensions(
+    PdfGraphics g, SketchShape shape, _Tx tx, int wallCount) {
+  final n = shape.points.length;
+  if (wallCount == 0) return;
+  final centroid = _centroidOf(shape);
+
+  for (int i = 0; i < wallCount; i++) {
+    final a = shape.points[i];
+    final b = shape.points[(i + 1) % n];
+    final wallVec = b - a;
+    final wallLen = wallVec.distance;
+    if (wallLen < 1) continue;
+
+    Offset normal = Offset(-wallVec.dy / wallLen, wallVec.dx / wallLen);
+    final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+    if ((mid.dx - centroid.dx) * normal.dx +
+            (mid.dy - centroid.dy) * normal.dy <
+        0) {
+      normal = Offset(-normal.dx, -normal.dy);
+    }
+    final pdfNormal = Offset(normal.dx, -normal.dy);
+    final pa = tx(a);
+    final pb = tx(b);
+    final x1 = pa.x + pdfNormal.dx * _dimSegOffset;
+    final y1 = pa.y + pdfNormal.dy * _dimSegOffset;
+    final x2 = pb.x + pdfNormal.dx * _dimSegOffset;
+    final y2 = pb.y + pdfNormal.dy * _dimSegOffset;
+
+    _drawLine(g, pa.x, pa.y, x1 + pdfNormal.dx * 3,
+        y1 + pdfNormal.dy * 3, width: 0.3);
+    _drawLine(g, pb.x, pb.y, x2 + pdfNormal.dx * 3,
+        y2 + pdfNormal.dy * 3, width: 0.3);
+    _drawLine(g, x1, y1, x2, y2, width: 0.5);
+    final angle = math.atan2(y2 - y1, x2 - x1);
+    _drawArrowHead(g, x1, y1, angle + math.pi);
+    _drawArrowHead(g, x2, y2, angle);
+  }
+}
+
+List<pw.Widget> _roomWallDimensionLabels(
+    SketchShape shape, _Tx tx, int wallCount) {
+  final n = shape.points.length;
+  if (wallCount == 0) return [];
+  final centroid = _centroidOf(shape);
+  final widgets = <pw.Widget>[];
+
+  for (int i = 0; i < wallCount; i++) {
+    final a = shape.points[i];
+    final b = shape.points[(i + 1) % n];
+    final wallVec = b - a;
+    final wallLen = wallVec.distance;
+    if (wallLen < 1) continue;
+
+    Offset normal = Offset(-wallVec.dy / wallLen, wallVec.dx / wallLen);
+    final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+    if ((mid.dx - centroid.dx) * normal.dx +
+            (mid.dy - centroid.dy) * normal.dy <
+        0) {
+      normal = Offset(-normal.dx, -normal.dy);
+    }
+    final pdfNormal = Offset(normal.dx, -normal.dy);
+    final pa = tx(a);
+    final pb = tx(b);
+    final midX = (pa.x + pb.x) / 2 + pdfNormal.dx * (_dimSegOffset + 7);
+    final midY = (pa.y + pb.y) / 2 + pdfNormal.dy * (_dimSegOffset + 7);
+    widgets.add(_dimLabel(
+        midX, midY, _wallLen(shape, i, n), tx.canvasSize));
+  }
+  return widgets;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
