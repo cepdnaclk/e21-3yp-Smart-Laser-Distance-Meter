@@ -545,6 +545,8 @@ void _paintRoomObjects(
 
     if (obj.isDoor) {
       _paintDoor(g, sP, eP, wdPdf, inPdf, widPdf, wallGapPdf);
+    } else if (obj.isOpening) {
+      _paintOpening(g, sP, eP, inPdf, wallGapPdf);
     } else {
       _paintWindow(g, sP, eP, inPdf, widPdf, wallGapPdf);
     }
@@ -634,6 +636,32 @@ void _paintWindow(
     g.setLineWidth(t == 0.0 ? 1.5 : 0.8);
     g.moveTo(start.x + ox, start.y + oy);
     g.lineTo(end.x + ox, end.y + oy);
+    g.strokePath();
+  }
+}
+
+void _paintOpening(
+  PdfGraphics g,
+  PdfPoint start,
+  PdfPoint end,
+  Offset inWPdf,
+  double gapWidthPdf,
+) {
+  // White wall gap — this alone removes the wall line for the opening's span.
+  g.setStrokeColor(PdfColors.white);
+  g.setLineWidth(gapWidthPdf);
+  g.moveTo(start.x, start.y);
+  g.lineTo(end.x, end.y);
+  g.strokePath();
+
+  // Short jamb ticks at each end mark where the opening starts/ends,
+  // with no leaf, arc, or mullions — a plain gap in the wall.
+  const double tick = 4.0;
+  g.setStrokeColor(PdfColors.blueGrey400);
+  g.setLineWidth(0.8);
+  for (final p in [start, end]) {
+    g.moveTo(p.x - inWPdf.dx * tick, p.y - inWPdf.dy * tick);
+    g.lineTo(p.x + inWPdf.dx * tick, p.y + inWPdf.dy * tick);
     g.strokePath();
   }
 }
@@ -1041,7 +1069,7 @@ pw.Widget _dwTable(List<RoomObject> objects) {
   return pw.Column(
     crossAxisAlignment: pw.CrossAxisAlignment.start,
     children: [
-      _sectionLabel('Doors & Windows'),
+      _sectionLabel('Doors, Windows & Openings'),
       pw.SizedBox(height: 4),
       pw.Table(
         border:
@@ -1065,7 +1093,7 @@ pw.Widget _dwTable(List<RoomObject> objects) {
             final obj = e.value;
             return pw.TableRow(children: [
               _tdCell('${e.key + 1}'),
-              _tdCell(obj.isDoor ? 'Door' : 'Window'),
+              _tdCell(obj.isDoor ? 'Door' : obj.isOpening ? 'Opening' : 'Window'),
               _tdCell(_fmtMm(obj.widthMm)),
               _tdCell(_fmtMm(obj.heightMm)),
               _tdCell(obj.elevationMm > 0 ? _fmtMm(obj.elevationMm) : '—'),

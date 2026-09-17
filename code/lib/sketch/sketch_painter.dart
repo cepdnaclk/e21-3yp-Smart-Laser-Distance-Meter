@@ -1327,9 +1327,11 @@ class SketchPainter extends CustomPainter {
 
     if (opening.source.isDoor) {
       _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
-    } else {
+    } else if (opening.source.isWindow) {
       _drawWindow(canvas, centreScreen, dir, halfWScreen, isSelected);
     }
+    // Plain openings draw nothing extra — the hole cut above (_openingHoleScreen)
+    // is already the entire visual: a bare gap in the wall.
   }
 
   void _drawConflictHighlight(Canvas canvas, Wall wall) {

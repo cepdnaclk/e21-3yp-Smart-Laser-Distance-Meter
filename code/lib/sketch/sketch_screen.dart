@@ -825,7 +825,9 @@ class _SketchScreenState extends State<SketchScreen>
           ownerShapeId: shapes[si].id,
           type: r['type'] == 'door'
               ? RoomObjectType.door
-              : RoomObjectType.window,
+              : r['type'] == 'opening'
+                  ? RoomObjectType.opening
+                  : RoomObjectType.window,
           wallIndex: r['wall_index'] as int,
           positionAlong: (r['position_along'] as num).toDouble(),
           widthMm: (r['width_mm'] as num).toDouble(),
@@ -2853,7 +2855,7 @@ class _SketchScreenState extends State<SketchScreen>
                 }
               },
               child: Text(
-                'Keep ${opening.source.isDoor ? "door" : "window"} '
+                'Keep ${opening.source.isDoor ? "door" : opening.source.isOpening ? "opening" : "window"} '
                 '(${opening.source.ownerShapeId == activeShape.id ? "this room" : "other room"})',
                 style: const TextStyle(
                     color: Color(0xFF00AA66), fontFamily: 'monospace', fontSize: 12),
@@ -2984,7 +2986,8 @@ class _SketchScreenState extends State<SketchScreen>
       }
       
       final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-      final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
+      final bool isWindowDrop = _draggingObjectType == RoomObjectType.window;
+      final defaultMm = isWindowDrop ? 1200.0 : 900.0;
       final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
       final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
       final positionAlong = hit.positionAlong.clamp(halfT, 1.0 - halfT);
@@ -2997,8 +3000,8 @@ class _SketchScreenState extends State<SketchScreen>
         wallIndex: hit.wallIndex,
         positionAlong: positionAlong,
         widthMm: clampedMm,
-        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
-        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
+        heightMm: isWindowDrop ? 1200 : 2100,
+        elevationMm: isWindowDrop ? 900 : 0,
       );
 
       if (wouldConflict(candidate, activeShape, shapes, buildWalls(shapes))) {
@@ -3009,7 +3012,7 @@ class _SketchScreenState extends State<SketchScreen>
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
-            'This spot already has a door or window on the other side of this shared wall.',
+            'This spot already has a door, window, or opening on the other side of this shared wall.',
             style: TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
           backgroundColor: Color(0xFF5C1A1A),
@@ -3140,6 +3143,14 @@ class _SketchScreenState extends State<SketchScreen>
                     label: 'Window',
                     onDragStarted: () => setState(() =>
                         _draggingObjectType = RoomObjectType.window),
+                    onDragEnd: (details) => _onObjectDropped(details.offset),
+                  ),
+                  const SizedBox(height: 8),
+                  _ObjectPanelButton(
+                    icon: Icons.meeting_room_outlined,
+                    label: 'Opening',
+                    onDragStarted: () => setState(() =>
+                        _draggingObjectType = RoomObjectType.opening),
                     onDragEnd: (details) => _onObjectDropped(details.offset),
                   ),
                   const SizedBox(height: 8),

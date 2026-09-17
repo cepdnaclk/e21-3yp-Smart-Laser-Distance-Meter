@@ -1,6 +1,6 @@
 // lib/sketch/room_object.dart
 
-enum RoomObjectType { door, window }
+enum RoomObjectType { door, window, opening }
 
 class RoomObject {
   final String id;
@@ -27,6 +27,7 @@ class RoomObject {
 
   bool get isDoor => type == RoomObjectType.door;
   bool get isWindow => type == RoomObjectType.window;
+  bool get isOpening => type == RoomObjectType.opening;
 
   RoomObject copyWith({
     int? wallIndex,

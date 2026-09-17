@@ -56,6 +56,9 @@
 
       var _prev = [];
       var _pinch0 = 0;
+      var _pinchFocus = null;
+
+      function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
       function pinchDist(touches) {
         var dx = touches[0].clientX - touches[1].clientX;
@@ -63,10 +66,35 @@
         return Math.sqrt(dx * dx + dy * dy);
       }
 
+      // Finds the 3D point under a screen coordinate, so pinch-zoom can
+      // converge on the spot being pinched instead of always zooming
+      // toward the fixed orbit target.
+      function focusPointAt(screenX, screenY) {
+        var r = domElement.getBoundingClientRect();
+        var ndc = new THREE.Vector2(
+          ((screenX - r.left) / r.width) * 2 - 1,
+          -((screenY - r.top) / r.height) * 2 + 1
+        );
+        var ray = new THREE.Raycaster();
+        ray.setFromCamera(ndc, camera);
+        var hits = (typeof houseGroup !== 'undefined')
+          ? ray.intersectObjects(houseGroup.children, true)
+          : [];
+        if (hits.length) return hits[0].point.clone();
+        var plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -self.target.y);
+        var pt = new THREE.Vector3();
+        return ray.ray.intersectPlane(plane, pt) ? pt : self.target.clone();
+      }
+
       domElement.addEventListener('touchstart', function(e) {
         e.preventDefault();
         _prev = Array.from(e.touches);
-        if (_prev.length === 2) _pinch0 = pinchDist(_prev);
+        if (_prev.length === 2) {
+          _pinch0 = pinchDist(_prev);
+          var midX = (_prev[0].clientX + _prev[1].clientX) / 2;
+          var midY = (_prev[0].clientY + _prev[1].clientY) / 2;
+          _pinchFocus = focusPointAt(midX, midY);
+        }
       }, { passive: false });
 
       domElement.addEventListener('touchmove', function(e) {
@@ -80,8 +108,20 @@
         } else if (cur.length === 2 && _prev.length >= 2) {
           var d2 = pinchDist(cur);
           if (d2 > 0) {
-            _sph.radius = Math.max(self.minDistance,
-              Math.min(self.maxDistance, _sph.radius * (_pinch0 / d2)));
+            var radiusBefore = _sph.radius;
+            _sph.radius = clamp(_sph.radius * (_pinch0 / d2), self.minDistance, self.maxDistance);
+
+            // Move the orbit target toward the pinch's focus point,
+            // proportional to how much we just zoomed in (or out).
+            if (_pinchFocus) {
+              var toFocus = new THREE.Vector3().subVectors(_pinchFocus, self.target);
+              var dist = toFocus.length();
+              if (dist > 0.0001) {
+                toFocus.normalize();
+                var moveAmount = clamp((radiusBefore - _sph.radius) * 0.6, -dist, dist);
+                self.target.addScaledVector(toFocus, moveAmount);
+              }
+            }
             _pinch0 = d2;
           }
         }
@@ -90,6 +130,7 @@
 
       domElement.addEventListener('touchend', function(e) {
         _prev = Array.from(e.touches);
+        if (_prev.length < 2) _pinchFocus = null;
       }, { passive: false });
 
       this.update = function() {
@@ -893,6 +934,26 @@
       g.add(grip);
     }
 
+    // ── Opening builder — local wall space ────────────────────────────────────
+    function _buildOpening(g, w, h, el, T) {
+      var fT   = 0.005; // tiny reveal thickness just to color the inside cut
+      var fd   = T + 0.002;
+      var cy   = el + h / 2;
+      var fCol = 0x0A0E14; // Same as the dark void for a clean punch-through look
+
+      // Dark void
+      var vd = mkBox(w, h, T * 1.06, 0x0A0E14);
+      vd.position.set(0, cy, 0);
+      g.add(vd);
+      
+      // Faint framing edges for the reveal, similar to the 2D painter
+      var edgeMat = new THREE.MeshBasicMaterial({ color: 0x4A5568, wireframe: true });
+      var edgeGeo = new THREE.BoxGeometry(w, h, T * 1.08);
+      var edges = new THREE.Mesh(edgeGeo, edgeMat);
+      edges.position.set(0, cy, 0);
+      g.add(edges);
+    }
+
     // ── Window builder — local wall space ─────────────────────────────────────
     function _buildWindow(g, w, h, el, T) {
       var fT   = Math.min(0.055, w * 0.065); // frame strip width
@@ -1274,6 +1335,8 @@
 
         if (obj.isDoor) {
           _buildDoor(og, obj.widthM, obj.heightM, obj.elevationM, T);
+        } else if (obj.isOpening || obj.kind === 'opening') {
+          _buildOpening(og, obj.widthM, obj.heightM, obj.elevationM, T);
         } else {
           _buildWindow(og, obj.widthM, obj.heightM, obj.elevationM, T);
         }

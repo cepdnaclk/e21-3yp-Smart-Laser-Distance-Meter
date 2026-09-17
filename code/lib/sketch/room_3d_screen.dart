@@ -180,6 +180,12 @@ class _Room3DScreenState extends State<Room3DScreen> {
                     'heightM': obj.heightMm / 1000.0,
                     'elevationM': obj.elevationMm / 1000.0,
                     'isDoor': obj.isDoor,
+                    'isOpening': obj.isOpening,
+                    'kind': obj.isDoor
+                        ? 'door'
+                        : obj.isOpening
+                            ? 'opening'
+                            : 'window',
                   })
               .toList(),
           'furnitureItems': shape.furnitureItems.map((item) {
@@ -1210,6 +1216,8 @@ class _Room3DPainter extends CustomPainter {
 
         if (obj.isDoor) {
           _drawDoor3D(canvas, obl, obr, otr, otl, ibl, ibr, itr, itl);
+        } else if (obj.isOpening) {
+          _drawOpening3D(canvas, obl, obr, otr, otl, ibl, ibr, itr, itl);
         } else {
           _drawWindow3D(canvas, obl, obr, otr, otl, ibl, ibr, itr, itl);
         }
@@ -1352,6 +1360,44 @@ class _Room3DPainter extends CustomPainter {
         ins(br).dy + (ins(tl).dy - ins(bl).dy) * 0.45);
     canvas.drawCircle(
         knobPos, 3, Paint()..color = const Color(0xFFFFD700));
+  }
+
+  void _drawOpening3D(Canvas canvas, Offset bl, Offset br, Offset tr, Offset tl,
+      Offset ibl, Offset ibr, Offset itr, Offset itl) {
+    // Outer face: punch straight through to "see-through" black — no leaf, no glass.
+    final outerHole = Path()
+      ..moveTo(bl.dx, bl.dy)
+      ..lineTo(br.dx, br.dy)
+      ..lineTo(tr.dx, tr.dy)
+      ..lineTo(tl.dx, tl.dy)
+      ..close();
+    canvas.drawPath(outerHole,
+        Paint()..color = const Color(0xFF0A0E14)..style = PaintingStyle.fill);
+
+    // Jamb reveals so the wall thickness around the gap still reads correctly.
+    _drawReveal(canvas, tl, bl, ibl, itl);
+    _drawReveal(canvas, br, tr, itr, ibr);
+    _drawReveal(canvas, tr, tl, itl, itr);
+
+    // Inner face of the hole, same treatment.
+    canvas.drawPath(
+      Path()
+        ..moveTo(ibl.dx, ibl.dy)
+        ..lineTo(ibr.dx, ibr.dy)
+        ..lineTo(itr.dx, itr.dy)
+        ..lineTo(itl.dx, itl.dy)
+        ..close(),
+      Paint()..color = const Color(0xFF0A0E14)..style = PaintingStyle.fill,
+    );
+
+    // Faint edge so the opening's outline is still legible against the wall face —
+    // no leaf, no knob, no glass: purely a gap.
+    canvas.drawPath(
+        outerHole,
+        Paint()
+          ..color = const Color(0xFF4A5568)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2);
   }
 
   void _drawWindow3D(Canvas canvas, Offset bl, Offset br, Offset tr, Offset tl,
