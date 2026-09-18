@@ -934,26 +934,6 @@
       g.add(grip);
     }
 
-    // ── Opening builder — local wall space ────────────────────────────────────
-    function _buildOpening(g, w, h, el, T) {
-      var fT   = 0.005; // tiny reveal thickness just to color the inside cut
-      var fd   = T + 0.002;
-      var cy   = el + h / 2;
-      var fCol = 0x0A0E14; // Same as the dark void for a clean punch-through look
-
-      // Dark void
-      var vd = mkBox(w, h, T * 1.06, 0x0A0E14);
-      vd.position.set(0, cy, 0);
-      g.add(vd);
-      
-      // Faint framing edges for the reveal, similar to the 2D painter
-      var edgeMat = new THREE.MeshBasicMaterial({ color: 0x4A5568, wireframe: true });
-      var edgeGeo = new THREE.BoxGeometry(w, h, T * 1.08);
-      var edges = new THREE.Mesh(edgeGeo, edgeMat);
-      edges.position.set(0, cy, 0);
-      g.add(edges);
-    }
-
     // ── Window builder — local wall space ─────────────────────────────────────
     function _buildWindow(g, w, h, el, T) {
       var fT   = Math.min(0.055, w * 0.065); // frame strip width
@@ -1235,6 +1215,41 @@
       return tex;
     }
 
+    // Builds a wall as a flat slab with true rectangular holes cut through it
+    // for any plain "opening" objects on that wall, so the camera can see
+    // straight through to whatever is on the other side.
+    function buildWallGeometry(len, H, T, openings) {
+      var halfLen = (len + T) / 2;
+      var halfH   = H / 2;
+
+      var shape = new THREE.Shape();
+      shape.moveTo(-halfLen, -halfH);
+      shape.lineTo( halfLen, -halfH);
+      shape.lineTo( halfLen,  halfH);
+      shape.lineTo(-halfLen,  halfH);
+      shape.closePath();
+
+      openings.forEach(function(o) {
+        var x0 = Math.max(o.centerX - o.halfW, -halfLen + 0.01);
+        var x1 = Math.min(o.centerX + o.halfW,  halfLen - 0.01);
+        var y0 = Math.max(o.bottomY - halfH,    -halfH + 0.01);
+        var y1 = Math.min(o.topY    - halfH,     halfH - 0.01);
+        if (x1 <= x0 || y1 <= y0) return;
+
+        var hole = new THREE.Path();
+        hole.moveTo(x0, y0);
+        hole.lineTo(x1, y0);
+        hole.lineTo(x1, y1);
+        hole.lineTo(x0, y1);
+        hole.closePath();
+        shape.holes.push(hole);
+      });
+
+      var geo = new THREE.ExtrudeGeometry(shape, { depth: T, bevelEnabled: false, curveSegments: 1 });
+      geo.translate(0, 0, -T / 2);
+      return geo;
+    }
+
     function buildRoomGroup(data, gcx, gcz, furnitureModels) {
       var g = new THREE.Group();
       g.userData.roomId = data.id;
@@ -1301,7 +1316,23 @@
         wt.needsUpdate = true;
         wt.repeat.set(Math.max(1, Math.round(len)), Math.max(1, Math.round(H)));
 
-        var wallGeo = new THREE.BoxGeometry(len + T, H, T);
+        // Any plain "opening" objects on this wall get a real hole cut through
+        // the geometry, instead of a solid box — that's what makes it possible
+        // to see through to the other side.
+        var wallOpenings = (data.roomObjects || [])
+          .filter(function(o) { return o.wallIndex === i && o.isOpening; })
+          .map(function(o) {
+            return {
+              centerX: o.positionAlong * len - len / 2,
+              halfW:   o.widthM / 2,
+              bottomY: o.elevationM,
+              topY:    o.elevationM + o.heightM,
+            };
+          });
+
+        var wallGeo = wallOpenings.length
+          ? buildWallGeometry(len, H, T, wallOpenings)
+          : new THREE.BoxGeometry(len + T, H, T);
         var wall    = new THREE.Mesh(wallGeo, new THREE.MeshStandardMaterial({
           map:       wt,
           color:     0xFFFFFF,
@@ -1335,11 +1366,12 @@
 
         if (obj.isDoor) {
           _buildDoor(og, obj.widthM, obj.heightM, obj.elevationM, T);
-        } else if (obj.isOpening || obj.kind === 'opening') {
-          _buildOpening(og, obj.widthM, obj.heightM, obj.elevationM, T);
-        } else {
+        } else if (!obj.isOpening) {
           _buildWindow(og, obj.widthM, obj.heightM, obj.elevationM, T);
         }
+        // Plain openings: the wall mesh below is built with a real hole cut
+        // through it at this spot, so there's nothing to draw here — you see
+        // straight through to whatever is behind it.
         g.add(og);
       });
 
