@@ -41,7 +41,6 @@ class SketchPainter extends CustomPainter {
   final List<({Rect rect, int wallIndex, int shapeIndex})> labelHitRects;
   final String? selectedObjectId;
   final String? selectedFurnitureId;
-  final List<({Rect rect, int shapeIndex})> roomLabelHitRects;
 
   const SketchPainter({
     required this.panOffset,
@@ -75,7 +74,6 @@ class SketchPainter extends CustomPainter {
     required this.labelHitRects,
     required this.selectedObjectId,
     required this.selectedFurnitureId,
-    required this.roomLabelHitRects,
     
   });
 
@@ -136,7 +134,7 @@ class SketchPainter extends CustomPainter {
             isSelected: item.id == selectedFurnitureId,
           );
         }
-        _drawRoomLabel(canvas, shape, s);
+        _drawRoomLabel(canvas, shape);
       }
       _drawPoints(canvas, shape, isActive);
       _drawAngleIndicator(canvas, shape, isActive);
@@ -501,7 +499,7 @@ class SketchPainter extends CustomPainter {
     }
   }
 
-  void _drawRoomLabel(Canvas canvas, SketchShape shape, int shapeIndex) {
+  void _drawRoomLabel(Canvas canvas, SketchShape shape) {
     if (!shape.isClosed || shape.points.length < 3) return;
 
     // Compute centroid
@@ -560,15 +558,6 @@ class SketchPainter extends CustomPainter {
 
     nameTp.paint(canvas, namePos);
     areaTp.paint(canvas, areaPos);
-
-    roomLabelHitRects.add((
-      rect: Rect.fromCenter(
-        center: centre,
-        width: math.max(nameTp.width, areaTp.width) + 20,
-        height: totalH + 14,
-      ),
-      shapeIndex: shapeIndex,
-    ));
   }
 
   void _drawNearestSnapLine(Canvas canvas, Size size, SketchShape shape, bool isActive) {
@@ -1327,11 +1316,9 @@ class SketchPainter extends CustomPainter {
 
     if (opening.source.isDoor) {
       _drawDoor(canvas, centreScreen, dir, perp, halfWScreen, isSelected);
-    } else if (opening.source.isWindow) {
+    } else {
       _drawWindow(canvas, centreScreen, dir, halfWScreen, isSelected);
     }
-    // Plain openings draw nothing extra — the hole cut above (_openingHoleScreen)
-    // is already the entire visual: a bare gap in the wall.
   }
 
   void _drawConflictHighlight(Canvas canvas, Wall wall) {

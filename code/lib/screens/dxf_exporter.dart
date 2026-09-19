@@ -9,8 +9,7 @@ import '../sketch/furniture_item.dart';
 
 // ─────────────────────────────────────────────────────────────────
 // DXF Exporter — AutoCAD R12 (AC1009)
-// Layers: WALLS (blue-5), DOORS (red-1), WINDOWS (cyan-4), OPENINGS (yellow-8),
-//         FURNITURE (green-3)
+// Layers: WALLS (blue-5), DOORS (red-1), WINDOWS (cyan-4), FURNITURE (green-3)
 // Units: millimetres | 1 world unit = 5 mm | Y axis flipped for DXF
 // ─────────────────────────────────────────────────────────────────
 
@@ -90,8 +89,7 @@ class DxfExporter {
     _w(buf, 0, 'TABLE'); _w(buf, 2, 'LAYER'); _w(buf, 70, '6');
     for (final r in [
       ('0', '7'), ('WALLS', '5'), ('DOORS', '1'),
-      ('WINDOWS', '4'), ('OPENINGS', '8'),
-      ('FURNITURE', '3'), ('ROOM_NAMES', '2'),
+      ('WINDOWS', '4'), ('FURNITURE', '3'), ('ROOM_NAMES', '2'),
     ]) {
       _w(buf, 0, 'LAYER'); _w(buf, 2, r.$1);
       _w(buf, 70, '0'); _w(buf, 62, r.$2); _w(buf, 6, 'CONTINUOUS');
@@ -213,8 +211,6 @@ class DxfExporter {
 
       if (obj.isDoor) {
         _writeDoor(buf, sx, sy, ex, ey, obj.widthMm, wux, wuy, iux, iuy);
-      } else if (obj.isOpening) {
-        _writeOpening(buf, sx, sy, ex, ey, obj.widthMm, wux, wuy, iux, iuy);
       } else {
         _writeWindow(buf, sx, sy, ex, ey, obj.widthMm, wux, wuy, iux, iuy);
       }
@@ -247,27 +243,6 @@ class DxfExporter {
     _line(buf, 'DOORS', 1, ex+ox*gap, ey+oy*gap, ex+ox*(dimOff+ovr), ey+oy*(dimOff+ovr));
     _line(buf, 'DOORS', 1, sx+ox*dimOff, sy+oy*dimOff, ex+ox*dimOff, ey+oy*dimOff);
     _writeText(buf, 'DOORS', 1, tx, ty, ang, 40.0, _fmtMm(widthMm));
-  }
-
-  static void _writeOpening(StringBuffer buf,
-      double sx, double sy, double ex, double ey, double widthMm,
-      double wux, double wuy, double iux, double iuy) {
-    const double jl = 60.0; // short jamb tick length, both sides of the gap
-
-    // Two short ticks marking each end of the opening — no leaf, no arc, no mullions.
-    _line(buf, 'OPENINGS', 8, sx - iux * jl, sy - iuy * jl, sx + iux * jl, sy + iuy * jl);
-    _line(buf, 'OPENINGS', 8, ex - iux * jl, ey - iuy * jl, ex + iux * jl, ey + iuy * jl);
-
-    const double dimOff = 50.0, gap = 5.0, ovr = 15.0;
-    final ox = -iux, oy = -iuy;
-    final midX = (sx + ex) / 2, midY = (sy + ey) / 2;
-    final tx = midX + ox * dimOff, ty = midY + oy * dimOff;
-    double ang = math.atan2(wuy, wux) * 180 / math.pi;
-    if (ang > 90 || ang < -90) ang += 180;
-    _line(buf, 'OPENINGS', 8, sx+ox*gap, sy+oy*gap, sx+ox*(dimOff+ovr), sy+oy*(dimOff+ovr));
-    _line(buf, 'OPENINGS', 8, ex+ox*gap, ey+oy*gap, ex+ox*(dimOff+ovr), ey+oy*(dimOff+ovr));
-    _line(buf, 'OPENINGS', 8, sx+ox*dimOff, sy+oy*dimOff, ex+ox*dimOff, ey+oy*dimOff);
-    _writeText(buf, 'OPENINGS', 8, tx, ty, ang, 40.0, _fmtMm(widthMm));
   }
 
   static void _writeWindow(StringBuffer buf,

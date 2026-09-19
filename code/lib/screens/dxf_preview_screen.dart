@@ -60,9 +60,7 @@ class _DxfPreviewScreenState extends State<DxfPreviewScreen> {
   int get _totalDoors =>
       _previewShapes.fold(0, (s, sh) => s + sh.roomObjects.where((o) => o.isDoor).length);
   int get _totalWindows =>
-      _previewShapes.fold(0, (s, sh) => s + sh.roomObjects.where((o) => o.isWindow).length);
-  int get _totalOpenings =>
-      _previewShapes.fold(0, (s, sh) => s + sh.roomObjects.where((o) => o.isOpening).length);
+      _previewShapes.fold(0, (s, sh) => s + sh.roomObjects.where((o) => !o.isDoor).length);
   int get _totalFurniture =>
       _previewShapes.fold(0, (s, sh) => s + sh.furnitureItems.length);
 
@@ -161,7 +159,6 @@ class _DxfPreviewScreenState extends State<DxfPreviewScreen> {
               wallCount: _totalWalls,
               doorCount: _totalDoors,
               windowCount: _totalWindows,
-              openingCount: _totalOpenings,
               furnitureCount: _totalFurniture,
             ),
 
@@ -522,11 +519,9 @@ class _BlueprintPainter extends CustomPainter {
 
     if (obj.isDoor) {
       _drawDoorPreview(canvas, startC, endC, inW, (obj.widthMm / mmPerUnit) * sc);
-    } else if (!obj.isOpening) {
+    } else {
       _drawWindowPreview(canvas, startC, endC, inW);
     }
-    // Plain openings: the gap cover drawn earlier (_drawGapCover) is already
-    // the whole visual — a bare break in the wall line, no symbol on top.
   }
 
   void _drawDoorPreview(Canvas canvas, Offset startC, Offset endC,
@@ -651,7 +646,6 @@ class _FileInfoCard extends StatelessWidget {
   final int wallCount;
   final int doorCount;
   final int windowCount;
-  final int openingCount;
   final int furnitureCount;
 
   const _FileInfoCard({
@@ -661,7 +655,6 @@ class _FileInfoCard extends StatelessWidget {
     required this.wallCount,
     required this.doorCount,
     required this.windowCount,
-    required this.openingCount,
     required this.furnitureCount,
   });
 
@@ -728,12 +721,11 @@ class _FileInfoCard extends StatelessWidget {
             _row('Format', 'AutoCAD DXF  (AC1009 / R12)'),
             _row('Units', 'Millimetres  (INSUNITS = 4)'),
             _row('Scale', '1 world unit = 5 mm'),
-            _row('Layers', 'WALLS · DOORS · WINDOWS · OPENINGS · FURNITURE'),
+            _row('Layers', 'WALLS · DOORS · WINDOWS · FURNITURE'),
             _row('Rooms', '$roomCount'),
             _row('Walls', '$wallCount total'),
             if (doorCount > 0) _row('Doors', '$doorCount'),
             if (windowCount > 0) _row('Windows', '$windowCount'),
-            if (openingCount > 0) _row('Openings', '$openingCount'),
             if (furnitureCount > 0) _row('Furniture', '$furnitureCount items'),
             _row('Date', dateStr),
           ],

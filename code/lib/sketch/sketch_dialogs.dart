@@ -444,23 +444,16 @@ class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
   @override
   Widget build(BuildContext context) {
     final isDoor = widget.roomObject.isDoor;
-    final isOpening = widget.roomObject.isOpening;
-    final IconData typeIcon = isDoor
-        ? Icons.door_front_door
-        : isOpening
-            ? Icons.meeting_room_outlined
-            : Icons.window;
-    final String typeTitle =
-        isDoor ? 'Edit Door' : isOpening ? 'Edit Opening' : 'Edit Window';
 
     return AlertDialog(
       backgroundColor: const Color(0xFF1E2A3A),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       title: Row(
         children: [
-          Icon(typeIcon, color: const Color(0xFF00AAFF), size: 20),
+          Icon(isDoor ? Icons.door_front_door : Icons.window,
+              color: const Color(0xFF00AAFF), size: 20),
           const SizedBox(width: 8),
-          Text(typeTitle,
+          Text(isDoor ? 'Edit Door' : 'Edit Window',
               style: const TextStyle(
                   color: Color(0xFFCCDDEE),
                   fontFamily: 'monospace',
@@ -521,7 +514,7 @@ class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
                   borderSide: BorderSide(color: Color(0xFF00AAFF))),
             ),
           ),
-          if (!isDoor && !isOpening) ...[
+          if (!isDoor) ...[
             const SizedBox(height: 12),
             const Text('Elevation from floor (mm)',
                 style: TextStyle(
@@ -579,7 +572,7 @@ class _ObjectMeasurementDialogState extends State<ObjectMeasurementDialog> {
           onPressed: () {
             final w = double.tryParse(_widthCtrl.text) ?? widget.roomObject.widthMm;
             final h = double.tryParse(_heightCtrl.text) ?? widget.roomObject.heightMm;
-            final e = (isDoor || isOpening)
+            final e = isDoor
                 ? 0.0
                 : (double.tryParse(_elevationCtrl.text) ??
                     widget.roomObject.elevationMm);

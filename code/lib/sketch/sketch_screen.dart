@@ -98,7 +98,6 @@ class _SketchScreenState extends State<SketchScreen>
   double? _snapDiffDeg;
   int _selectedWallIndex = -1;
   final List<({Rect rect, int wallIndex, int shapeIndex})> _labelHitRects = [];
-  final List<({Rect rect, int shapeIndex})> _roomLabelHitRects = [];
   double? _pendingBleMm;
   bool _waitingForBle = false;
   String? _lastCloudUpdatedAt;
@@ -239,10 +238,8 @@ class _SketchScreenState extends State<SketchScreen>
     super.dispose();
   }
 
-  void _showRoomNameDialog([int? shapeIndex]) {
-    final idx = shapeIndex ?? activeIndex;
-    final target = shapes[idx];
-    final controller = TextEditingController(text: target.label);
+  void _showRoomNameDialog() {
+    final controller = TextEditingController(text: activeShape.label);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -261,9 +258,8 @@ class _SketchScreenState extends State<SketchScreen>
           ),
           TextButton(
             onPressed: () {
-              setState(() => shapes[idx].label = controller.text.trim());
+              setState(() => activeShape.label = controller.text.trim());
               Navigator.pop(ctx);
-              _queueAutoSync();
             },
             child: const Text('Save'),
           ),
@@ -825,9 +821,7 @@ class _SketchScreenState extends State<SketchScreen>
           ownerShapeId: shapes[si].id,
           type: r['type'] == 'door'
               ? RoomObjectType.door
-              : r['type'] == 'opening'
-                  ? RoomObjectType.opening
-                  : RoomObjectType.window,
+              : RoomObjectType.window,
           wallIndex: r['wall_index'] as int,
           positionAlong: (r['position_along'] as num).toDouble(),
           widthMm: (r['width_mm'] as num).toDouble(),
@@ -2569,14 +2563,6 @@ class _SketchScreenState extends State<SketchScreen>
       }
     }
 
-    // Tap on room name label -> rename that room, anytime
-    for (final hit in _roomLabelHitRects) {
-      if (hit.rect.contains(details.localPosition)) {
-        _showRoomNameDialog(hit.shapeIndex);
-        return;
-      }
-    }
-
     if (_isMoveMode) return;
     if (_dragOccurred) { _dragOccurred = false; return; }
     if (_objectDragOccurred) { _objectDragOccurred = false; return; }
@@ -2855,7 +2841,7 @@ class _SketchScreenState extends State<SketchScreen>
                 }
               },
               child: Text(
-                'Keep ${opening.source.isDoor ? "door" : opening.source.isOpening ? "opening" : "window"} '
+                'Keep ${opening.source.isDoor ? "door" : "window"} '
                 '(${opening.source.ownerShapeId == activeShape.id ? "this room" : "other room"})',
                 style: const TextStyle(
                     color: Color(0xFF00AA66), fontFamily: 'monospace', fontSize: 12),
@@ -2986,8 +2972,7 @@ class _SketchScreenState extends State<SketchScreen>
       }
       
       final wallLenMm = _wallLengthWorld(hit.wallIndex) * mmPerUnit;
-      final bool isWindowDrop = _draggingObjectType == RoomObjectType.window;
-      final defaultMm = isWindowDrop ? 1200.0 : 900.0;
+      final defaultMm = _draggingObjectType == RoomObjectType.door ? 900.0 : 1200.0;
       final clampedMm = math.min(defaultMm, wallLenMm * 0.8);
       final halfT = (clampedMm / mmPerUnit) / (2 * _wallLengthWorld(hit.wallIndex));
       final positionAlong = hit.positionAlong.clamp(halfT, 1.0 - halfT);
@@ -3000,8 +2985,8 @@ class _SketchScreenState extends State<SketchScreen>
         wallIndex: hit.wallIndex,
         positionAlong: positionAlong,
         widthMm: clampedMm,
-        heightMm: isWindowDrop ? 1200 : 2100,
-        elevationMm: isWindowDrop ? 900 : 0,
+        heightMm: _draggingObjectType == RoomObjectType.door ? 2100 : 1200,
+        elevationMm: _draggingObjectType == RoomObjectType.door ? 0 : 900,
       );
 
       if (wouldConflict(candidate, activeShape, shapes, buildWalls(shapes))) {
@@ -3012,7 +2997,7 @@ class _SketchScreenState extends State<SketchScreen>
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
-            'This spot already has a door, window, or opening on the other side of this shared wall.',
+            'This spot already has a door or window on the other side of this shared wall.',
             style: TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
           backgroundColor: Color(0xFF5C1A1A),
@@ -3060,7 +3045,6 @@ class _SketchScreenState extends State<SketchScreen>
         !activeShape.isClosed;
 
     _labelHitRects.clear();
-    _roomLabelHitRects.clear();
 
     return PopScope(
       canPop: false,
@@ -3116,7 +3100,6 @@ class _SketchScreenState extends State<SketchScreen>
                   activeIndex: activeIndex,
                   selectedObjectId: _selectedObjectId,
                   selectedFurnitureId: _selectedFurnitureId,
-                  roomLabelHitRects: _roomLabelHitRects,
                 ),
                 child: const SizedBox.expand(),
               ),
@@ -3143,14 +3126,6 @@ class _SketchScreenState extends State<SketchScreen>
                     label: 'Window',
                     onDragStarted: () => setState(() =>
                         _draggingObjectType = RoomObjectType.window),
-                    onDragEnd: (details) => _onObjectDropped(details.offset),
-                  ),
-                  const SizedBox(height: 8),
-                  _ObjectPanelButton(
-                    icon: Icons.meeting_room_outlined,
-                    label: 'Opening',
-                    onDragStarted: () => setState(() =>
-                        _draggingObjectType = RoomObjectType.opening),
                     onDragEnd: (details) => _onObjectDropped(details.offset),
                   ),
                   const SizedBox(height: 8),
@@ -3421,9 +3396,12 @@ class _SketchScreenState extends State<SketchScreen>
                     context,
                     MaterialPageRoute(
                       builder: (_) => Room3DScreen(
-                        shapes: shapes,
-                        initialActiveShapeIndex: activeIndex,
+                        points: activeShape.points,
+                        roomObjects: activeShape.roomObjects,
+                        wallRealMm: activeShape.wallRealMm,
+                        furnitureItems: activeShape.furnitureItems,
                         bleManager: widget.bleManager,
+                        initialHeightMm: activeShape.heightMm,
                         onWallMeasured: (wallIndex, mm) {
                           _applyRealMeasurement(wallIndex, mm);
                         },
