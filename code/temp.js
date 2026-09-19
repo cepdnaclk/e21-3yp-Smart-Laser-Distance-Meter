@@ -1,37 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>3D Room</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0D1117; overflow: hidden; width: 100vw; height: 100vh; }
-    canvas { display: block; }
-    #loading {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      color: #00AA66; font-family: monospace; font-size: 13px;
-      text-align: center; pointer-events: none; line-height: 1.8;
-    }
-    #loading small { color: #445566; font-size: 11px; display: block; }
-    #error {
-      display: none; position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      color: #FF6666; font-family: monospace; font-size: 11px;
-      text-align: center; padding: 16px; max-width: 80vw;
-      background: rgba(0,0,0,0.85); border-radius: 8px;
-    }
-  </style>
-</head>
-<body>
-  <div id="loading">Initializing 3D view…<small>Loading scene</small></div>
-  <div id="error"></div>
 
-  <!-- Three.js global build is injected here by Flutter at runtime -->
-  <!--THREE_JS-->
-
-  <script>
     // ── Global error display ───────────────────────────────────────────────────
     window.onerror = function(msg, src, line) {
       var el = document.getElementById('error');
@@ -56,9 +23,6 @@
 
       var _prev = [];
       var _pinch0 = 0;
-      var _pinchFocus = null;
-
-      function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
       function pinchDist(touches) {
         var dx = touches[0].clientX - touches[1].clientX;
@@ -66,35 +30,10 @@
         return Math.sqrt(dx * dx + dy * dy);
       }
 
-      // Finds the 3D point under a screen coordinate, so pinch-zoom can
-      // converge on the spot being pinched instead of always zooming
-      // toward the fixed orbit target.
-      function focusPointAt(screenX, screenY) {
-        var r = domElement.getBoundingClientRect();
-        var ndc = new THREE.Vector2(
-          ((screenX - r.left) / r.width) * 2 - 1,
-          -((screenY - r.top) / r.height) * 2 + 1
-        );
-        var ray = new THREE.Raycaster();
-        ray.setFromCamera(ndc, camera);
-        var hits = (typeof houseGroup !== 'undefined')
-          ? ray.intersectObjects(houseGroup.children, true)
-          : [];
-        if (hits.length) return hits[0].point.clone();
-        var plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -self.target.y);
-        var pt = new THREE.Vector3();
-        return ray.ray.intersectPlane(plane, pt) ? pt : self.target.clone();
-      }
-
       domElement.addEventListener('touchstart', function(e) {
         e.preventDefault();
         _prev = Array.from(e.touches);
-        if (_prev.length === 2) {
-          _pinch0 = pinchDist(_prev);
-          var midX = (_prev[0].clientX + _prev[1].clientX) / 2;
-          var midY = (_prev[0].clientY + _prev[1].clientY) / 2;
-          _pinchFocus = focusPointAt(midX, midY);
-        }
+        if (_prev.length === 2) _pinch0 = pinchDist(_prev);
       }, { passive: false });
 
       domElement.addEventListener('touchmove', function(e) {
@@ -108,20 +47,8 @@
         } else if (cur.length === 2 && _prev.length >= 2) {
           var d2 = pinchDist(cur);
           if (d2 > 0) {
-            var radiusBefore = _sph.radius;
-            _sph.radius = clamp(_sph.radius * (_pinch0 / d2), self.minDistance, self.maxDistance);
-
-            // Move the orbit target toward the pinch's focus point,
-            // proportional to how much we just zoomed in (or out).
-            if (_pinchFocus) {
-              var toFocus = new THREE.Vector3().subVectors(_pinchFocus, self.target);
-              var dist = toFocus.length();
-              if (dist > 0.0001) {
-                toFocus.normalize();
-                var moveAmount = clamp((radiusBefore - _sph.radius) * 0.6, -dist, dist);
-                self.target.addScaledVector(toFocus, moveAmount);
-              }
-            }
+            _sph.radius = Math.max(self.minDistance,
+              Math.min(self.maxDistance, _sph.radius * (_pinch0 / d2)));
             _pinch0 = d2;
           }
         }
@@ -130,7 +57,6 @@
 
       domElement.addEventListener('touchend', function(e) {
         _prev = Array.from(e.touches);
-        if (_prev.length < 2) _pinchFocus = null;
       }, { passive: false });
 
       this.update = function() {
@@ -472,25 +398,6 @@
         g.add(ps);
       }
     }
-    // ── Rectangular table (dining, coffee, desk, counter) ────────────────────
-    function buildTable(g, w, d, h, col, dark) {
-      var topT = h * 0.06;
-      var legT = Math.min(w * 0.05, 0.06);
-      var legH = h - topT;
-      var lx = w / 2 - legT * 0.8;
-      var lz = d / 2 - legT * 0.8;
-
-      var top = mkBox(w, topT, d, col);
-      top.position.set(0, h - topT / 2, 0);
-      g.add(top);
-
-      [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]].forEach(function(p) {
-        var leg = mkBox(legT, legH, legT, dark);
-        leg.position.set(p[0], legH / 2, p[1]);
-        g.add(leg);
-      });
-    }
-
     // ── Round dining table ────────────────────────────────────────────────────
     function buildRoundTable(g, w, d, h, col, dark) {
       var topT = h * 0.06;
@@ -1215,42 +1122,7 @@
       return tex;
     }
 
-    // Builds a wall as a flat slab with true rectangular holes cut through it
-    // for any plain "opening" objects on that wall, so the camera can see
-    // straight through to whatever is on the other side.
-    function buildWallGeometry(len, H, T, openings) {
-      var halfLen = (len + T) / 2;
-      var halfH   = H / 2;
-
-      var shape = new THREE.Shape();
-      shape.moveTo(-halfLen, -halfH);
-      shape.lineTo( halfLen, -halfH);
-      shape.lineTo( halfLen,  halfH);
-      shape.lineTo(-halfLen,  halfH);
-      shape.closePath();
-
-      openings.forEach(function(o) {
-        var x0 = Math.max(o.centerX - o.halfW, -halfLen + 0.01);
-        var x1 = Math.min(o.centerX + o.halfW,  halfLen - 0.01);
-        var y0 = Math.max(o.bottomY - halfH,    -halfH + 0.01);
-        var y1 = Math.min(o.topY    - halfH,     halfH - 0.01);
-        if (x1 <= x0 || y1 <= y0) return;
-
-        var hole = new THREE.Path();
-        hole.moveTo(x0, y0);
-        hole.lineTo(x1, y0);
-        hole.lineTo(x1, y1);
-        hole.lineTo(x0, y1);
-        hole.closePath();
-        shape.holes.push(hole);
-      });
-
-      var geo = new THREE.ExtrudeGeometry(shape, { depth: T, bevelEnabled: false, curveSegments: 1 });
-      geo.translate(0, 0, -T / 2);
-      return geo;
-    }
-
-    function buildRoomGroup(data, gcx, gcz, furnitureModels) {
+    function buildRoomGroup(data, gcx, gcz) {
       var g = new THREE.Group();
       g.userData.roomId = data.id;
 
@@ -1316,23 +1188,7 @@
         wt.needsUpdate = true;
         wt.repeat.set(Math.max(1, Math.round(len)), Math.max(1, Math.round(H)));
 
-        // Any plain "opening" objects on this wall get a real hole cut through
-        // the geometry, instead of a solid box — that's what makes it possible
-        // to see through to the other side.
-        var wallOpenings = (data.roomObjects || [])
-          .filter(function(o) { return o.wallIndex === i && o.isOpening; })
-          .map(function(o) {
-            return {
-              centerX: o.positionAlong * len - len / 2,
-              halfW:   o.widthM / 2,
-              bottomY: o.elevationM,
-              topY:    o.elevationM + o.heightM,
-            };
-          });
-
-        var wallGeo = wallOpenings.length
-          ? buildWallGeometry(len, H, T, wallOpenings)
-          : new THREE.BoxGeometry(len + T, H, T);
+        var wallGeo = new THREE.BoxGeometry(len + T, H, T);
         var wall    = new THREE.Mesh(wallGeo, new THREE.MeshStandardMaterial({
           map:       wt,
           color:     0xFFFFFF,
@@ -1366,12 +1222,9 @@
 
         if (obj.isDoor) {
           _buildDoor(og, obj.widthM, obj.heightM, obj.elevationM, T);
-        } else if (!obj.isOpening) {
+        } else {
           _buildWindow(og, obj.widthM, obj.heightM, obj.elevationM, T);
         }
-        // Plain openings: the wall mesh below is built with a real hole cut
-        // through it at this spot, so there's nothing to draw here — you see
-        // straight through to whatever is behind it.
         g.add(og);
       });
 
@@ -1385,6 +1238,7 @@
         opacity:     1.0,
       });
 
+      var furnitureModels = data.furnitureModels || {};
       var loader = new THREE.GLTFLoader();
 
       (data.furnitureItems || []).forEach(function(item) {
@@ -1468,7 +1322,6 @@
 
       var rooms = data.rooms || [];
       if (!rooms.length) return;
-      var furnitureModels = data.furnitureModels || {};
 
       // Global centroid across every room, so rooms stay positioned
       // correctly relative to each other instead of each snapping to (0,0).
@@ -1480,7 +1333,7 @@
 
       var maxH = 0;
       rooms.forEach(function(roomData) {
-        var g = buildRoomGroup(roomData, gcx, gcz, furnitureModels);
+        var g = buildRoomGroup(roomData, gcx, gcz);
         houseGroup.add(g);
         maxH = Math.max(maxH, roomData.wallHeightM || 2.4);
       });
@@ -1647,6 +1500,4 @@
     if (window.FlutterBridge) {
       window.FlutterBridge.postMessage(JSON.stringify({ type: 'ready' }));
     }
-  </script>
-</body>
-</html>
+  

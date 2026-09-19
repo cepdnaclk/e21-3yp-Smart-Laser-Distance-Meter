@@ -151,6 +151,8 @@ extension FurnitureTypeExtension on FurnitureType {
     }
   }
 
+  
+
   Color get color {
     switch (this) {
       case FurnitureType.sofa:            return const Color(0xFF4CAF50);
