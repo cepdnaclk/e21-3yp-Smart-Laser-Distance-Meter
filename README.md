@@ -9,11 +9,9 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
 ![Three.js](https://img.shields.io/badge/Three.js-3D-000000?logo=threedotjs&logoColor=white)
 
-<!-- TODO(media): add a 10–20 s demo GIF (measure a wall → plan updates → 3D view), then uncomment:
 <p align="center">
   <img src="docs/images/readme/demo.gif" alt="Measuring a room and viewing it in 3D" width="320">
 </p>
--->
 
 Measuring a room by hand and sketching it on paper is slow, and it's easy to make mistakes. This system replaces the tape measure and notepad. You draw the room shape on your phone, point the device at each wall, and the measured length is applied to the plan automatically. You can then view the room in 3D, add doors, windows and furniture, and export the plan as a PDF or a CAD-ready DXF file.
 
@@ -65,13 +63,9 @@ Measuring a room by hand and sketching it on paper is slow, and it's easy to mak
 
 ## Screenshots
 
-<!-- TODO(media): add photos/screenshots to docs/images/readme/, then uncomment this table:
-| Device | 2D floor plan | 3D view | Multi-room | Export |
+| 2D floor plan | Multi-room plan | 3D view | DXF export | PDF export |
 |:---:|:---:|:---:|:---:|:---:|
-| <img src="docs/images/readme/device.jpg" width="160"> | <img src="docs/images/readme/app-2d-plan.png" width="160"> | <img src="docs/images/readme/app-3d-view.png" width="160"> | <img src="docs/images/readme/app-multi-room.png" width="160"> | <img src="docs/images/readme/app-export.png" width="160"> |
--->
-
-_Screenshots coming soon._
+| <img src="docs/images/readme/app-2d-plan.jpg" alt="2D floor plan editor" width="160"> | <img src="docs/images/readme/app-multi-room.jpg" alt="Multi-room floor plan" width="160"> | <img src="docs/images/readme/app-3d-view.jpg" alt="3D room view with furniture" width="160"> | <img src="docs/images/readme/app-export-dxf.jpg" alt="DXF export preview" width="160"> | <img src="docs/images/readme/app-export-pdf.jpg" alt="PDF floor plan export" width="160"> |
 
 ---
 
@@ -131,8 +125,14 @@ For a detailed, file-by-file reference of the whole system, see [ARCHITECTURE.md
 | micro-SD module | Stores the measurement history |
 | 5 push buttons | Power, select, down, measure, top/bottom reference |
 | Laser pointer + buzzer | Shows where you're aiming and gives audio feedback |
+| Spirit level | Helps hold the device level while measuring |
+| Custom 3D-printed enclosure | Handheld case for all the components |
 
-<!-- TODO(media): optionally add a wiring diagram or PCB/enclosure photo here -->
+<p align="center">
+  <img src="docs/images/readme/device.jpg" alt="Smart Laser Distance Meter: 3D-printed handheld device with OLED screen, five buttons and spirit level" width="300">
+  &nbsp;&nbsp;
+  <img src="docs/images/readme/device-in-use.jpg" alt="Device in use: laser dot on the wall and live reading on the OLED screen" width="300">
+</p>
 
 ---
 
